@@ -1,0 +1,41 @@
+name: Process Memo
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Memo Builder job UUID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memo-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      MEMO_JOB_ID: ${{ inputs.job_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Validate workflow input
+        run: python engine/scripts/validate_job_id.py "$MEMO_JOB_ID"
+
+      - name: Run Phase 0 worker
+        run: python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
