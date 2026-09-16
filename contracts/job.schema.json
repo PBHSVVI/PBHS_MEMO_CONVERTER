@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbhs.example/contracts/job.schema.json",
+  "title": "Memo Builder Job Contract",
+  "type": "object",
+  "required": [
+    "id",
+    "user_id",
+    "status",
+    "stage",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "user_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "created",
+        "queued",
+        "dispatched",
+        "processing",
+        "needs_review",
+        "correction_pending",
+        "correction_confirmed",
+        "rendering",
+        "complete",
+        "failed_retryable",
+        "failed"
+      ]
+    },
+    "stage": {
+      "type": "string"
+    },
+    "source_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_filename": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_mime": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "review_required": {
+      "type": "boolean"
+    },
+    "document_schema_version": {
+      "type": "string"
+    },
+    "render_profile": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,4 @@
+project_id = "pbhs-gde-memo-builder"
+
+[functions.dispatch-memo]
+verify_jwt = true

@@ -1,0 +1,32 @@
+{
+  "artifact": "PBHS GDE Memo Builder Phase 0 starter repository",
+  "created": "2026-09-16T08:19:58.627483+00:00",
+  "purpose": "Architecture and hosted-orchestration scaffold; not a finished converter.",
+  "file_count": 24,
+  "files": [
+    ".env.example",
+    ".github/workflows/process-memo.yml",
+    ".gitignore",
+    "README.md",
+    "contracts/gde/README.md",
+    "contracts/job.schema.json",
+    "docs/ARCHITECTURE_V1.md",
+    "docs/DECISIONS.md",
+    "docs/JOB_STATE_MACHINE.md",
+    "docs/PHASE0_SETUP.md",
+    "engine/__init__.py",
+    "engine/scripts/validate_job_id.py",
+    "engine/src/__init__.py",
+    "engine/src/memo_engine/__init__.py",
+    "engine/src/memo_engine/cli.py",
+    "engine/src/memo_engine/http.py",
+    "engine/src/memo_engine/providers/__init__.py",
+    "engine/src/memo_engine/providers/base.py",
+    "engine/src/memo_engine/router.py",
+    "engine/src/memo_engine/validation.py",
+    "supabase/config.toml",
+    "supabase/functions/dispatch-memo/index.ts",
+    "supabase/migrations/0001_core.sql",
+    "web/README.md"
+  ]
+}
