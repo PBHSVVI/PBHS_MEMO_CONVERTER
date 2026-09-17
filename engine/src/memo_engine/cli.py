@@ -78,7 +78,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase3.0",
+                "engine_version": "phase3.1",
                 "updated_at": utc_now(),
             },
         )
@@ -123,7 +123,7 @@ def run_job(job_id: str) -> int:
                 "status": final_status,
                 "stage": "phase3_structured",
                 "review_required": review_required,
-                "engine_version": "phase3.0",
+                "engine_version": "phase3.1",
                 "error_code": error_code,
                 "error_message": error_message,
                 "updated_at": utc_now(),
@@ -136,7 +136,8 @@ def run_job(job_id: str) -> int:
             "phase3_structured",
             {
                 "structure_path": structure_path,
-                "detected_question_count": summary["detected_question_count"],
+                "detected_identifier_count": summary["detected_identifier_count"],
+                "leaf_question_count": summary["leaf_question_count"],
                 "unique_question_count": summary["unique_question_count"],
                 "subtotal_count": summary["subtotal_count"],
                 "subtotal_sum": summary["subtotal_sum"],
@@ -148,7 +149,8 @@ def run_job(job_id: str) -> int:
 
         print(
             "Phase 3 structure verified "
-            f"for job {job_id}: questions={summary['detected_question_count']}, "
+            f"for job {job_id}: identifiers={summary['detected_identifier_count']}, "
+            f"leaf_questions={summary['leaf_question_count']}, "
             f"amber={summary['amber_count']}, red={summary['red_count']}"
         )
         return 0
