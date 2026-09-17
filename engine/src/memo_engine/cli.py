@@ -7,6 +7,7 @@ from typing import Any
 from .http import SupabaseRest
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
+from .structure import extract_structure
 
 BUCKET = "memo-files"
 
@@ -35,12 +36,7 @@ def fail_processing_job(
                 "updated_at": utc_now(),
             },
         )
-        db.add_event(
-            failed,
-            "worker_failed",
-            stage,
-            {"error_code": code},
-        )
+        db.add_event(failed, "worker_failed", stage, {"error_code": code})
     except Exception:
         pass
 
@@ -75,8 +71,6 @@ def run_job(job_id: str) -> int:
         db.upload_json(BUCKET, ingestion_path, ingestion)
 
         source = ingestion["source"]
-        extraction = ingestion["extraction"]
-
         job = db.patch_job(
             job_id,
             "processing",
@@ -84,26 +78,8 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase2.0",
+                "engine_version": "phase3.0",
                 "updated_at": utc_now(),
-            },
-        )
-        db.add_event(
-            job,
-            "phase1_ingestion_complete",
-            "normalization",
-            {
-                "detected_kind": source["detected_kind"],
-                "detected_mime": source["detected_mime"],
-                "size_bytes": source["size_bytes"],
-                "sha256": source["sha256"],
-                "has_digital_text": extraction["has_digital_text"],
-                "text_length": extraction["text_length"],
-                "page_count": extraction.get("page_count"),
-                "warning_codes": [
-                    item["code"] for item in ingestion.get("warnings", [])
-                ],
-                "ingestion_path": ingestion_path,
             },
         )
 
@@ -111,70 +87,77 @@ def run_job(job_id: str) -> int:
         normalized_path = f"{job['user_id']}/{job['id']}/internal/normalized.json"
         db.upload_json(BUCKET, normalized_path, normalized)
 
-        content = normalized["content"]
-        summary = content.get("summary", {})
-        ocr = content.get("ocr", {})
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {
+                "stage": "structure",
+                "updated_at": utc_now(),
+            },
+        )
+
+        structure = extract_structure(normalized)
+        structure_path = f"{job['user_id']}/{job['id']}/internal/structure.json"
+        db.upload_json(BUCKET, structure_path, structure)
+
+        db.add_exceptions(job, structure["exceptions"])
+
+        summary = structure["summary"]
+        review_required = summary["review_required"]
+        final_status = "needs_review" if review_required else "failed_retryable"
+        error_code = (
+            "PHASE3_REVIEW_REQUIRED"
+            if review_required
+            else "PHASE3_SEMANTIC_INTERPRETATION_NOT_YET_CONNECTED"
+        )
+        error_message = (
+            "Deterministic structure extraction found exceptions requiring teacher review."
+            if review_required
+            else "Deterministic structure extraction succeeded with no exceptions; semantic interpretation is the next milestone."
+        )
 
         job = db.patch_job(
             job_id,
             "processing",
             {
-                "status": "failed_retryable",
-                "stage": "phase2_normalized",
-                "engine_version": "phase2.0",
-                "error_code": "PHASE2_STRUCTURE_NOT_YET_CONNECTED",
-                "error_message": (
-                    "Deterministic normalisation/local OCR succeeded; "
-                    "question and mark structure interpretation is the next milestone."
-                ),
+                "status": final_status,
+                "stage": "phase3_structured",
+                "review_required": review_required,
+                "engine_version": "phase3.0",
+                "error_code": error_code,
+                "error_message": error_message,
                 "updated_at": utc_now(),
             },
         )
 
         db.add_event(
             job,
-            "phase2_normalization_complete",
-            "phase2_normalized",
+            "phase3_structure_complete",
+            "phase3_structured",
             {
-                "source_kind": source["detected_kind"],
-                "normalized_path": normalized_path,
-                "page_count": summary.get("page_count"),
-                "unit_count": summary.get("unit_count"),
-                "paragraph_count": summary.get("paragraph_count"),
-                "table_count": summary.get("table_count"),
-                "equation_count": summary.get("equation_count"),
-                "embedded_media_count": summary.get("embedded_media_count"),
-                "ocr_attempted": ocr.get("attempted", 0),
-                "ocr_used": ocr.get("used", 0),
-                "ocr_engine": ocr.get("engine"),
+                "structure_path": structure_path,
+                "detected_question_count": summary["detected_question_count"],
+                "unique_question_count": summary["unique_question_count"],
+                "subtotal_count": summary["subtotal_count"],
+                "subtotal_sum": summary["subtotal_sum"],
+                "amber_count": summary["amber_count"],
+                "red_count": summary["red_count"],
+                "review_required": review_required,
             },
         )
 
         print(
-            "Phase 2 normalization verified "
-            f"for job {job_id}: kind={source['detected_kind']}, "
-            f"ocr_attempted={ocr.get('attempted', 0)}, "
-            f"ocr_used={ocr.get('used', 0)}"
+            "Phase 3 structure verified "
+            f"for job {job_id}: questions={summary['detected_question_count']}, "
+            f"amber={summary['amber_count']}, red={summary['red_count']}"
         )
         return 0
 
     except IngestionError as exc:
-        fail_processing_job(
-            db,
-            job,
-            code=exc.code,
-            message=exc.public_message,
-            stage="ingestion_failed",
-        )
+        fail_processing_job(db, job, code=exc.code, message=exc.public_message, stage="ingestion_failed")
         raise
     except NormalizationError as exc:
-        fail_processing_job(
-            db,
-            job,
-            code=exc.code,
-            message=exc.public_message,
-            stage="normalization_failed",
-        )
+        fail_processing_job(db, job, code=exc.code, message=exc.public_message, stage="normalization_failed")
         raise
     except Exception:
         fail_processing_job(
@@ -189,10 +172,7 @@ def run_job(job_id: str) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] != "run-job":
-        print(
-            "usage: python -m engine.src.memo_engine.cli run-job <job_id>",
-            file=sys.stderr,
-        )
+        print("usage: python -m engine.src.memo_engine.cli run-job <job_id>", file=sys.stderr)
         return 2
     return run_job(argv[2])
 

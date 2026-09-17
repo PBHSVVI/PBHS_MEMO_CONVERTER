@@ -115,6 +115,32 @@ class SupabaseRest:
             },
         )
 
+
+    def add_exceptions(
+        self,
+        job: dict[str, Any],
+        exceptions: list[dict[str, Any]],
+    ) -> None:
+        if not exceptions:
+            return
+        rows = []
+        for item in exceptions:
+            rows.append({
+                "job_id": job["id"],
+                "user_id": job["user_id"],
+                "level": item["level"],
+                "category": item["category"],
+                "affected_id": item.get("affected_id"),
+                "message": item["message"],
+                "suggestions": item.get("suggestions", []),
+                "status": "open",
+            })
+        self._request_json(
+            "POST",
+            "/rest/v1/exceptions",
+            body=rows,
+        )
+
     def download_object(self, bucket: str, object_path: str) -> bytes:
         bucket_q = urllib.parse.quote(bucket, safe="")
         path_q = urllib.parse.quote(object_path, safe="/")
