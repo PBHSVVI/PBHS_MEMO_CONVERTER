@@ -159,6 +159,6 @@ class SupabaseRest:
             bucket,
             object_path,
             data,
-            content_type="application/json; charset=utf-8",
+            content_type="application/json",
             upsert=upsert,
         )
