@@ -23,7 +23,15 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       MEMO_JOB_ID: ${{ inputs.job_id }}
+      MEMO_PRIVACY_MODE: APPROVED_EXTERNAL_ONLY
+      MEMO_APPROVED_PROVIDERS: groq
+      MEMO_GROQ_FAST_MODEL: openai/gpt-oss-20b
+      MEMO_GROQ_STRONG_MODEL: openai/gpt-oss-120b
+      MEMO_AI_ESCALATE: "true"
+      MEMO_AI_BATCH_SIZE: "16"
+      MEMO_AI_MIN_INTERVAL_SECONDS: "15"
 
     steps:
       - name: Checkout
