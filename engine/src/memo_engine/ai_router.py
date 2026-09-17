@@ -95,16 +95,70 @@ def _post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple
             raw = response.read()
             elapsed_ms = int((time.monotonic() - started) * 1000)
     except urllib.error.HTTPError as exc:
-        detail = exc.read(1000).decode("utf-8", errors="replace")
+        detail = exc.read(4000).decode("utf-8", errors="replace")
+
+        provider_code = None
+        provider_type = None
+        provider_message = None
+        try:
+            parsed = json.loads(detail)
+            error = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(error, dict):
+                raw_code = error.get("code")
+                raw_type = error.get("type")
+                raw_message = error.get("message")
+                if isinstance(raw_code, str):
+                    provider_code = raw_code[:120]
+                if isinstance(raw_type, str):
+                    provider_type = raw_type[:120]
+                if isinstance(raw_message, str):
+                    provider_message = raw_message[:500]
+        except Exception:
+            pass
+
         if exc.code == 429:
             raise ProviderError(
                 "AI_PROVIDER_RATE_LIMITED",
                 "The configured AI provider is temporarily rate limited.",
                 retryable=True,
             ) from exc
+
+        if exc.code == 403:
+            safe_code = provider_code or "forbidden"
+            normalized = "".join(
+                ch if ch.isalnum() else "_"
+                for ch in safe_code.upper()
+            ).strip("_")[:80]
+            code = f"AI_PROVIDER_FORBIDDEN_{normalized}" if normalized else "AI_PROVIDER_FORBIDDEN"
+
+            if provider_code == "model_permission_blocked_org":
+                message = (
+                    "Groq blocked the requested model at the organization level. "
+                    "Enable the model under Groq Settings -> Organization -> Limits."
+                )
+            elif provider_code == "model_permission_blocked_project":
+                message = (
+                    "Groq blocked the requested model at the API key's project level. "
+                    "Select the project that owns this API key, then enable the model "
+                    "under Groq Settings -> Projects -> Limits."
+                )
+            elif provider_message:
+                message = f"Groq denied the request: {provider_message}"
+            else:
+                message = (
+                    "Groq denied the request with HTTP 403. Check the organization and "
+                    "the exact project that owns GROQ_API_KEY for model permissions."
+                )
+
+            raise ProviderError(code, message, retryable=False) from exc
+
         raise ProviderError(
             "AI_PROVIDER_HTTP_ERROR",
-            f"The configured AI provider returned HTTP {exc.code}.",
+            (
+                f"The configured AI provider returned HTTP {exc.code}"
+                + (f" ({provider_type}/{provider_code})" if provider_type or provider_code else "")
+                + "."
+            ),
             retryable=500 <= exc.code < 600,
         ) from exc
     except Exception as exc:
