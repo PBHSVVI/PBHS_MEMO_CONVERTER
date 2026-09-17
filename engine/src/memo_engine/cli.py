@@ -6,6 +6,7 @@ from typing import Any
 
 from .http import SupabaseRest
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
+from .normalization import NormalizationError, normalize_source
 
 BUCKET = "memo-files"
 
@@ -20,6 +21,7 @@ def fail_processing_job(
     *,
     code: str,
     message: str,
+    stage: str,
 ) -> None:
     try:
         failed = db.patch_job(
@@ -27,7 +29,7 @@ def fail_processing_job(
             "processing",
             {
                 "status": "failed_retryable",
-                "stage": "ingestion_failed",
+                "stage": stage,
                 "error_code": code,
                 "error_message": message,
                 "updated_at": utc_now(),
@@ -35,8 +37,8 @@ def fail_processing_job(
         )
         db.add_event(
             failed,
-            "ingestion_failed",
-            "ingestion_failed",
+            "worker_failed",
+            stage,
             {"error_code": code},
         )
     except Exception:
@@ -58,6 +60,8 @@ def run_job(job_id: str) -> int:
             "stage": "ingestion",
             "started_at": utc_now(),
             "updated_at": utc_now(),
+            "error_code": None,
+            "error_message": None,
         },
     )
     db.add_event(job, "worker_started", "ingestion")
@@ -65,36 +69,29 @@ def run_job(job_id: str) -> int:
     try:
         source_path = validate_source_path(job)
         source_bytes = db.download_object(BUCKET, source_path)
-        ingestion = ingest_bytes(job, source_bytes)
 
-        internal_path = f"{job['user_id']}/{job['id']}/internal/ingestion.json"
-        db.upload_json(BUCKET, internal_path, ingestion)
+        ingestion = ingest_bytes(job, source_bytes)
+        ingestion_path = f"{job['user_id']}/{job['id']}/internal/ingestion.json"
+        db.upload_json(BUCKET, ingestion_path, ingestion)
 
         source = ingestion["source"]
         extraction = ingestion["extraction"]
-        warnings = ingestion["warnings"]
 
         job = db.patch_job(
             job_id,
             "processing",
             {
-                "status": "failed_retryable",
-                "stage": "phase1_ingested",
+                "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase1.0",
-                "error_code": "PHASE1_DOWNSTREAM_NOT_YET_CONNECTED",
-                "error_message": (
-                    "Deterministic ingestion succeeded; OCR/interpretation is the next milestone."
-                ),
+                "engine_version": "phase2.0",
                 "updated_at": utc_now(),
             },
         )
-
         db.add_event(
             job,
             "phase1_ingestion_complete",
-            "phase1_ingested",
+            "normalization",
             {
                 "detected_kind": source["detected_kind"],
                 "detected_mime": source["detected_mime"],
@@ -103,16 +100,61 @@ def run_job(job_id: str) -> int:
                 "has_digital_text": extraction["has_digital_text"],
                 "text_length": extraction["text_length"],
                 "page_count": extraction.get("page_count"),
-                "warning_codes": [item["code"] for item in warnings],
-                "ingestion_path": internal_path,
+                "warning_codes": [
+                    item["code"] for item in ingestion.get("warnings", [])
+                ],
+                "ingestion_path": ingestion_path,
+            },
+        )
+
+        normalized = normalize_source(job, source_bytes, ingestion)
+        normalized_path = f"{job['user_id']}/{job['id']}/internal/normalized.json"
+        db.upload_json(BUCKET, normalized_path, normalized)
+
+        content = normalized["content"]
+        summary = content.get("summary", {})
+        ocr = content.get("ocr", {})
+
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {
+                "status": "failed_retryable",
+                "stage": "phase2_normalized",
+                "engine_version": "phase2.0",
+                "error_code": "PHASE2_STRUCTURE_NOT_YET_CONNECTED",
+                "error_message": (
+                    "Deterministic normalisation/local OCR succeeded; "
+                    "question and mark structure interpretation is the next milestone."
+                ),
+                "updated_at": utc_now(),
+            },
+        )
+
+        db.add_event(
+            job,
+            "phase2_normalization_complete",
+            "phase2_normalized",
+            {
+                "source_kind": source["detected_kind"],
+                "normalized_path": normalized_path,
+                "page_count": summary.get("page_count"),
+                "unit_count": summary.get("unit_count"),
+                "paragraph_count": summary.get("paragraph_count"),
+                "table_count": summary.get("table_count"),
+                "equation_count": summary.get("equation_count"),
+                "embedded_media_count": summary.get("embedded_media_count"),
+                "ocr_attempted": ocr.get("attempted", 0),
+                "ocr_used": ocr.get("used", 0),
+                "ocr_engine": ocr.get("engine"),
             },
         )
 
         print(
-            "Phase 1 ingestion verified "
-            f"for job {job_id}: {source['detected_kind']}, "
-            f"{source['size_bytes']} bytes, "
-            f"digital_text={extraction['has_digital_text']}"
+            "Phase 2 normalization verified "
+            f"for job {job_id}: kind={source['detected_kind']}, "
+            f"ocr_attempted={ocr.get('attempted', 0)}, "
+            f"ocr_used={ocr.get('used', 0)}"
         )
         return 0
 
@@ -122,14 +164,25 @@ def run_job(job_id: str) -> int:
             job,
             code=exc.code,
             message=exc.public_message,
+            stage="ingestion_failed",
+        )
+        raise
+    except NormalizationError as exc:
+        fail_processing_job(
+            db,
+            job,
+            code=exc.code,
+            message=exc.public_message,
+            stage="normalization_failed",
         )
         raise
     except Exception:
         fail_processing_job(
             db,
             job,
-            code="INGESTION_INTERNAL_ERROR",
-            message="An unexpected error occurred during deterministic ingestion.",
+            code="WORKER_INTERNAL_ERROR",
+            message="An unexpected error occurred in the hosted deterministic worker.",
+            stage="worker_failed",
         )
         raise
 

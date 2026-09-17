@@ -41,7 +41,7 @@ class SupabaseRest:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=90) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read(512).decode("utf-8", errors="replace")
