@@ -4,9 +4,11 @@ import datetime as dt
 import sys
 from typing import Any
 
+from .ai_router import ProviderError
 from .http import SupabaseRest
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
+from .semantic import interpret_semantics
 from .structure import extract_structure
 
 BUCKET = "memo-files"
@@ -78,7 +80,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase3.1",
+                "engine_version": "phase4.0",
                 "updated_at": utc_now(),
             },
         )
@@ -90,30 +92,58 @@ def run_job(job_id: str) -> int:
         job = db.patch_job(
             job_id,
             "processing",
-            {
-                "stage": "structure",
-                "updated_at": utc_now(),
-            },
+            {"stage": "structure", "updated_at": utc_now()},
         )
-
         structure = extract_structure(normalized)
         structure_path = f"{job['user_id']}/{job['id']}/internal/structure.json"
         db.upload_json(BUCKET, structure_path, structure)
 
-        db.add_exceptions(job, structure["exceptions"])
+        structural_exceptions = structure["exceptions"]
+        db.add_exceptions(job, structural_exceptions)
 
-        summary = structure["summary"]
-        review_required = summary["review_required"]
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {"stage": "semantic_interpretation", "updated_at": utc_now()},
+        )
+
+        semantic = interpret_semantics(structure)
+        semantic_path = f"{job['user_id']}/{job['id']}/internal/semantic.json"
+        db.upload_json(BUCKET, semantic_path, semantic)
+
+        semantic_exceptions = semantic["exceptions"]
+        db.add_exceptions(job, semantic_exceptions)
+
+        for run in semantic["interpreter_runs"]:
+            db.add_event(
+                job,
+                "phase4_interpreter_run",
+                "semantic_interpretation",
+                {
+                    "provider": run["provider"],
+                    "model": run["model"],
+                    "candidate_count": run["candidate_count"],
+                    "prompt_tokens": run["prompt_tokens"],
+                    "output_tokens": run["output_tokens"],
+                    "total_tokens": run["total_tokens"],
+                    "elapsed_ms": run["elapsed_ms"],
+                    "privacy_mode": semantic["privacy_mode"],
+                },
+            )
+
+        summary = semantic["summary"]
+        review_required = bool(structural_exceptions or semantic_exceptions)
+
         final_status = "needs_review" if review_required else "failed_retryable"
         error_code = (
-            "PHASE3_REVIEW_REQUIRED"
+            "PHASE4_REVIEW_REQUIRED"
             if review_required
-            else "PHASE3_SEMANTIC_INTERPRETATION_NOT_YET_CONNECTED"
+            else "PHASE4_MATH_CANONICALIZATION_NOT_YET_CONNECTED"
         )
         error_message = (
-            "Deterministic structure extraction found exceptions requiring teacher review."
+            "Semantic interpretation completed; unresolved deterministic or semantic exceptions require teacher review."
             if review_required
-            else "Deterministic structure extraction succeeded with no exceptions; semantic interpretation is the next milestone."
+            else "Semantic interpretation passed; canonical mathematics and full memo schema assembly are the next milestone."
         )
 
         job = db.patch_job(
@@ -121,9 +151,9 @@ def run_job(job_id: str) -> int:
             "processing",
             {
                 "status": final_status,
-                "stage": "phase3_structured",
+                "stage": "phase4_semantic_interpreted",
                 "review_required": review_required,
-                "engine_version": "phase3.1",
+                "engine_version": "phase4.0",
                 "error_code": error_code,
                 "error_message": error_message,
                 "updated_at": utc_now(),
@@ -132,41 +162,55 @@ def run_job(job_id: str) -> int:
 
         db.add_event(
             job,
-            "phase3_structure_complete",
-            "phase3_structured",
+            "phase4_semantic_complete",
+            "phase4_semantic_interpreted",
             {
+                "semantic_path": semantic_path,
                 "structure_path": structure_path,
-                "detected_identifier_count": summary["detected_identifier_count"],
-                "leaf_question_count": summary["leaf_question_count"],
-                "unique_question_count": summary["unique_question_count"],
-                "subtotal_count": summary["subtotal_count"],
-                "subtotal_sum": summary["subtotal_sum"],
-                "amber_count": summary["amber_count"],
-                "red_count": summary["red_count"],
+                "structural_exception_count": len(structural_exceptions),
+                "semantic_exception_count": len(semantic_exceptions),
+                "mark_points_total": summary["mark_points_total"],
+                "deterministic_count": summary["deterministic_count"],
+                "ai_candidate_count": summary["ai_candidate_count"],
+                "ai_resolved_green_count": summary["ai_resolved_green_count"],
+                "interpreter_run_count": summary["interpreter_run_count"],
                 "review_required": review_required,
             },
         )
 
         print(
-            "Phase 3 structure verified "
-            f"for job {job_id}: identifiers={summary['detected_identifier_count']}, "
-            f"leaf_questions={summary['leaf_question_count']}, "
-            f"amber={summary['amber_count']}, red={summary['red_count']}"
+            "Phase 4 semantic interpretation verified "
+            f"for job {job_id}: deterministic={summary['deterministic_count']}, "
+            f"ai_candidates={summary['ai_candidate_count']}, "
+            f"semantic_exceptions={summary['semantic_exception_count']}"
         )
         return 0
 
     except IngestionError as exc:
-        fail_processing_job(db, job, code=exc.code, message=exc.public_message, stage="ingestion_failed")
+        fail_processing_job(
+            db, job, code=exc.code, message=exc.public_message, stage="ingestion_failed"
+        )
         raise
     except NormalizationError as exc:
-        fail_processing_job(db, job, code=exc.code, message=exc.public_message, stage="normalization_failed")
+        fail_processing_job(
+            db, job, code=exc.code, message=exc.public_message, stage="normalization_failed"
+        )
+        raise
+    except ProviderError as exc:
+        fail_processing_job(
+            db,
+            job,
+            code=f"PHASE4_{exc.code}",
+            message=exc.public_message,
+            stage="semantic_provider_failed",
+        )
         raise
     except Exception:
         fail_processing_job(
             db,
             job,
             code="WORKER_INTERNAL_ERROR",
-            message="An unexpected error occurred in the hosted deterministic worker.",
+            message="An unexpected error occurred in the hosted memo worker.",
             stage="worker_failed",
         )
         raise
