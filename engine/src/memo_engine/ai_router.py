@@ -87,7 +87,16 @@ def _post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple
         url,
         data=data,
         method="POST",
-        headers={"Content-Type": "application/json", **headers},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            # Groq is fronted by Cloudflare. Python urllib's default
+            # `Python-urllib/<version>` browser signature can be rejected at the
+            # edge with HTTP 403 / Cloudflare 1010 before Groq's API layer sees
+            # the request. Use a stable application identifier instead.
+            "User-Agent": "PBHS-Memo-Converter/phase4.2",
+            **headers,
+        },
     )
     started = time.monotonic()
     try:
