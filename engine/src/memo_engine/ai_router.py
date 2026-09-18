@@ -39,34 +39,49 @@ SEMANTIC_TYPES = [
 ]
 
 
-RESULT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "items": {
-            "type": "array",
-            "items": {
+def _result_schema(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    candidate_ids = [str(item["candidate_id"]) for item in candidates]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ProviderError(
+            "AI_PROVIDER_INPUT_DUPLICATE_CANDIDATE",
+            "The semantic batch contains duplicate candidate identifiers.",
+            retryable=False,
+        )
+
+    value_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "semantic_type": {"type": "string", "enum": SEMANTIC_TYPES},
+            "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+            "band": {"type": "string", "enum": ["green", "amber", "red"]},
+            "rationale": {"type": "string"},
+        },
+        "required": [
+            "semantic_type",
+            "confidence_score",
+            "band",
+            "rationale",
+        ],
+        "additionalProperties": False,
+    }
+
+    return {
+        "type": "object",
+        "properties": {
+            "results": {
                 "type": "object",
                 "properties": {
-                    "candidate_id": {"type": "string"},
-                    "semantic_type": {"type": "string", "enum": SEMANTIC_TYPES},
-                    "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
-                    "band": {"type": "string", "enum": ["green", "amber", "red"]},
-                    "rationale": {"type": "string"},
+                    candidate_id: value_schema
+                    for candidate_id in candidate_ids
                 },
-                "required": [
-                    "candidate_id",
-                    "semantic_type",
-                    "confidence_score",
-                    "band",
-                    "rationale",
-                ],
+                "required": candidate_ids,
                 "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["items"],
-    "additionalProperties": False,
-}
+            }
+        },
+        "required": ["results"],
+        "additionalProperties": False,
+    }
+
 
 
 @dataclass
@@ -245,7 +260,7 @@ def groq_classify(candidates: list[dict[str, Any]], model: str) -> ProviderRun:
             "json_schema": {
                 "name": "memo_mark_semantics",
                 "strict": True,
-                "schema": RESULT_SCHEMA,
+                "schema": _result_schema(candidates),
             },
         },
     }
@@ -259,11 +274,23 @@ def groq_classify(candidates: list[dict[str, Any]], model: str) -> ProviderRun:
     try:
         content = payload["choices"][0]["message"]["content"]
         result = json.loads(content)
-        items = result["items"]
+        keyed = result["results"]
+        expected_ids = [str(item["candidate_id"]) for item in candidates]
+
+        if set(keyed.keys()) != set(expected_ids):
+            raise ValueError("provider result key set does not match candidate set")
+
+        items = [
+            {
+                "candidate_id": candidate_id,
+                **keyed[candidate_id],
+            }
+            for candidate_id in expected_ids
+        ]
     except Exception as exc:
         raise ProviderError(
             "AI_PROVIDER_SCHEMA_ERROR",
-            "The AI provider response did not match the semantic contract.",
+            "The AI provider response did not match the exact semantic candidate contract.",
             retryable=True,
         ) from exc
 
