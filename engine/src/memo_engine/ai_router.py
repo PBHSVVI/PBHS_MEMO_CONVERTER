@@ -211,6 +211,13 @@ def _post_json(
                 time.sleep(wait_seconds)
                 continue
 
+            if exc.code == 400 and provider_code == "tool_use_failed":
+                raise ProviderError(
+                    "AI_PROVIDER_TOOL_USE_FAILED",
+                    "The AI model could not safely complete the structured semantic response.",
+                    retryable=True,
+                ) from exc
+
             if exc.code == 403:
                 safe_code = provider_code or "forbidden"
                 normalized = "".join(
@@ -318,19 +325,23 @@ def groq_classify(candidates: list[dict[str, Any]], model: str) -> ProviderRun:
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": _system_prompt()},
             {
                 "role": "user",
-                "content": json.dumps(
-                    {"candidates": candidates},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
+                "content": (
+                    _system_prompt()
+                    + "\n\nSemantic candidates:\n"
+                    + json.dumps(
+                        {"candidates": candidates},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
                 ),
             },
         ],
         "temperature": 0,
         "reasoning_effort": "low",
-        "max_completion_tokens": 4096,
+        "include_reasoning": False,
+        "max_completion_tokens": 1536,
         "response_format": {
             "type": "json_schema",
             "json_schema": {

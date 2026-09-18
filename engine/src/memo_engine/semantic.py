@@ -165,6 +165,23 @@ def _validate_result(
     return True, None
 
 
+def _unresolved_provider_result(
+    candidate: dict[str, Any],
+    exc: ProviderError,
+) -> dict[str, Any]:
+    return {
+        **candidate,
+        "semantic_type": "other",
+        "confidence_score": 0.0,
+        "band": "amber",
+        "rationale": "Automated semantic classification could not be completed safely.",
+        "provider_valid": False,
+        "provider_validation_issue": "provider_failed",
+        "provider_error_code": exc.code,
+        "resolution_method": "provider_unresolved",
+    }
+
+
 def _run_batches(
     candidates: list[dict[str, Any]],
     *,
@@ -185,25 +202,66 @@ def _run_batches(
             time.sleep(min_interval)
 
         batch = candidates[start:start + batch_size]
-        run = classify(batch, strong=strong)
+
+        try:
+            run = classify(batch, strong=strong)
+        except ProviderError as exc:
+            if exc.code == "AI_PROVIDER_TOOL_USE_FAILED" and len(batch) > 1:
+                for single_index, candidate in enumerate(batch):
+                    if single_index > 0:
+                        time.sleep(3.0)
+                    try:
+                        single_run = classify([candidate], strong=strong)
+                        runs.append(single_run)
+                        result = single_run.results[0]
+                        valid, issue = _validate_result(candidate, result)
+                        output.append({
+                            **candidate,
+                            **result,
+                            "provider_valid": valid,
+                            "provider_validation_issue": issue,
+                            "resolution_method": f"{single_run.provider}:{single_run.model}",
+                        })
+                    except ProviderError as single_exc:
+                        if single_exc.retryable:
+                            output.append(_unresolved_provider_result(candidate, single_exc))
+                        else:
+                            raise
+                continue
+
+            if exc.retryable:
+                for candidate in batch:
+                    output.append(_unresolved_provider_result(candidate, exc))
+                continue
+            raise
+
         runs.append(run)
 
         by_id = {item.get("candidate_id"): item for item in run.results}
         if len(by_id) != len(batch):
-            raise ProviderError(
+            exc = ProviderError(
                 "AI_PROVIDER_RESULT_COUNT_MISMATCH",
                 "The AI provider did not return exactly one result per semantic candidate.",
                 retryable=True,
             )
+            for candidate in batch:
+                output.append(_unresolved_provider_result(candidate, exc))
+            continue
 
         for candidate in batch:
             result = by_id.get(candidate["candidate_id"])
             if result is None:
-                raise ProviderError(
-                    "AI_PROVIDER_RESULT_MISSING",
-                    "The AI provider omitted a semantic candidate.",
-                    retryable=True,
+                output.append(
+                    _unresolved_provider_result(
+                        candidate,
+                        ProviderError(
+                            "AI_PROVIDER_RESULT_MISSING",
+                            "The AI provider omitted a semantic candidate.",
+                            retryable=True,
+                        ),
+                    )
                 )
+                continue
             valid, issue = _validate_result(candidate, result)
             output.append({
                 **candidate,
@@ -294,21 +352,34 @@ def interpret_semantics(structure: dict[str, Any]) -> dict[str, Any]:
         if not is_green:
             level = "red" if chosen["band"] == "red" else "amber"
             issue = chosen["provider_validation_issue"]
-            message = (
-                f"Mark semantics for {candidate['question_id']} require confirmation."
-                if not issue
-                else f"AI semantic interpretation for {candidate['question_id']} conflicts with deterministic shorthand constraints."
-            )
-            exceptions.append({
-                "level": level,
-                "category": "ambiguous_mark_semantics",
-                "affected_id": candidate["question_id"],
-                "message": message,
-                "suggestions": [{
+
+            if issue == "provider_failed":
+                category = "semantic_provider_unresolved"
+                message = (
+                    f"Automated mark-semantic classification for "
+                    f"{candidate['question_id']} could not be completed safely; "
+                    "teacher confirmation is required."
+                )
+                suggestions = []
+            else:
+                category = "ambiguous_mark_semantics"
+                message = (
+                    f"Mark semantics for {candidate['question_id']} require confirmation."
+                    if not issue
+                    else f"AI semantic interpretation for {candidate['question_id']} conflicts with deterministic shorthand constraints."
+                )
+                suggestions = [{
                     "candidate_id": cid,
                     "semantic_type": chosen["semantic_type"],
                     "confidence_score": chosen["confidence_score"],
-                }],
+                }]
+
+            exceptions.append({
+                "level": level,
+                "category": category,
+                "affected_id": candidate["question_id"],
+                "message": message,
+                "suggestions": suggestions,
             })
 
     run_records = [
