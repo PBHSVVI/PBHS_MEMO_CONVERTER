@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -96,101 +97,173 @@ class ProviderRun:
     results: list[dict[str, Any]]
 
 
-def _post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            # Groq is fronted by Cloudflare. Python urllib's default
-            # `Python-urllib/<version>` browser signature can be rejected at the
-            # edge with HTTP 403 / Cloudflare 1010 before Groq's API layer sees
-            # the request. Use a stable application identifier instead.
-            "User-Agent": "PBHS-Memo-Converter/phase4.2",
-            **headers,
-        },
-    )
-    started = time.monotonic()
+def _duration_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    value = value.strip().lower()
     try:
-        with urllib.request.urlopen(req, timeout=90) as response:
-            raw = response.read()
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-    except urllib.error.HTTPError as exc:
-        detail = exc.read(4000).decode("utf-8", errors="replace")
+        return float(value)
+    except ValueError:
+        pass
 
-        provider_code = None
-        provider_type = None
-        provider_message = None
+    match = re.fullmatch(
+        r"(?:(?P<hours>\d+(?:\.\d+)?)h)?"
+        r"(?:(?P<minutes>\d+(?:\.\d+)?)m)?"
+        r"(?:(?P<seconds>\d+(?:\.\d+)?)s)?",
+        value,
+    )
+    if not match:
+        return None
+
+    hours = float(match.group("hours") or 0)
+    minutes = float(match.group("minutes") or 0)
+    seconds = float(match.group("seconds") or 0)
+    total = hours * 3600 + minutes * 60 + seconds
+    return total if total > 0 else None
+
+
+def _rate_limit_wait_seconds(
+    exc: urllib.error.HTTPError,
+    attempt: int,
+) -> float:
+    retry_after = _duration_seconds(exc.headers.get("retry-after"))
+    token_reset = _duration_seconds(exc.headers.get("x-ratelimit-reset-tokens"))
+
+    candidates = [value for value in [retry_after, token_reset] if value is not None]
+    if candidates:
+        # Add a small deterministic cushion so we do not retry on the exact boundary.
+        return min(max(max(candidates) + 1.5, 2.0), 120.0)
+
+    # Headerless fallback: bounded exponential backoff.
+    return min(10.0 * (2 ** attempt), 90.0)
+
+
+def _post_json(
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    started = time.monotonic()
+
+    max_rate_retries = max(
+        0,
+        min(8, int(os.environ.get("MEMO_AI_MAX_RATE_RETRIES", "5"))),
+    )
+    rate_attempt = 0
+
+    while True:
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "PBHS-Memo-Converter/phase4.4",
+                **headers,
+            },
+        )
+
         try:
-            parsed = json.loads(detail)
-            error = parsed.get("error") if isinstance(parsed, dict) else None
-            if isinstance(error, dict):
-                raw_code = error.get("code")
-                raw_type = error.get("type")
-                raw_message = error.get("message")
-                if isinstance(raw_code, str):
-                    provider_code = raw_code[:120]
-                if isinstance(raw_type, str):
-                    provider_type = raw_type[:120]
-                if isinstance(raw_message, str):
-                    provider_message = raw_message[:500]
-        except Exception:
-            pass
+            with urllib.request.urlopen(req, timeout=90) as response:
+                raw = response.read()
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                break
 
-        if exc.code == 429:
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(4000).decode("utf-8", errors="replace")
+
+            provider_code = None
+            provider_type = None
+            provider_message = None
+            try:
+                parsed = json.loads(detail)
+                error = parsed.get("error") if isinstance(parsed, dict) else None
+                if isinstance(error, dict):
+                    raw_code = error.get("code")
+                    raw_type = error.get("type")
+                    raw_message = error.get("message")
+                    if isinstance(raw_code, str):
+                        provider_code = raw_code[:120]
+                    if isinstance(raw_type, str):
+                        provider_type = raw_type[:120]
+                    if isinstance(raw_message, str):
+                        provider_message = raw_message[:500]
+            except Exception:
+                pass
+
+            if exc.code == 429:
+                if rate_attempt >= max_rate_retries:
+                    raise ProviderError(
+                        "AI_PROVIDER_RATE_LIMITED",
+                        "The AI provider remained rate limited after automatic backoff.",
+                        retryable=True,
+                    ) from exc
+
+                wait_seconds = _rate_limit_wait_seconds(exc, rate_attempt)
+                rate_attempt += 1
+                print(
+                    "Groq rate limit reached; "
+                    f"waiting {wait_seconds:.1f}s before retry "
+                    f"{rate_attempt}/{max_rate_retries}."
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            if exc.code == 403:
+                safe_code = provider_code or "forbidden"
+                normalized = "".join(
+                    ch if ch.isalnum() else "_"
+                    for ch in safe_code.upper()
+                ).strip("_")[:80]
+                code = (
+                    f"AI_PROVIDER_FORBIDDEN_{normalized}"
+                    if normalized
+                    else "AI_PROVIDER_FORBIDDEN"
+                )
+
+                if provider_code == "model_permission_blocked_org":
+                    message = (
+                        "Groq blocked the requested model at the organization level. "
+                        "Enable the model under Groq Settings -> Organization -> Limits."
+                    )
+                elif provider_code == "model_permission_blocked_project":
+                    message = (
+                        "Groq blocked the requested model at the API key's project level. "
+                        "Select the project that owns this API key, then enable the model "
+                        "under Groq Settings -> Projects -> Limits."
+                    )
+                elif provider_message:
+                    message = f"Groq denied the request: {provider_message}"
+                else:
+                    message = (
+                        "Groq denied the request with HTTP 403. Check organization and "
+                        "project model permissions."
+                    )
+
+                raise ProviderError(code, message, retryable=False) from exc
+
             raise ProviderError(
-                "AI_PROVIDER_RATE_LIMITED",
-                "The configured AI provider is temporarily rate limited.",
-                retryable=True,
+                "AI_PROVIDER_HTTP_ERROR",
+                (
+                    f"The configured AI provider returned HTTP {exc.code}"
+                    + (
+                        f" ({provider_type}/{provider_code})"
+                        if provider_type or provider_code
+                        else ""
+                    )
+                    + "."
+                ),
+                retryable=500 <= exc.code < 600,
             ) from exc
 
-        if exc.code == 403:
-            safe_code = provider_code or "forbidden"
-            normalized = "".join(
-                ch if ch.isalnum() else "_"
-                for ch in safe_code.upper()
-            ).strip("_")[:80]
-            code = f"AI_PROVIDER_FORBIDDEN_{normalized}" if normalized else "AI_PROVIDER_FORBIDDEN"
-
-            if provider_code == "model_permission_blocked_org":
-                message = (
-                    "Groq blocked the requested model at the organization level. "
-                    "Enable the model under Groq Settings -> Organization -> Limits."
-                )
-            elif provider_code == "model_permission_blocked_project":
-                message = (
-                    "Groq blocked the requested model at the API key's project level. "
-                    "Select the project that owns this API key, then enable the model "
-                    "under Groq Settings -> Projects -> Limits."
-                )
-            elif provider_message:
-                message = f"Groq denied the request: {provider_message}"
-            else:
-                message = (
-                    "Groq denied the request with HTTP 403. Check the organization and "
-                    "the exact project that owns GROQ_API_KEY for model permissions."
-                )
-
-            raise ProviderError(code, message, retryable=False) from exc
-
-        raise ProviderError(
-            "AI_PROVIDER_HTTP_ERROR",
-            (
-                f"The configured AI provider returned HTTP {exc.code}"
-                + (f" ({provider_type}/{provider_code})" if provider_type or provider_code else "")
-                + "."
-            ),
-            retryable=500 <= exc.code < 600,
-        ) from exc
-    except Exception as exc:
-        raise ProviderError(
-            "AI_PROVIDER_NETWORK_ERROR",
-            "The configured AI provider could not be reached.",
-            retryable=True,
-        ) from exc
+        except Exception as exc:
+            raise ProviderError(
+                "AI_PROVIDER_NETWORK_ERROR",
+                "The configured AI provider could not be reached.",
+                retryable=True,
+            ) from exc
 
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -200,6 +273,7 @@ def _post_json(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple
             "The AI provider returned an unreadable response.",
             retryable=True,
         ) from exc
+
     return payload, elapsed_ms
 
 
@@ -229,7 +303,7 @@ semantic choice is safe enough that no unresolved ambiguity could change the
 meaning of the marking guideline. Confidence alone never overrides the shorthand
 constraints or source evidence.
 
-Return only the requested structured output."""
+Keep each rationale to one short sentence of at most 16 words. Return only the requested structured output."""
 
 
 def groq_classify(candidates: list[dict[str, Any]], model: str) -> ProviderRun:
@@ -255,6 +329,8 @@ def groq_classify(candidates: list[dict[str, Any]], model: str) -> ProviderRun:
             },
         ],
         "temperature": 0,
+        "reasoning_effort": "low",
+        "max_completion_tokens": 4096,
         "response_format": {
             "type": "json_schema",
             "json_schema": {
