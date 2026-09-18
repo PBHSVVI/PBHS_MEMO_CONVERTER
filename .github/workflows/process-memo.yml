@@ -30,8 +30,9 @@ jobs:
       MEMO_GROQ_FAST_MODEL: openai/gpt-oss-20b
       MEMO_GROQ_STRONG_MODEL: openai/gpt-oss-120b
       MEMO_AI_ESCALATE: "true"
-      MEMO_AI_BATCH_SIZE: "16"
-      MEMO_AI_MIN_INTERVAL_SECONDS: "15"
+      MEMO_AI_BATCH_SIZE: "6"
+      MEMO_AI_MIN_INTERVAL_SECONDS: "20"
+      MEMO_AI_MAX_RATE_RETRIES: "5"
 
     steps:
       - name: Checkout
