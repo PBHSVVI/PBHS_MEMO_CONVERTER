@@ -1,0 +1,142 @@
+{
+  "RAW": {
+    "equation_count": 260,
+    "structure_exception_count": 7,
+    "canonical_status": "blocked",
+    "computed_total": 134,
+    "observed_total": null,
+    "expected_total": null,
+    "validation_passed": false,
+    "core_invariants_passed": false,
+    "validation_issue_count": 9,
+    "new_phase5_exception_count": 9,
+    "question_subtotals": {
+      "1": {
+        "observed": 23,
+        "computed": 23,
+        "status": "match"
+      },
+      "2": {
+        "observed": 26,
+        "computed": 22,
+        "status": "mismatch"
+      },
+      "3": {
+        "observed": null,
+        "computed": 4,
+        "status": "missing_observed"
+      },
+      "4": {
+        "observed": 14,
+        "computed": 14,
+        "status": "match"
+      },
+      "5": {
+        "observed": 8,
+        "computed": 6,
+        "status": "mismatch"
+      },
+      "6": {
+        "observed": 13,
+        "computed": 13,
+        "status": "match"
+      },
+      "7": {
+        "observed": 20,
+        "computed": 21,
+        "status": "mismatch"
+      },
+      "8": {
+        "observed": 13,
+        "computed": 10,
+        "status": "mismatch"
+      },
+      "9": {
+        "observed": 5,
+        "computed": 8,
+        "status": "mismatch"
+      },
+      "11": {
+        "observed": 16,
+        "computed": 13,
+        "status": "mismatch"
+      }
+    },
+    "validation_error_codes": [
+      "NO_OPEN_RED",
+      "NO_PENDING_REVIEW",
+      "item_total_mismatch",
+      "question_total_mismatch"
+    ]
+  },
+  "GOLD": {
+    "equation_count": 222,
+    "structure_exception_count": 0,
+    "canonical_status": "render_ready",
+    "computed_total": 150,
+    "observed_total": 150,
+    "expected_total": 150,
+    "validation_passed": true,
+    "core_invariants_passed": true,
+    "validation_issue_count": 0,
+    "new_phase5_exception_count": 0,
+    "question_subtotals": {
+      "1": {
+        "observed": 23,
+        "computed": 23,
+        "status": "match"
+      },
+      "2": {
+        "observed": 26,
+        "computed": 26,
+        "status": "match"
+      },
+      "3": {
+        "observed": 4,
+        "computed": 4,
+        "status": "match"
+      },
+      "4": {
+        "observed": 14,
+        "computed": 14,
+        "status": "match"
+      },
+      "5": {
+        "observed": 8,
+        "computed": 8,
+        "status": "match"
+      },
+      "6": {
+        "observed": 13,
+        "computed": 13,
+        "status": "match"
+      },
+      "7": {
+        "observed": 20,
+        "computed": 20,
+        "status": "match"
+      },
+      "8": {
+        "observed": 13,
+        "computed": 13,
+        "status": "match"
+      },
+      "9": {
+        "observed": 8,
+        "computed": 8,
+        "status": "match"
+      },
+      "10": {
+        "observed": 5,
+        "computed": 5,
+        "status": "match"
+      },
+      "11": {
+        "observed": 16,
+        "computed": 16,
+        "status": "match"
+      }
+    },
+    "validation_error_codes": []
+  }
+}

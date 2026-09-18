@@ -78,6 +78,49 @@ class SupabaseRest:
             raise RuntimeError("Job not found or not unique")
         return rows[0]
 
+    def find_reusable_semantic_jobs(
+        self,
+        *,
+        user_id: str,
+        source_sha256: str,
+        exclude_job_id: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        user_q = urllib.parse.quote(user_id, safe="")
+        sha_q = urllib.parse.quote(source_sha256, safe="")
+        exclude_q = urllib.parse.quote(exclude_job_id, safe="")
+        rows = self._request_json(
+            "GET",
+            (
+                "/rest/v1/jobs"
+                f"?user_id=eq.{user_q}"
+                f"&source_sha256=eq.{sha_q}"
+                f"&id=neq.{exclude_q}"
+                "&select=id,status,stage,engine_version,updated_at"
+                "&order=updated_at.desc"
+                f"&limit={max(1, min(int(limit), 25))}"
+            ),
+        )
+        if not isinstance(rows, list):
+            return []
+
+        reusable_stages = {
+            "phase4_semantic_interpreted",
+            "phase5_canonicalized",
+            "phase5_render_ready",
+        }
+        return [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("stage") in reusable_stages
+            and row.get("status") in {"needs_review", "failed_retryable", "complete"}
+        ]
+
+    def download_json(self, bucket: str, object_path: str) -> Any:
+        raw = self.download_object(bucket, object_path)
+        return json.loads(raw.decode("utf-8"))
+
     def patch_job(
         self,
         job_id: str,
@@ -114,7 +157,6 @@ class SupabaseRest:
                 "payload": payload or {},
             },
         )
-
 
     def add_exceptions(
         self,
