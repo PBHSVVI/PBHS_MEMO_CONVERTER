@@ -206,7 +206,11 @@ def _run_batches(
         try:
             run = classify(batch, strong=strong)
         except ProviderError as exc:
-            if exc.code == "AI_PROVIDER_TOOL_USE_FAILED" and len(batch) > 1:
+            if exc.code in {
+                "AI_PROVIDER_TOOL_USE_FAILED",
+                "AI_PROVIDER_JSON_VALIDATE_FAILED",
+                "AI_PROVIDER_SCHEMA_ERROR",
+            } and len(batch) > 1:
                 for single_index, candidate in enumerate(batch):
                     if single_index > 0:
                         time.sleep(3.0)

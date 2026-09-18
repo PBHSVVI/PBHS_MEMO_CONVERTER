@@ -160,7 +160,7 @@ def _post_json(
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "PBHS-Memo-Converter/phase4.4",
+                "User-Agent": "PBHS-Memo-Converter/phase5.1",
                 **headers,
             },
         )
@@ -215,6 +215,13 @@ def _post_json(
                 raise ProviderError(
                     "AI_PROVIDER_TOOL_USE_FAILED",
                     "The AI model could not safely complete the structured semantic response.",
+                    retryable=True,
+                ) from exc
+
+            if exc.code == 400 and provider_code == "json_validate_failed":
+                raise ProviderError(
+                    "AI_PROVIDER_JSON_VALIDATE_FAILED",
+                    "The AI model generated a structured response that Groq could not validate.",
                     retryable=True,
                 ) from exc
 
