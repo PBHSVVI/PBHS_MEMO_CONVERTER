@@ -47,35 +47,20 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check -r engine/requirements.txt
 
-          missing_packages=()
-
-          if ! command -v tesseract >/dev/null 2>&1; then
-            missing_packages+=(tesseract-ocr)
-          fi
-
-          if ! command -v pandoc >/dev/null 2>&1; then
-            missing_packages+=(pandoc)
-          fi
-
-          if ! command -v libreoffice >/dev/null 2>&1 && ! command -v soffice >/dev/null 2>&1; then
-            missing_packages+=(libreoffice-writer)
-          fi
-
-          if ! command -v pdffonts >/dev/null 2>&1; then
-            missing_packages+=(poppler-utils)
-          fi
-
-          missing_packages+=(fonts-dejavu-core fonts-noto-core fonts-liberation2)
-
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends "${missing_packages[@]}"
+          sudo apt-get install -y --no-install-recommends             tesseract-ocr             pandoc             libreoffice-writer             libreoffice-math             poppler-utils             fonts-dejavu-core             fonts-noto-core             fonts-liberation2             fonts-freefont-otf             fonts-stix
+
           fc-cache -f
 
           echo "Hosted renderer toolchain:"
           tesseract --version | head -n 1
           pandoc --version | head -n 1
           (libreoffice --version || soffice --version) | head -n 1
+          dpkg-query -W -f='${Status} ${Version}\n' libreoffice-math
           pdffonts -v 2>&1 | head -n 1
+          fc-match "Cambria Math"
+          fc-match "OpenSymbol"
+          fc-match "STIX Math"
 
       - name: Validate workflow input
         run: python engine/scripts/validate_job_id.py "$MEMO_JOB_ID"
