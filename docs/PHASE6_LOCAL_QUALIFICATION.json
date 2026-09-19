@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "phase": "phase6_local_qualification",
+  "benchmark": "GOLD - PBHS Paper 1 Prelim Memo 2026 - GDE Style Moderated - Glyph Repaired.docx",
+  "source_sha256": "fc676ea8a9ba87e0e7e49d41d631bb824dbff5e38023680d0e029375bc5b6b5a",
+  "renderer_version": "phase6.0",
+  "render_profile": "PBHS_GDE_INTERNAL_V1",
+  "gold_output": {
+    "docx_sha256": "aac9c98f39e6d01b08e8e95bac28b206b9d23ec332f814fa5aabe6c3630b0258",
+    "pdf_sha256": "a7be05f8de322f7979b778c727afb7d62dd4125e8ea98a01966067488000a38a",
+    "page_count": 11,
+    "computed_total": 150,
+    "docx_preflight_passed": true,
+    "pdf_preflight_passed": true,
+    "native_math_elements": 248,
+    "visual_pages_inspected": 11,
+    "visual_qa_passed": true
+  },
+  "glyph_qualification": {
+    "required_glyphs": "∴≤≥≠±−×÷√∈∪∩∅∞∠⟂∥≅✓",
+    "required_glyph_count": 19,
+    "missing_glyphs": [],
+    "docx_sha256": "93143edd4c57711ed5ece9170e66a4fc867a2e6efff09fe25ce8872a7465fa62",
+    "pdf_sha256": "aff85789720b4b0f5a2de8b56970145206c6275a2acef95029d9a58c859d8039",
+    "passed": true
+  },
+  "unit_tests": {
+    "passed": 13,
+    "failed": 0
+  },
+  "notes": [
+    "Identical alternative marking schemes are de-duplicated in the annotation column.",
+    "Moderate leaf rows are protected from asymmetric cross-page cell splitting.",
+    "No artificial page break was inserted to force the approved GOLD 12-page count; local deterministic pagination stabilised at 11 pages."
+  ]
+}

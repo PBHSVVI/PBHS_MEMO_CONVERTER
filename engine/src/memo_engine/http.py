@@ -108,6 +108,7 @@ class SupabaseRest:
             "phase4_semantic_interpreted",
             "phase5_canonicalized",
             "phase5_render_ready",
+            "complete",
         }
         return [
             row

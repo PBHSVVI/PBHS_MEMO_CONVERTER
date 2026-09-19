@@ -59,6 +59,7 @@ TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
 YEAR_RE = re.compile(r"\b(20\d{2})\b")
 PAPER_RE = re.compile(r"(?i)\bPAPER\s*([12])\b")
 GRADE_RE = re.compile(r"(?i)\b(?:FORM|GRADE)\s*([0-9]{1,2})\b")
+DURATION_RE = re.compile(r"(?i)\bTIME\s*[:=-]?\s*(\d+(?:[.,]\d+)?)\s*HOURS?\b")
 
 
 class CanonicalizationError(RuntimeError):
@@ -451,6 +452,7 @@ def _source_records(
                     "allocation_text": "",
                     "paragraphs": [{
                         "text": text,
+                        "segments": unit.get("segments") or [],
                         "equations": unit.get("equations") or [],
                         "drawing_assets": drawing_map.get((unit_index, None, None, 0), []),
                         "source_ref": {
@@ -498,6 +500,7 @@ def _source_records(
                         continue
                     paragraphs.append({
                         "text": text,
+                        "segments": paragraph.get("segments") or [],
                         "equations": paragraph.get("equations") or [],
                         "drawing_assets": drawing_assets,
                         "source_ref": {
@@ -538,6 +541,78 @@ def _all_normalized_text(normalized: dict[str, Any]) -> str:
     return "\n".join(chunks)
 
 
+def _slice_ordered_segments(
+    segments: list[dict[str, Any]],
+    start: int,
+    end: int,
+) -> list[dict[str, Any]]:
+    if end <= start:
+        return []
+    result: list[dict[str, Any]] = []
+    cursor = 0
+    for segment in segments:
+        value = str(segment.get("text") or "")
+        seg_start = cursor
+        seg_end = cursor + len(value)
+        cursor = seg_end
+        if seg_end <= start or seg_start >= end:
+            continue
+        left = max(start, seg_start) - seg_start
+        right = min(end, seg_end) - seg_start
+        if segment.get("type") == "math":
+            # Question identifiers live in ordinary text in the controlled
+            # benchmarks. If a boundary ever cuts an equation, preserve the
+            # complete equation rather than fabricate partial mathematics.
+            if left == 0 and right == len(value):
+                result.append(dict(segment))
+            else:
+                result.append(dict(segment))
+        else:
+            piece = value[left:right]
+            if piece:
+                item = dict(segment)
+                item["text"] = piece
+                result.append(item)
+    return result
+
+
+def _paragraph_from_slice(
+    paragraph: dict[str, Any],
+    start: int,
+    end: int,
+    *,
+    keep_drawings: bool,
+) -> dict[str, Any] | None:
+    ordered = paragraph.get("segments") or []
+    if not ordered:
+        text = str(paragraph.get("text") or "")[start:end]
+        if not text.strip() and not (keep_drawings and paragraph.get("drawing_assets")):
+            return None
+        return {
+            **paragraph,
+            "text": text,
+            "drawing_assets": paragraph.get("drawing_assets") or [] if keep_drawings else [],
+        }
+
+    sliced = _slice_ordered_segments(ordered, start, end)
+    text = "".join(str(item.get("text") or "") for item in sliced)
+    equations = [
+        {"text": item.get("text") or "", "omml": item.get("omml") or ""}
+        for item in sliced
+        if item.get("type") == "math"
+    ]
+    drawings = paragraph.get("drawing_assets") or [] if keep_drawings else []
+    if not text.strip() and not equations and not drawings:
+        return None
+    return {
+        **paragraph,
+        "text": text,
+        "segments": sliced,
+        "equations": equations,
+        "drawing_assets": drawings,
+    }
+
+
 def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {qid: [] for qid in qids}
     deepest = sorted(qids, key=lambda value: (value.count("."), len(value)), reverse=True)
@@ -551,6 +626,16 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
                 result.setdefault(current, []).append(paragraph)
             continue
 
+        if current is not None and matches[0].start() > 0:
+            prefix = _paragraph_from_slice(
+                paragraph,
+                0,
+                matches[0].start(),
+                keep_drawings=False,
+            )
+            if prefix is not None:
+                result.setdefault(current, []).append(prefix)
+
         last_matched: str | None = None
         for idx, match in enumerate(matches):
             qid = match.group(1)
@@ -559,16 +644,14 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
             last_matched = qid
             start = match.end()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-            segment_text = text[start:end].strip()
-            equations = paragraph.get("equations") or [] if idx == len(matches) - 1 else []
-            drawings = paragraph.get("drawing_assets") or [] if idx == len(matches) - 1 else []
-            if segment_text or equations or drawings:
-                result[qid].append({
-                    **paragraph,
-                    "text": segment_text,
-                    "equations": equations,
-                    "drawing_assets": drawings,
-                })
+            sliced = _paragraph_from_slice(
+                paragraph,
+                start,
+                end,
+                keep_drawings=idx == len(matches) - 1,
+            )
+            if sliced is not None:
+                result[qid].append(sliced)
 
         if last_matched is not None:
             descendants = [candidate for candidate in deepest if candidate.startswith(last_matched + ".")]
@@ -580,10 +663,29 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
 def _split_alternative_segments(segments: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     branches: list[list[dict[str, Any]]] = [[]]
     for segment in segments:
-        if _collapse(segment.get("text", "")).upper() == "OR" and not segment.get("equations"):
+        raw_text = str(segment.get("text") or "")
+        collapsed = _collapse(raw_text)
+
+        # A source-side OR is structural only when it occupies the whole
+        # paragraph or starts the paragraph as a standalone word. This avoids
+        # confusing ordinary inline "or" answer notation with competing
+        # solution paths.
+        match = re.match(r"(?i)^\s*OR\b", raw_text)
+        if collapsed.upper() == "OR" or match is not None:
             branches.append([])
-        else:
-            branches[-1].append(segment)
+            if match is not None and match.end() < len(raw_text):
+                remainder = _paragraph_from_slice(
+                    segment,
+                    match.end(),
+                    len(raw_text),
+                    keep_drawings=True,
+                )
+                if remainder is not None and _collapse(remainder.get("text", "")):
+                    branches[-1].append(remainder)
+            continue
+
+        branches[-1].append(segment)
+
     return [branch for branch in branches if branch] or [[]]
 
 
@@ -605,11 +707,48 @@ def _blocks_from_segments(
         payload["block_id"] = f"b_{safe_qid}_{alternative_label.lower()}_{len(blocks) + 1}"
         blocks.append(payload)
 
+    def add_text_block(value: str, refs: list[dict[str, Any]]) -> None:
+        text = _collapse(value)
+        if not text or re.fullmatch(r"\d{1,2}(?:\.\d{1,2}){0,2}\.?", text):
+            return
+        if _looks_math_like(text):
+            try:
+                latex = plain_math_to_latex(text)
+                add_block({
+                    "type": "math",
+                    "semantic_role": "working",
+                    "math": {
+                        "source_text": text,
+                        "canonical_latex": latex,
+                        "presentation_mathml": None,
+                        "plain_text": text,
+                        "display_mode": "display",
+                    },
+                    "source_refs": refs,
+                    "confidence": {"score": 0.95, "band": "green", "rationale": "Plain mathematical text used only within the approved deterministic subset."},
+                    "warnings": ["PLAIN_MATH_SOURCE"],
+                })
+            except CanonicalizationError as exc:
+                issues.append({
+                    "level": "amber",
+                    "category": "math_plain_text_ambiguous",
+                    "affected_id": qid,
+                    "message": exc.public_message,
+                })
+            return
+        add_block({
+            "type": "prose",
+            "semantic_role": "working",
+            "text": text,
+            "source_refs": refs,
+            "confidence": {"score": 1.0, "band": "green", "rationale": "Source prose preserved verbatim apart from whitespace normalization."},
+            "warnings": [],
+        })
+
     for segment in segments:
         text = _collapse(segment.get("text", ""))
-        if text.upper() == "OR":
+        if text.upper() == "OR" and not segment.get("equations"):
             continue
-        equations = segment.get("equations") or []
         drawings = segment.get("drawing_assets") or []
         refs = _source_ref(segment)
 
@@ -623,6 +762,42 @@ def _blocks_from_segments(
                 "warnings": [],
             })
 
+        ordered = segment.get("segments") or []
+        if ordered:
+            for inline in ordered:
+                inline_type = inline.get("type")
+                inline_text = str(inline.get("text") or "")
+                if inline_type == "math":
+                    source_text = _collapse(inline_text)
+                    try:
+                        latex = omml_to_latex(str(inline.get("omml") or ""))
+                    except CanonicalizationError as exc:
+                        issues.append({
+                            "level": "red",
+                            "category": "math_canonicalization_failed",
+                            "affected_id": qid,
+                            "message": exc.public_message,
+                        })
+                        continue
+                    add_block({
+                        "type": "math",
+                        "semantic_role": "working",
+                        "math": {
+                            "source_text": source_text,
+                            "canonical_latex": latex,
+                            "presentation_mathml": None,
+                            "plain_text": source_text,
+                            "display_mode": "display",
+                        },
+                        "source_refs": refs,
+                        "confidence": {"score": 1.0, "band": "green", "rationale": "Derived deterministically from Office Math in original inline order."},
+                        "warnings": [],
+                    })
+                else:
+                    add_text_block(inline_text, refs)
+            continue
+
+        equations = segment.get("equations") or []
         if equations:
             residual = text
             for equation in equations:
@@ -653,54 +828,10 @@ def _blocks_from_segments(
                 })
                 if source_text and source_text in residual:
                     residual = residual.replace(source_text, "", 1).strip()
-            residual = _collapse(residual)
-            if residual and not re.fullmatch(r"\d{1,2}(?:\.\d{1,2}){0,2}\.??", residual):
-                add_block({
-                    "type": "prose",
-                    "semantic_role": "working",
-                    "text": residual,
-                    "source_refs": refs,
-                    "confidence": {"score": 1.0, "band": "green", "rationale": "Source prose preserved verbatim apart from whitespace normalization."},
-                    "warnings": [],
-                })
+            add_text_block(residual, refs)
             continue
 
-        if not text:
-            continue
-        if _looks_math_like(text):
-            try:
-                latex = plain_math_to_latex(text)
-                add_block({
-                    "type": "math",
-                    "semantic_role": "working",
-                    "math": {
-                        "source_text": text,
-                        "canonical_latex": latex,
-                        "presentation_mathml": None,
-                        "plain_text": text,
-                        "display_mode": "display",
-                    },
-                    "source_refs": refs,
-                    "confidence": {"score": 0.95, "band": "green", "rationale": "Plain mathematical text used only within the approved deterministic subset."},
-                    "warnings": ["PLAIN_MATH_SOURCE"],
-                })
-            except CanonicalizationError as exc:
-                issues.append({
-                    "level": "amber",
-                    "category": "math_plain_text_ambiguous",
-                    "affected_id": qid,
-                    "message": exc.public_message,
-                })
-            continue
-
-        add_block({
-            "type": "prose",
-            "semantic_role": "working",
-            "text": text,
-            "source_refs": refs,
-            "confidence": {"score": 1.0, "band": "green", "rationale": "Source prose preserved verbatim apart from whitespace normalization."},
-            "warnings": [],
-        })
+        add_text_block(text, refs)
 
     if blocks:
         for block in reversed(blocks):
@@ -1803,6 +1934,7 @@ def build_canonical_memo(
     year_match = YEAR_RE.search(all_text)
     paper_match = PAPER_RE.search(all_text)
     grade_match = GRADE_RE.search(all_text)
+    duration_match = DURATION_RE.search(all_text)
 
     inherited_exceptions = (
         structure.get("exceptions", []) + semantic.get("exceptions", [])
@@ -1833,7 +1965,10 @@ def build_canonical_memo(
             "language": "en-ZA",
             "exam_code": None,
             "expected_total_marks": expected_final,
-            "duration_minutes": None,
+            "duration_minutes": (
+                int(round(float(duration_match.group(1).replace(",", ".")) * 60))
+                if duration_match else None
+            ),
             "observed_page_count_text": None,
         },
         "render_profile": os.environ.get("MEMO_RENDER_PROFILE", "PBHS_GDE_INTERNAL_V1"),

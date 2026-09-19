@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from .ai_router import ProviderError
@@ -10,6 +14,12 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
+from .renderer import (
+    RENDERER_VERSION,
+    RENDER_PROFILE,
+    RenderingError,
+    render_outputs,
+)
 from .canonical import (
     CanonicalizationError,
     _iter_blocks,
@@ -161,7 +171,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase5.0",
+                "engine_version": "phase6.0",
                 "updated_at": utc_now(),
             },
         )
@@ -260,7 +270,7 @@ def run_job(job_id: str) -> int:
             "processing",
             {
                 "stage": "canonicalization",
-                "engine_version": "phase5.0",
+                "engine_version": "phase6.0",
                 "updated_at": utc_now(),
             },
         )
@@ -313,36 +323,61 @@ def run_job(job_id: str) -> int:
                 "completed, but deterministic or evidence-linked exceptions "
                 "require teacher review."
             )
-        else:
-            # Rendering is intentionally not connected in Phase 5. The
-            # controlled retryable stop makes the milestone explicit without
-            # falsely claiming that a DOCX/PDF has been produced.
-            final_status = "failed_retryable"
-            final_stage = "phase5_render_ready"
-            error_code = "PHASE5_RENDERER_NOT_YET_CONNECTED"
-            error_message = (
-                "Canonical interpretation schema is render-ready; deterministic "
-                "DOCX/PDF rendering is the next milestone."
+
+            job = db.patch_job(
+                job_id,
+                "processing",
+                {
+                    "status": final_status,
+                    "stage": final_stage,
+                    "review_required": True,
+                    "engine_version": "phase6.0",
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "updated_at": utc_now(),
+                },
             )
 
-        job = db.patch_job(
-            job_id,
-            "processing",
-            {
-                "status": final_status,
-                "stage": final_stage,
-                "review_required": review_required,
-                "engine_version": "phase5.0",
-                "error_code": error_code,
-                "error_message": error_message,
-                "updated_at": utc_now(),
-            },
-        )
+            db.add_event(
+                job,
+                "phase5_canonical_complete",
+                final_stage,
+                {
+                    "canonical_path": canonical_path,
+                    "validation_path": validation_path,
+                    "canonical_status": canonical.get("status"),
+                    "question_count": len(canonical.get("questions", [])),
+                    "math_block_count": math_block_count,
+                    "marking_point_count": marking_point_count,
+                    "computed_total": canonical.get("totals", {}).get("computed"),
+                    "observed_total": canonical.get("totals", {}).get("observed"),
+                    "new_exception_count": len(canonical_exceptions),
+                    "total_exception_count": len(canonical.get("exceptions", [])),
+                    "validation_passed": bool(validation.get("passed")),
+                    "core_invariants_passed": bool(
+                        validation.get("core_invariants_passed")
+                    ),
+                    "validation_issue_count": int(
+                        validation.get("issue_count") or 0
+                    ),
+                    "render_ready": False,
+                    "review_required": True,
+                },
+            )
 
+            print(
+                "Phase 6 stopped safely before rendering "
+                f"for job {job_id}: canonical_status={canonical.get('status')}, "
+                f"phase5_exceptions={len(canonical_exceptions)}"
+            )
+            return 0
+
+        # Record the successful Phase 5 handoff before entering deterministic
+        # rendering. This is an audit boundary, not a terminal job state.
         db.add_event(
             job,
             "phase5_canonical_complete",
-            final_stage,
+            "phase5_render_ready",
             {
                 "canonical_path": canonical_path,
                 "validation_path": validation_path,
@@ -361,19 +396,155 @@ def run_job(job_id: str) -> int:
                 "validation_issue_count": int(
                     validation.get("issue_count") or 0
                 ),
-                "render_ready": render_ready,
-                "review_required": review_required,
+                "render_ready": True,
+                "review_required": False,
+            },
+        )
+
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {
+                "stage": "rendering",
+                "review_required": False,
+                "engine_version": "phase6.0",
+                "error_code": None,
+                "error_message": None,
+                "updated_at": utc_now(),
+            },
+        )
+
+        output_docx_path = f"{job['user_id']}/{job['id']}/output/memo.docx"
+        output_pdf_path = f"{job['user_id']}/{job['id']}/output/memo.pdf"
+        render_validation_path = (
+            f"{job['user_id']}/{job['id']}/internal/render_validation.json"
+        )
+
+        with tempfile.TemporaryDirectory(prefix=f"pbhs-render-{job_id}-") as td:
+            td_path = Path(td)
+            try:
+                rendered = render_outputs(canonical, source_bytes, td_path)
+            except RenderingError as exc:
+                diagnostic_docx = td_path / "memo.docx"
+                if diagnostic_docx.exists() and diagnostic_docx.stat().st_size:
+                    try:
+                        db.upload_object(
+                            BUCKET,
+                            output_docx_path,
+                            diagnostic_docx.read_bytes(),
+                            content_type=(
+                                "application/vnd.openxmlformats-officedocument."
+                                "wordprocessingml.document"
+                            ),
+                        )
+                    except Exception:
+                        pass
+                db.add_exceptions(
+                    job,
+                    [{
+                        "level": "red",
+                        "category": "rendering_failure",
+                        "affected_id": None,
+                        "message": exc.public_message,
+                        "suggestions": [],
+                    }],
+                )
+                raise
+
+            docx_bytes = Path(rendered["docx_path"]).read_bytes()
+            pdf_bytes = Path(rendered["pdf_path"]).read_bytes()
+            docx_sha = hashlib.sha256(docx_bytes).hexdigest()
+            pdf_sha = hashlib.sha256(pdf_bytes).hexdigest()
+
+            db.upload_object(
+                BUCKET,
+                output_docx_path,
+                docx_bytes,
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+            db.upload_object(
+                BUCKET,
+                output_pdf_path,
+                pdf_bytes,
+                content_type="application/pdf",
+            )
+
+            render_validation = {
+                "schema_version": "1.0",
+                "phase": "phase6_render_validation",
+                "job_id": job_id,
+                "renderer_version": RENDERER_VERSION,
+                "render_profile": RENDER_PROFILE,
+                "source_schema_version": canonical.get("schema_version"),
+                "canonical_status": canonical.get("status"),
+                "page_count": rendered["page_count"],
+                "docx": {
+                    "path": output_docx_path,
+                    "size_bytes": len(docx_bytes),
+                    "sha256": docx_sha,
+                    "preflight": rendered["docx_preflight"],
+                },
+                "pdf": {
+                    "path": output_pdf_path,
+                    "size_bytes": len(pdf_bytes),
+                    "sha256": pdf_sha,
+                    "preflight": rendered["pdf_preflight"],
+                },
+                "passed": bool(
+                    rendered["docx_preflight"].get("passed")
+                    and rendered["pdf_preflight"].get("passed")
+                ),
+            }
+            db.upload_json(BUCKET, render_validation_path, render_validation)
+
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {
+                "status": "complete",
+                "stage": "complete",
+                "review_required": False,
+                "engine_version": "phase6.0",
+                "error_code": None,
+                "error_message": None,
+                "updated_at": utc_now(),
+            },
+        )
+
+        db.add_event(
+            job,
+            "phase6_render_complete",
+            "complete",
+            {
+                "renderer_version": RENDERER_VERSION,
+                "render_profile": RENDER_PROFILE,
+                "canonical_path": canonical_path,
+                "render_validation_path": render_validation_path,
+                "docx_path": output_docx_path,
+                "pdf_path": output_pdf_path,
+                "docx_sha256": docx_sha,
+                "pdf_sha256": pdf_sha,
+                "docx_size_bytes": len(docx_bytes),
+                "pdf_size_bytes": len(pdf_bytes),
+                "page_count": render_validation["page_count"],
+                "docx_preflight_passed": bool(
+                    render_validation["docx"]["preflight"].get("passed")
+                ),
+                "pdf_preflight_passed": bool(
+                    render_validation["pdf"]["preflight"].get("passed")
+                ),
+                "computed_total": canonical.get("totals", {}).get("computed"),
             },
         )
 
         print(
-            "Phase 5 canonical interpretation completed "
-            f"for job {job_id}: status={canonical.get('status')}, "
-            f"questions={len(canonical.get('questions', []))}, "
-            f"math_blocks={math_block_count}, "
-            f"marks={marking_point_count}, "
-            f"computed_total={canonical.get('totals', {}).get('computed')}, "
-            f"phase5_exceptions={len(canonical_exceptions)}"
+            "Phase 6 deterministic rendering completed "
+            f"for job {job_id}: pages={render_validation['page_count']}, "
+            f"total={canonical.get('totals', {}).get('computed')}, "
+            f"renderer={RENDERER_VERSION}"
         )
         return 0
 
@@ -385,6 +556,15 @@ def run_job(job_id: str) -> int:
     except NormalizationError as exc:
         fail_processing_job(
             db, job, code=exc.code, message=exc.public_message, stage="normalization_failed"
+        )
+        raise
+    except RenderingError as exc:
+        fail_processing_job(
+            db,
+            job,
+            code=f"PHASE6_{exc.code}",
+            message=exc.public_message,
+            stage="rendering_failed",
         )
         raise
     except CanonicalizationError as exc:

@@ -41,6 +41,46 @@ def _text_from_element(element: ET.Element) -> str:
     return "".join(parts)
 
 
+def _paragraph_segments(p: ET.Element) -> list[dict[str, Any]]:
+    """Preserve the original inline order of ordinary text and Office Math."""
+    segments: list[dict[str, Any]] = []
+
+    def add_text(value: str) -> None:
+        if not value:
+            return
+        if segments and segments[-1].get("type") == "text":
+            segments[-1]["text"] += value
+        else:
+            segments.append({"type": "text", "text": value})
+
+    def walk(node: ET.Element) -> None:
+        if node.tag == _attr(M_NS, "oMath"):
+            segments.append({
+                "type": "math",
+                "text": _text_from_element(node),
+                "omml": ET.tostring(node, encoding="unicode"),
+            })
+            return
+        if node.tag == _attr(W_NS, "t"):
+            add_text(node.text or "")
+            return
+        if node.tag == _attr(W_NS, "tab"):
+            add_text("\t")
+            return
+        if node.tag in {_attr(W_NS, "br"), _attr(W_NS, "cr")}:
+            add_text("\n")
+            return
+        for child in list(node):
+            walk(child)
+
+    for child in list(p):
+        # Paragraph properties contain no visible content.
+        if child.tag == _attr(W_NS, "pPr"):
+            continue
+        walk(child)
+    return segments
+
+
 def _paragraph_record(p: ET.Element) -> dict[str, Any]:
     ppr = p.find("w:pPr", NS)
     style = None
@@ -61,19 +101,18 @@ def _paragraph_record(p: ET.Element) -> dict[str, Any]:
             if level_node is not None:
                 ilvl = level_node.get(_attr(W_NS, "val"))
 
-    equations: list[dict[str, Any]] = []
-    for math in p.findall(".//m:oMath", NS):
-        equations.append(
-            {
-                "text": _text_from_element(math),
-                "omml": ET.tostring(math, encoding="unicode"),
-            }
-        )
+    segments = _paragraph_segments(p)
+    equations = [
+        {"text": item["text"], "omml": item["omml"]}
+        for item in segments
+        if item.get("type") == "math"
+    ]
 
-    text = _text_from_element(p)
+    text = "".join(str(item.get("text") or "") for item in segments)
     return {
         "type": "paragraph",
         "text": text,
+        "segments": segments,
         "style": style,
         "numbering": {"num_id": num_id, "level": ilvl}
         if num_id is not None or ilvl is not None
