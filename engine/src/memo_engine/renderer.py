@@ -982,31 +982,23 @@ def preflight_pdf(pdf_path: str | Path, canonical: dict[str, Any]) -> dict[str, 
         if result.returncode == 0:
             lines = result.stdout.splitlines()[2:]
             for line in lines:
-                line = line.rstrip()
-                if not line:
+                parts = line.split()
+                if len(parts) < 8:
                     continue
 
-                # pdffonts uses fixed-width columns; split on 2+ spaces so
-                # multi-word font types such as "CID TrueType" remain intact.
-                columns = re.split(r"\s{2,}", line.strip())
-                if len(columns) >= 6:
-                    name = columns[0]
-                    embedded = columns[3].strip().lower() == "yes"
-                    fonts.append({
-                        "name": name,
-                        "type": columns[1],
-                        "encoding": columns[2],
-                        "embedded": embedded,
-                    })
-                else:
-                    parts = line.split()
-                    if len(parts) >= 8:
-                        fonts.append({
-                            "name": parts[0],
-                            "type": " ".join(parts[1:-6]),
-                            "encoding": parts[-6],
-                            "embedded": parts[-5].lower() == "yes",
-                        })
+                # pdffonts always ends rows with:
+                # encoding  emb  sub  uni  object-ID  generation.
+                # Parse relative to the row end so variable-width / multi-word
+                # font type labels cannot shift the embedding column.
+                encoding = parts[-6]
+                embedded = parts[-5].lower() == "yes"
+                font_type = " ".join(parts[1:-6])
+                fonts.append({
+                    "name": parts[0],
+                    "type": font_type,
+                    "encoding": encoding,
+                    "embedded": embedded,
+                })
 
             if fonts and any(not item["embedded"] for item in fonts):
                 issues.append("PDF_FONT_NOT_EMBEDDED")
