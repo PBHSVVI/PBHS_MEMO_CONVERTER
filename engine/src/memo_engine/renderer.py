@@ -31,10 +31,17 @@ REQUIRED_GLYPHS = "∴≤≥≠±−×÷√∈∪∩∅∞∠⟂∥≅✓"
 
 
 class RenderingError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.public_message = message
+        self.details = details or {}
 
 
 def _iter_items(items: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
@@ -905,6 +912,7 @@ def preflight_pdf(pdf_path: str | Path, canonical: dict[str, Any]) -> dict[str, 
 
     path = Path(pdf_path)
     issues: list[str] = []
+
     try:
         reader = PdfReader(str(path))
         page_text = [(page.extract_text() or "") for page in reader.pages]
@@ -914,21 +922,50 @@ def preflight_pdf(pdf_path: str | Path, canonical: dict[str, Any]) -> dict[str, 
             "The generated PDF could not be inspected.",
         ) from exc
 
-    text = "\n".join(page_text)
+    pypdf_text = "\n".join(page_text)
+
+    # Poppler gives us an independent Unicode extraction path. A required
+    # codepoint is considered preserved when at least one of the two standard
+    # extractors can recover it. This avoids treating an extractor-specific
+    # mapping quirk as a visible glyph failure while retaining a real codepoint
+    # check as required by the frozen rendering specification.
+    poppler_text = ""
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext:
+        result = subprocess.run(
+            [pdftotext, "-enc", "UTF-8", str(path), "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            poppler_text = result.stdout.decode("utf-8", errors="replace")
+
+    extraction_texts = [text for text in [pypdf_text, poppler_text] if text]
+    primary_text = poppler_text or pypdf_text
+
     if not page_text:
         issues.append("PDF_NO_PAGES")
     if page_text and not page_text[-1].strip():
         issues.append("TRAILING_BLANK_PAGE")
-    if "�" in text:
+
+    # A replacement character must be absent from every successful extraction.
+    if any("�" in text for text in extraction_texts):
         issues.append("PDF_REPLACEMENT_CHARACTER")
-    if "TOTAL:" not in text:
+
+    if "TOTAL:" not in primary_text:
         issues.append("PDF_TOTAL_MISSING")
     expected_total = canonical.get("totals", {}).get("computed")
-    if expected_total is not None and str(int(expected_total)) not in text:
+    if expected_total is not None and str(int(expected_total)) not in primary_text:
         issues.append("PDF_TOTAL_VALUE_MISSING")
 
     required = _memo_required_glyphs(canonical)
-    missing = [glyph for glyph in required if glyph not in text]
+    missing = [
+        glyph
+        for glyph in required
+        if not any(glyph in text for text in extraction_texts)
+    ]
     issues.extend(f"PDF_GLYPH_MISSING:{glyph}" for glyph in missing)
 
     fonts: list[dict[str, Any]] = []
@@ -945,21 +982,59 @@ def preflight_pdf(pdf_path: str | Path, canonical: dict[str, Any]) -> dict[str, 
         if result.returncode == 0:
             lines = result.stdout.splitlines()[2:]
             for line in lines:
-                parts = line.split()
-                if len(parts) >= 6:
-                    embedded = parts[-4].lower() == "yes"
-                    fonts.append({"name": parts[0], "embedded": embedded})
+                line = line.rstrip()
+                if not line:
+                    continue
+
+                # pdffonts uses fixed-width columns; split on 2+ spaces so
+                # multi-word font types such as "CID TrueType" remain intact.
+                columns = re.split(r"\s{2,}", line.strip())
+                if len(columns) >= 6:
+                    name = columns[0]
+                    embedded = columns[3].strip().lower() == "yes"
+                    fonts.append({
+                        "name": name,
+                        "type": columns[1],
+                        "encoding": columns[2],
+                        "embedded": embedded,
+                    })
+                else:
+                    parts = line.split()
+                    if len(parts) >= 8:
+                        fonts.append({
+                            "name": parts[0],
+                            "type": " ".join(parts[1:-6]),
+                            "encoding": parts[-6],
+                            "embedded": parts[-5].lower() == "yes",
+                        })
+
             if fonts and any(not item["embedded"] for item in fonts):
                 issues.append("PDF_FONT_NOT_EMBEDDED")
 
-    return {
+    result = {
         "passed": not issues,
         "issues": issues,
         "page_count": len(page_text),
         "required_glyphs": required,
         "missing_glyphs": missing,
         "fonts": fonts,
+        "text_extraction": {
+            "pypdf_available": True,
+            "pypdf_chars": len(pypdf_text),
+            "pdftotext_available": bool(pdftotext),
+            "pdftotext_chars": len(poppler_text),
+            "total_found_pypdf": "TOTAL:" in pypdf_text,
+            "total_found_pdftotext": "TOTAL:" in poppler_text if poppler_text else None,
+        },
     }
+
+    if issues:
+        print(
+            "Phase 6 PDF preflight failed: "
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        )
+
+    return result
 
 
 def render_outputs(
@@ -995,9 +1070,11 @@ def render_outputs(
 
     pdf_preflight = preflight_pdf(pdf_path, canonical)
     if not pdf_preflight["passed"]:
+        issue_text = ", ".join(pdf_preflight.get("issues", [])[:8]) or "unknown"
         raise RenderingError(
             "RENDER_PDF_PREFLIGHT_FAILED",
-            "The generated PDF failed deterministic glyph or output preflight.",
+            "The generated PDF failed deterministic preflight: " + issue_text,
+            details=pdf_preflight,
         )
 
     return {

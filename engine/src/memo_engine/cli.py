@@ -425,20 +425,91 @@ def run_job(job_id: str) -> int:
             try:
                 rendered = render_outputs(canonical, source_bytes, td_path)
             except RenderingError as exc:
+                diagnostic_root = (
+                    f"{job['user_id']}/{job['id']}/internal/render_failure"
+                )
+                diagnostic_docx_path = diagnostic_root + "/memo.docx"
+                diagnostic_pdf_path = diagnostic_root + "/memo.pdf"
+                diagnostic_json_path = diagnostic_root + "/preflight.json"
+
                 diagnostic_docx = td_path / "memo.docx"
+                diagnostic_pdf = td_path / "memo.pdf"
+
+                uploaded_docx = False
+                uploaded_pdf = False
+
                 if diagnostic_docx.exists() and diagnostic_docx.stat().st_size:
                     try:
                         db.upload_object(
                             BUCKET,
-                            output_docx_path,
+                            diagnostic_docx_path,
                             diagnostic_docx.read_bytes(),
                             content_type=(
                                 "application/vnd.openxmlformats-officedocument."
                                 "wordprocessingml.document"
                             ),
                         )
+                        uploaded_docx = True
                     except Exception:
                         pass
+
+                if diagnostic_pdf.exists() and diagnostic_pdf.stat().st_size:
+                    try:
+                        db.upload_object(
+                            BUCKET,
+                            diagnostic_pdf_path,
+                            diagnostic_pdf.read_bytes(),
+                            content_type="application/pdf",
+                        )
+                        uploaded_pdf = True
+                    except Exception:
+                        pass
+
+                diagnostic_payload = {
+                    "schema_version": "1.0",
+                    "phase": "phase6_render_failure",
+                    "job_id": job_id,
+                    "renderer_version": RENDERER_VERSION,
+                    "render_profile": RENDER_PROFILE,
+                    "error_code": exc.code,
+                    "message": exc.public_message,
+                    "details": exc.details,
+                    "diagnostic_docx_path": (
+                        diagnostic_docx_path if uploaded_docx else None
+                    ),
+                    "diagnostic_pdf_path": (
+                        diagnostic_pdf_path if uploaded_pdf else None
+                    ),
+                }
+                try:
+                    db.upload_json(
+                        BUCKET,
+                        diagnostic_json_path,
+                        diagnostic_payload,
+                    )
+                except Exception:
+                    diagnostic_json_path = None
+
+                try:
+                    db.add_event(
+                        job,
+                        "phase6_render_failed",
+                        "rendering_failed",
+                        {
+                            "error_code": exc.code,
+                            "issues": list(exc.details.get("issues", [])),
+                            "diagnostic_docx_path": (
+                                diagnostic_docx_path if uploaded_docx else None
+                            ),
+                            "diagnostic_pdf_path": (
+                                diagnostic_pdf_path if uploaded_pdf else None
+                            ),
+                            "diagnostic_json_path": diagnostic_json_path,
+                        },
+                    )
+                except Exception:
+                    pass
+
                 db.add_exceptions(
                     job,
                     [{
