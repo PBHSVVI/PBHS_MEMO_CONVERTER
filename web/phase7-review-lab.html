@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PBHS Memo Converter — Phase 7 Review Lab</title>
+<style>
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  color:#172033;background:#eef2f7;
+  --card:#fff;--ink:#172033;--muted:#667085;--line:#d7deea;
+  --amber:#9a6700;--amberbg:#fff8dc;--red:#a30d1d;--redbg:#fff0f2;
+  --blue:#163a69;--blue2:#255c99;--green:#146c43;--greenbg:#eaf8f0;
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(#eef3f8,#f7f9fc 32rem);min-height:100vh}
+header{background:#102b4f;color:white;padding:18px 20px;box-shadow:0 2px 10px #0002}
+header .inner,main{max-width:1100px;margin:auto}
+h1{font-size:1.25rem;margin:0}.sub{opacity:.8;margin-top:4px;font-size:.92rem}
+main{padding:22px 16px 60px}
+.panel,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 5px 20px #1b2b4210}
+.panel{padding:18px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+label{display:block;font-weight:700;font-size:.9rem;margin:10px 0 6px}
+input,textarea,button{font:inherit}
+input[type=email],input[type=password],textarea{
+  width:100%;padding:11px 12px;border:1px solid #bac5d4;border-radius:10px;background:#fff
+}
+textarea{min-height:92px;resize:vertical}
+button{border:0;border-radius:10px;padding:10px 13px;font-weight:750;cursor:pointer}
+button.primary{background:var(--blue);color:white}
+button.secondary{background:#e8eef6;color:#17365d}
+button.confirm{background:var(--green);color:white}
+button.reject{background:#f5d9dd;color:#85101c}
+button:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.status{padding:12px 14px;border-radius:12px;margin-top:12px;background:#eef5ff;color:#17365d}
+.success{background:var(--greenbg);color:var(--green)}
+.warn{background:#fff3e8;color:#8a4c00}
+#cards{display:grid;gap:14px;margin-top:16px}
+.card{padding:16px}
+.card.red{border-left:6px solid var(--red)}
+.card.amber{border-left:6px solid #e1a400}
+.head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.badge{border-radius:999px;padding:4px 9px;font-size:.75rem;font-weight:850;text-transform:uppercase}
+.red .badge{background:var(--redbg);color:var(--red)}
+.amber .badge{background:var(--amberbg);color:var(--amber)}
+.meta{color:var(--muted);font-size:.86rem;margin-top:4px}
+.message{font-weight:700;margin:12px 0}
+.evidence{background:#f7f9fc;border:1px solid #e0e6ef;border-radius:12px;padding:12px;margin:10px 0}
+.evidence pre{white-space:pre-wrap;margin:6px 0 0;font-family:inherit;font-size:.9rem}
+.suggestion{background:#f1f6ff;border:1px solid #d6e4f8;padding:10px;border-radius:10px;margin-top:8px}
+.proposal{margin-top:12px;padding:12px;background:#f2fbf6;border:1px solid #cfe9da;border-radius:12px}
+small{color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+.log{white-space:pre-wrap;word-break:break-word;background:#0c1626;color:#d9e6f4;padding:13px;border-radius:10px;max-height:300px;overflow:auto;font-size:.8rem}
+.hide{display:none!important}
+@media(max-width:720px){
+  .grid{grid-template-columns:1fr}
+  main{padding:14px 10px 50px}
+  .panel,.card{border-radius:12px}
+  .head{display:block}
+  button{width:100%}
+  .actions{display:grid;grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header><div class="inner">
+  <h1>PBHS Mathematics — Memo Review</h1>
+  <div class="sub">Phase 7 controlled exception and correction workflow</div>
+</div></header>
+
+<main>
+<section class="panel">
+  <h2 style="margin-top:0">1. Create a fresh RAW review job</h2>
+  <div class="grid">
+    <div><label>Email</label><input id="email" type="email" value="ivanvollenhoven@boyshigh.com"></div>
+    <div><label>Password</label><input id="password" type="password"></div>
+  </div>
+  <label>RAW Paper 1 DOCX</label>
+  <input id="source" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+  <div class="actions">
+    <button id="start" class="primary">Convert and open review</button>
+  </div>
+  <div id="status" class="status">Ready.</div>
+</section>
+
+<section id="reviewPanel" class="panel hide">
+  <div class="head">
+    <div>
+      <h2 style="margin:0">2. Review exceptions</h2>
+      <div id="jobMeta" class="meta"></div>
+    </div>
+    <button id="refresh" class="secondary">Refresh</button>
+  </div>
+  <p><small>Amber always keeps typed/photo/upload routes. Red never forces a suggested answer. Nothing changes the memo until a displayed proposal is explicitly confirmed.</small></p>
+  <div id="cards"></div>
+</section>
+
+<section class="panel">
+  <details>
+    <summary style="font-weight:750;cursor:pointer">Technical test log</summary>
+    <pre id="log" class="log">Ready.</pre>
+  </details>
+</section>
+</main>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const URL='https://njrqiurqljwtuqrvguhj.supabase.co';
+const KEY='sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b';
+const supabase=createClient(URL,KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const $=s=>document.querySelector(s);
+let user=null, jobId=null, structure=null, canonical=null;
+const statusEl=$('#status'), cards=$('#cards'), panel=$('#reviewPanel'), logEl=$('#log');
+
+function log(msg,obj){
+  logEl.textContent += `\n\n${new Date().toLocaleTimeString()} — ${msg}${obj===undefined?'':'\n'+JSON.stringify(obj,null,2)}`;
+  logEl.scrollTop=logEl.scrollHeight;
+}
+function setStatus(text,kind=''){
+  statusEl.textContent=text;
+  statusEl.className='status'+(kind?' '+kind:'');
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function safeName(n){return n.replace(/[^A-Za-z0-9._-]+/g,'_').slice(0,180)||'source.docx';}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function signIn(){
+  const {data,error}=await supabase.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});
+  if(error) throw error;
+  user=data.user; log('Signed in',{user_id:user.id});
+}
+async function downloadJson(path){
+  const {data,error}=await supabase.storage.from('memo-files').download(path);
+  if(error) return null;
+  try{return JSON.parse(await data.text())}catch{return null}
+}
+function evidenceFor(ex){
+  const aid=ex.affected_id;
+  let q=null;
+  if(aid && structure?.questions) q=structure.questions.find(x=>String(x.question_id)===String(aid));
+  if(q){
+    return {
+      source_preview:q.source_preview||'',
+      printed_marks:q.printed_marks,
+      computed_shorthand_marks:q.computed_shorthand_marks,
+      mark_points:q.mark_points||[]
+    };
+  }
+  if(ex.category==='unlabeled_mark_bearing_question' && structure?.unlabeled_mark_blocks){
+    const b=structure.unlabeled_mark_blocks.find(x=>String(x.candidate)===String(aid));
+    if(b) return {source_preview:`Unlabelled source row; candidate ${b.candidate||'unknown'}`,printed_marks:b.printed_allocations?.join(', ')};
+  }
+  if(ex.category==='subtotal_sum_unexpected'){
+    return {source_preview:`Detected subtotal sum: ${structure?.summary?.subtotal_sum ?? 'unknown'}`};
+  }
+  return {source_preview:'Evidence is retained in the job artifacts; no compact question preview was resolved for this exception.'};
+}
+
+async function refreshReview(){
+  if(!jobId||!user)return;
+  const [jr,er,cr]=await Promise.all([
+    supabase.from('jobs').select('id,status,stage,review_required,source_filename,source_sha256,attempt_count').eq('id',jobId).single(),
+    supabase.from('exceptions').select('id,level,category,affected_id,message,suggestions,status,resolved_by_correction_id,created_at').eq('job_id',jobId).order('created_at',{ascending:true}),
+    supabase.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at,confirmed_at').eq('job_id',jobId).order('created_at',{ascending:false})
+  ]);
+  if(jr.error)throw jr.error;if(er.error)throw er.error;if(cr.error)throw cr.error;
+  const job=jr.data, exceptions=er.data||[], corrections=cr.data||[];
+
+  structure=await downloadJson(`${user.id}/${jobId}/internal/structure.json`);
+  canonical=await downloadJson(`${user.id}/${jobId}/internal/canonical.json`);
+
+  $('#jobMeta').textContent=`${job.source_filename||''} • ${job.status} / ${job.stage} • ${exceptions.filter(x=>x.status!=='resolved').length} unresolved`;
+  panel.classList.remove('hide');
+  cards.innerHTML='';
+
+  for(const ex of exceptions){
+    const corr=corrections.find(c=>c.exception_id===ex.id && c.confirmation_status==='pending');
+    const ev=evidenceFor(ex);
+    const el=document.createElement('article');
+    el.className=`card ${ex.level}`;
+
+    const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[];
+    const suggestionHtml=suggestions.map((s,i)=>{
+      const label=s.candidate||s.value||s.display_text||s.text||JSON.stringify(s);
+      return `<div class="suggestion"><b>Suggested interpretation:</b> ${esc(label)}
+        <div class="actions"><button class="secondary suggestionBtn" data-index="${i}">Use this suggestion</button></div></div>`;
+    }).join('');
+
+    const marks=(ev.mark_points||[]).map(m=>`${m.count||''}${m.code||''} ${m.descriptor||''}`.trim()).join(' • ');
+    let proposal='';
+    if(corr){
+      if(corr.proposed_patch){
+        proposal=`<div class="proposal"><b>Show-back for confirmation</b><div style="margin-top:6px">${esc(corr.display_text)}</div>
+          <div class="actions"><button class="confirm confirmBtn">Confirm this interpretation</button><button class="reject rejectBtn">Reject and edit again</button></div></div>`;
+      }else{
+        proposal=`<div class="proposal"><b>Evidence received.</b><div style="margin-top:6px">${esc(corr.display_text||'Reinterpretation pending.')}</div><small>This cannot be confirmed until reinterpretation produces a structured proposal.</small></div>`;
+      }
+    }
+
+    el.innerHTML=`
+      <div class="head"><div><span class="badge">${esc(ex.level)}</span>
+      <div class="meta">${esc(ex.category)}${ex.affected_id?' • '+esc(ex.affected_id):''} • ${esc(ex.status)}</div></div></div>
+      <div class="message">${esc(ex.message)}</div>
+      <div class="evidence"><b>Source evidence</b><pre>${esc(ev.source_preview)}</pre>
+      ${ev.printed_marks!==undefined?`<div class="meta">Printed marks: ${esc(ev.printed_marks)}${ev.computed_shorthand_marks!=null?` • shorthand computes: ${esc(ev.computed_shorthand_marks)}`:''}</div>`:''}
+      ${marks?`<div class="meta">${esc(marks)}</div>`:''}</div>
+      ${ex.status==='resolved'?'<div class="status success">Resolved by confirmed correction.</div>':suggestionHtml}
+      ${ex.status!=='resolved'&&!corr?`
+        <hr><label>Type/edit correction</label>
+        <textarea class="typed" placeholder="Enter the correction exactly as you want it interpreted."></textarea>
+        <div class="actions">
+          <button class="primary typedBtn">Submit typed correction</button>
+          <button class="secondary photoBtn">Take photo</button>
+          <button class="secondary uploadBtn">Upload file</button>
+        </div>
+        <input class="photoInput hide" type="file" accept="image/*" capture="environment">
+        <input class="uploadInput hide" type="file" accept="image/*,.pdf,.docx">
+      `:''}
+      ${proposal}
+    `;
+
+    const invoke=async(name,body)=>{
+      const r=await supabase.functions.invoke(name,{body});
+      if(r.error)throw r.error;
+      return r.data;
+    };
+
+    for(const b of el.querySelectorAll('.suggestionBtn')){
+      b.onclick=async()=>{
+        try{
+          b.disabled=true;
+          const data=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'suggestion',suggestion_index:Number(b.dataset.index)});
+          log('Suggested correction submitted',data);await refreshReview();
+        }catch(e){alert(e.message);b.disabled=false}
+      };
+    }
+    const tb=el.querySelector('.typedBtn');
+    if(tb)tb.onclick=async()=>{
+      const text=el.querySelector('.typed').value.trim();
+      if(!text)return alert('Type a correction first.');
+      try{
+        tb.disabled=true;
+        const data=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:text});
+        log('Typed correction submitted',data);await refreshReview();
+      }catch(e){alert(e.message);tb.disabled=false}
+    };
+
+    async function uploadEvidence(kind,file){
+      const correctionId=crypto.randomUUID();
+      const path=`${user.id}/${jobId}/corrections/${correctionId}/${safeName(file.name)}`;
+      const up=await supabase.storage.from('memo-files').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
+      if(up.error)throw up.error;
+      const data=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,correction_id:correctionId,input_kind:kind,storage_path:path});
+      log(`${kind} correction submitted`,data);await refreshReview();
+    }
+    const pi=el.querySelector('.photoInput'), pb=el.querySelector('.photoBtn');
+    if(pb&&pi){pb.onclick=()=>pi.click();pi.onchange=()=>pi.files[0]&&uploadEvidence('photo',pi.files[0]).catch(e=>alert(e.message));}
+    const ui=el.querySelector('.uploadInput'), ub=el.querySelector('.uploadBtn');
+    if(ub&&ui){ub.onclick=()=>ui.click();ui.onchange=()=>ui.files[0]&&uploadEvidence('upload',ui.files[0]).catch(e=>alert(e.message));}
+
+    const cb=el.querySelector('.confirmBtn');
+    if(cb)cb.onclick=async()=>{
+      try{
+        cb.disabled=true;
+        const data=await invoke('confirm-correction',{correction_id:corr.id});
+        log('Correction confirmed',data);
+        const events=await supabase.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true});
+        const confirmed=(events.data||[]).some(e=>e.event_type==='phase7_correction_confirmed'&&e.payload?.correction_id===corr.id);
+        if(confirmed)setStatus('SUCCESS — Phase 7 two-stage correction lifecycle verified: proposal shown, explicitly confirmed, exception resolved and audit event persisted.','success');
+        await refreshReview();
+      }catch(e){alert(e.message);cb.disabled=false}
+    };
+    const rb=el.querySelector('.rejectBtn');
+    if(rb)rb.onclick=async()=>{
+      try{
+        rb.disabled=true;
+        const data=await invoke('reject-correction',{correction_id:corr.id});
+        log('Correction rejected',data);await refreshReview();
+      }catch(e){alert(e.message);rb.disabled=false}
+    };
+
+    cards.appendChild(el);
+  }
+}
+
+$('#refresh').onclick=()=>refreshReview().catch(e=>alert(e.message));
+
+$('#start').onclick=async()=>{
+  $('#start').disabled=true;logEl.textContent='Starting…';
+  try{
+    const file=$('#source').files[0];
+    if(!file)throw new Error('Choose the RAW Paper 1 DOCX.');
+    if(!user)await signIn();
+
+    jobId=crypto.randomUUID();
+    const path=`${user.id}/${jobId}/source/${safeName(file.name)}`;
+    setStatus('Uploading source…');
+    let r=await supabase.from('jobs').insert({id:jobId,user_id:user.id,status:'queued',stage:'upload',source_filename:file.name,source_mime:file.type||null,source_path:path,source_size_bytes:file.size});
+    if(r.error)throw r.error;
+    r=await supabase.storage.from('memo-files').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
+    if(r.error)throw r.error;
+    const d=await supabase.functions.invoke('dispatch-memo',{body:{job_id:jobId}});
+    if(d.error)throw d.error;log('Dispatch accepted',d.data);
+
+    setStatus('Converting…');
+    const terminal=new Set(['needs_review','complete','failed_retryable','failed']);
+    let job=null;
+    for(let i=0;i<360;i++){
+      await sleep(2000);
+      const q=await supabase.from('jobs').select('id,status,stage,review_required,error_code,error_message,engine_version').eq('id',jobId).single();
+      if(q.error)throw q.error;job=q.data;
+      if(i===0||i%5===4||terminal.has(job.status))log(`Poll ${i+1}: ${job.status} / ${job.stage}`,job);
+      if(terminal.has(job.status))break;
+    }
+    if(job?.status!=='needs_review')throw new Error(`Expected needs_review, got ${job?.status} / ${job?.stage}.`);
+    setStatus('Review required — choose one exception below and complete the show-back/confirmation cycle.','warn');
+    await refreshReview();
+  }catch(e){
+    setStatus('Test stopped: '+e.message,'warn');log('ERROR',{name:e.name,message:e.message});
+  }finally{
+    $('#password').value='';$('#start').disabled=false;
+  }
+};
+</script>
+</body>
+</html>
