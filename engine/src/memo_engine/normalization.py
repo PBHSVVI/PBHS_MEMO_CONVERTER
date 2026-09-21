@@ -268,6 +268,23 @@ def _ocr_image(image_bytes: bytes) -> str:
             "NORMALIZATION_OCR_ENGINE_MISSING",
             "Local OCR was required but Tesseract is not installed on the hosted runner.",
         )
+
+    # Phone cameras commonly store pixels sideways and rely on EXIF Orientation
+    # for display. Tesseract does not reliably honor that metadata when reading
+    # stdin, so normalise orientation deterministically before OCR.
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            corrected = ImageOps.exif_transpose(image).convert("RGB")
+            buffer = io.BytesIO()
+            corrected.save(buffer, format="PNG")
+            image_bytes = buffer.getvalue()
+    except Exception:
+        # Preserve the original deterministic OCR route if Pillow cannot decode
+        # the image; downstream ambiguity remains review rather than invention.
+        pass
+
     result = subprocess.run(
         [exe, "stdin", "stdout", "-l", "eng", "--psm", "6"],
         input=image_bytes,

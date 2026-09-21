@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import json
+import os
 import re
 import sys
 import urllib.parse
@@ -8,6 +11,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from .http import SupabaseRest
+from .ai_router import ProviderError, _post_json
 from .ingestion import IngestionError, ingest_bytes
 from .normalization import NormalizationError, normalize_source
 
@@ -191,6 +195,129 @@ def _question_candidates(text: str) -> list[str]:
     return seen
 
 
+def _vision_question_candidates(
+    image_bytes: bytes,
+    mime_type: str,
+) -> tuple[list[str], dict[str, Any]]:
+    privacy_mode = os.environ.get(
+        "MEMO_PRIVACY_MODE", "APPROVED_EXTERNAL_ONLY"
+    ).strip().upper()
+    approved = {
+        part.strip().lower()
+        for part in os.environ.get("MEMO_APPROVED_PROVIDERS", "groq").split(",")
+        if part.strip()
+    }
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+
+    if privacy_mode == "LOCAL_ONLY" or "groq" not in approved or not key:
+        return [], {
+            "used": False,
+            "reason": "external_vision_not_configured",
+        }
+
+    model = os.environ.get(
+        "MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b"
+    ).strip() or "qwen/qwen3.8-27b"
+
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    safe_mime = mime_type if mime_type in {"image/jpeg", "image/png"} else "image/jpeg"
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "question_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "transcription": {"type": "string"},
+        },
+        "required": ["question_ids", "transcription"],
+        "additionalProperties": False,
+    }
+
+    body = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "OCR task only. Transcribe every question-number identifier "
+                        "that is visibly written in this correction image. "
+                        "Examples of the allowed shape are 2.2 and 11.2.1. "
+                        "Do not infer, repair, autocomplete, or choose a likely value. "
+                        "If a digit or identifier is genuinely unreadable, return an "
+                        "empty question_ids array. Return the visible transcription too."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{safe_mime};base64,{encoded}",
+                    },
+                },
+            ],
+        }],
+        "temperature": 0,
+        "reasoning_effort": "none",
+        "max_completion_tokens": 256,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "correction_identifier_ocr",
+                "strict": True,
+                "schema": schema,
+            },
+        },
+    }
+
+    try:
+        payload, elapsed_ms = _post_json(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {"Authorization": f"Bearer {key}"},
+            body,
+        )
+        content = payload["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except ProviderError as exc:
+        return [], {
+            "used": True,
+            "provider": "groq",
+            "model": model,
+            "error_code": exc.code,
+            "error_message": exc.public_message,
+        }
+    except Exception:
+        return [], {
+            "used": True,
+            "provider": "groq",
+            "model": model,
+            "error_code": "VISION_RESPONSE_INVALID",
+        }
+
+    ids: list[str] = []
+    raw_ids = parsed.get("question_ids")
+    if isinstance(raw_ids, list):
+        for item in raw_ids:
+            value = str(item).strip()
+            if QUESTION_TOKEN_RE.fullmatch(value) and value not in ids:
+                ids.append(value)
+
+    usage = payload.get("usage") or {}
+    return ids, {
+        "used": True,
+        "provider": "groq",
+        "model": model,
+        "elapsed_ms": elapsed_ms,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "output_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "question_ids": ids,
+        "transcription": str(parsed.get("transcription") or "")[:500],
+    }
+
+
 def deterministic_proposal(
     exception: dict[str, Any],
     evidence_text: str,
@@ -222,6 +349,18 @@ def deterministic_proposal(
     if category in {"numbering_jump", "suspicious_question_identifier"}:
         if not affected or not QUESTION_TOKEN_RE.fullmatch(affected):
             return None, None, evidence
+
+        suggested_targets = [
+            str(item.get("candidate") or "").strip()
+            for item in (exception.get("suggestions") or [])
+            if isinstance(item, dict)
+            and item.get("kind") == "review_numbering"
+            and str(item.get("candidate") or "").strip()
+        ]
+        if suggested_targets and target not in suggested_targets:
+            evidence["deterministic_suggestion_targets"] = suggested_targets
+            return None, None, evidence
+
         source_parts = affected.split(".")
         target_parts = target.split(".")
         if len(source_parts) != len(target_parts) or source_parts[0] != target_parts[0]:
@@ -276,6 +415,39 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
         proposal, display_text, interpretation = deterministic_proposal(
             exception, evidence_text
         )
+
+        # Tesseract remains the free/local first pass. Handwritten correction
+        # evidence is escalated to the approved vision provider only when the
+        # deterministic OCR result cannot produce a safe proposal.
+        input_kind = str(correction.get("input_kind") or "")
+        detected_kind = str(extraction.get("detected_kind") or "")
+        if (
+            proposal is None
+            and input_kind in {"photo", "upload"}
+            and detected_kind in {"jpeg", "png"}
+        ):
+            storage_path = str(correction.get("storage_path") or "")
+            blob = db.download_object(BUCKET, storage_path)
+            mime_type = str(extraction.get("detected_mime") or "")
+            vision_ids, vision = _vision_question_candidates(blob, mime_type)
+            extraction["vision_fallback"] = vision
+
+            if vision_ids:
+                tesseract_interpretation = interpretation
+                proposal, display_text, vision_interpretation = deterministic_proposal(
+                    exception, "\n".join(vision_ids)
+                )
+                interpretation = {
+                    **vision_interpretation,
+                    "local_ocr_candidate_question_ids": (
+                        tesseract_interpretation.get("candidate_question_ids") or []
+                    ),
+                    "vision_candidate_question_ids": vision_ids,
+                }
+                if proposal is not None:
+                    proposal["reinterpretation_method"] = (
+                        "groq_vision_ocr_then_deterministic_numbering"
+                    )
     except CorrectionReinterpretationError as exc:
         extraction = {"method": "failed", "error_code": exc.code}
         proposal = None
