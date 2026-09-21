@@ -1,0 +1,55 @@
+name: Reinterpret Correction
+
+on:
+  workflow_dispatch:
+    inputs:
+      correction_id:
+        description: "Memo Builder correction UUID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: correction-${{ inputs.correction_id }}
+  cancel-in-progress: false
+
+jobs:
+  reinterpret:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      MEMO_CORRECTION_ID: ${{ inputs.correction_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install correction reinterpretation dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r engine/requirements.txt
+
+          missing_packages=()
+          if ! command -v tesseract >/dev/null 2>&1; then
+            missing_packages+=(tesseract-ocr)
+          fi
+          if ! command -v pdftoppm >/dev/null 2>&1; then
+            missing_packages+=(poppler-utils)
+          fi
+
+          if [ "${#missing_packages[@]}" -gt 0 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${missing_packages[@]}"
+          fi
+
+      - name: Reinterpret correction evidence
+        run: python -m engine.src.memo_engine.correction_reinterpretation "$MEMO_CORRECTION_ID"
