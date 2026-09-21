@@ -23,7 +23,12 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       MEMO_CORRECTION_ID: ${{ inputs.correction_id }}
+      MEMO_PRIVACY_MODE: APPROVED_EXTERNAL_ONLY
+      MEMO_APPROVED_PROVIDERS: groq
+      MEMO_GROQ_VISION_MODEL: qwen/qwen3.8-27b
+      MEMO_AI_MAX_RATE_RETRIES: "5"
 
     steps:
       - name: Checkout
