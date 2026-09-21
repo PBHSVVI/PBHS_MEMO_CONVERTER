@@ -122,6 +122,10 @@ def _rename_question_identifier(
         return None, _issue("correction_target_conflict", target_id, f"Question identifier {target_id} already exists.")
 
     q = matches[0]
+    # Preserve the identifier that actually appears in the immutable source.
+    # Canonical numbering may change, but source segmentation must still use
+    # the original printed token to recover the associated working.
+    q["source_question_id"] = str(q.get("source_question_id") or source_id)
     q["question_id"] = target_id
     q["path"] = list(qtuple(target_id))
     q["depth"] = len(q["path"])

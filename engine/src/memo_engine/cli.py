@@ -205,7 +205,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase7.1",
+                "engine_version": "phase7.2",
                 "updated_at": utc_now(),
             },
         )
@@ -376,7 +376,7 @@ def run_job(job_id: str) -> int:
             "processing",
             {
                 "stage": "canonicalization",
-                "engine_version": "phase7.1",
+                "engine_version": "phase7.2",
                 "updated_at": utc_now(),
             },
         )
@@ -492,7 +492,7 @@ def run_job(job_id: str) -> int:
                     "status": final_status,
                     "stage": final_stage,
                     "review_required": True,
-                    "engine_version": "phase7.1",
+                    "engine_version": "phase7.2",
                     "error_code": error_code,
                     "error_message": error_message,
                     "updated_at": utc_now(),
@@ -572,7 +572,7 @@ def run_job(job_id: str) -> int:
             {
                 "stage": "rendering",
                 "review_required": False,
-                "engine_version": "phase7.1",
+                "engine_version": "phase7.2",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),
@@ -672,7 +672,7 @@ def run_job(job_id: str) -> int:
                 "status": "complete",
                 "stage": "complete",
                 "review_required": False,
-                "engine_version": "phase7.1",
+                "engine_version": "phase7.2",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),

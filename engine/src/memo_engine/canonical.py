@@ -1830,12 +1830,30 @@ def build_canonical_memo(
 
     segments_by_qid: dict[str, list[dict[str, Any]]] = {qid: [] for qid in qmap}
     for record in records:
-        qids = [qid for qid, qdata in qmap.items() if int(qdata.get("source_block_index", -1)) == record["block_index"]]
-        if not qids:
+        canonical_qids = [
+            qid
+            for qid, qdata in qmap.items()
+            if int(qdata.get("source_block_index", -1)) == record["block_index"]
+        ]
+        if not canonical_qids:
             continue
-        segmented = _qid_segments(record, qids)
-        for qid, segments in segmented.items():
-            segments_by_qid.setdefault(qid, []).extend(segments)
+
+        # A confirmed numbering correction changes the interpreted identifier,
+        # not the immutable source token. Segment the source by the original
+        # printed identifier and map those segments back onto the corrected
+        # canonical identifier.
+        source_to_canonical: dict[str, str] = {}
+        for canonical_qid in canonical_qids:
+            qdata = qmap[canonical_qid]
+            source_qid = str(qdata.get("source_question_id") or canonical_qid)
+            if source_qid not in source_to_canonical:
+                source_to_canonical[source_qid] = canonical_qid
+
+        segmented = _qid_segments(record, list(source_to_canonical))
+        for source_qid, segments in segmented.items():
+            canonical_qid = source_to_canonical.get(source_qid)
+            if canonical_qid is not None:
+                segments_by_qid.setdefault(canonical_qid, []).extend(segments)
 
     issues: list[dict[str, Any]] = []
     sem_lookup = _semantic_lookup(semantic)

@@ -160,6 +160,35 @@ function evidenceFor(ex){
   return {source_preview:'Evidence is retained in the job artifacts; no compact question preview was resolved for this exception.'};
 }
 
+async function waitForReinterpretation(correctionId){
+  setStatus('Reinterpreting correction evidence…');
+  for(let i=0;i<90;i++){
+    await sleep(2000);
+    const q=await supabase.from('corrections')
+      .select('id,display_text,proposed_patch,confirmation_status')
+      .eq('id',correctionId).single();
+    if(q.error)throw q.error;
+    if(q.data?.proposed_patch){
+      setStatus('Reinterpretation ready — review the show-back before confirming.','success');
+      await refreshReview();
+      return;
+    }
+    const ev=await supabase.from('job_events')
+      .select('event_type,payload')
+      .eq('job_id',jobId)
+      .eq('event_type','phase7_correction_reinterpretation_unresolved')
+      .contains('payload',{correction_id:correctionId})
+      .limit(1);
+    if(!ev.error && (ev.data||[]).length){
+      setStatus('The evidence could not be interpreted safely. Cancel this attempt and provide clearer evidence.','warn');
+      await refreshReview();
+      return;
+    }
+  }
+  setStatus('Reinterpretation is still pending. Use Refresh to check again.','warn');
+  await refreshReview();
+}
+
 async function refreshReview(){
   if(!jobId||!user)return;
   const [jr,er,cr]=await Promise.all([
@@ -197,7 +226,7 @@ async function refreshReview(){
         proposal=`<div class="proposal"><b>Show-back for confirmation</b><div style="margin-top:6px">${esc(corr.display_text)}</div>
           <div class="actions"><button class="confirm confirmBtn">Confirm this interpretation</button><button class="reject rejectBtn">Reject and edit again</button></div></div>`;
       }else{
-        proposal=`<div class="proposal"><b>Evidence received.</b><div style="margin-top:6px">${esc(corr.display_text||'Reinterpretation pending.')}</div><small>This cannot be confirmed until reinterpretation produces a structured proposal.</small></div>`;
+        proposal=`<div class="proposal"><b>Evidence received.</b><div style="margin-top:6px">${esc(corr.display_text||'Reinterpretation pending.')}</div><small>This cannot be confirmed until reinterpretation produces a structured proposal.</small><div class="actions"><button class="reject rejectBtn">Cancel and try again</button></div></div>`;
       }
     }
 
@@ -245,7 +274,9 @@ async function refreshReview(){
       try{
         tb.disabled=true;
         const data=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:text});
-        log('Typed correction submitted',data);await refreshReview();
+        log('Typed correction submitted',data);
+        if(data.confirmation_ready){await refreshReview();}
+        else{await waitForReinterpretation(data.correction.id);}
       }catch(e){alert(e.message);tb.disabled=false}
     };
 
@@ -255,7 +286,9 @@ async function refreshReview(){
       const up=await supabase.storage.from('memo-files').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
       if(up.error)throw up.error;
       const data=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,correction_id:correctionId,input_kind:kind,storage_path:path});
-      log(`${kind} correction submitted`,data);await refreshReview();
+      log(`${kind} correction submitted`,data);
+      if(data.confirmation_ready){await refreshReview();}
+      else{await waitForReinterpretation(data.correction.id);}
     }
     const pi=el.querySelector('.photoInput'), pb=el.querySelector('.photoBtn');
     if(pb&&pi){pb.onclick=()=>pi.click();pi.onchange=()=>pi.files[0]&&uploadEvidence('photo',pi.files[0]).catch(e=>alert(e.message));}

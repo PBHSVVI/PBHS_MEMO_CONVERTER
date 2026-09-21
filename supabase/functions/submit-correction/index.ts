@@ -14,6 +14,56 @@ function candidateText(value: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+async function dispatchReinterpretation(
+  ctx: any,
+  correctionId: string,
+  jobId: string,
+  userId: string,
+): Promise<boolean> {
+  const token = Deno.env.get("GITHUB_TOKEN");
+  const repository =
+    Deno.env.get("GITHUB_REPOSITORY") ?? "PBHSVVI/PBHS_MEMO_CONVERTER";
+  const ref = Deno.env.get("GITHUB_REF") ?? "main";
+
+  if (!token) {
+    await ctx.supabaseAdmin.from("job_events").insert({
+      job_id: jobId, user_id: userId,
+      event_type: "phase7_correction_reinterpretation_dispatch_failed",
+      stage: "phase7_awaiting_reinterpretation",
+      payload: { correction_id: correctionId, reason: "server_not_configured" },
+    });
+    return false;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/actions/workflows/reinterpret-correction.yml/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "PBHS-Memo-Converter-Phase7",
+      },
+      body: JSON.stringify({ ref, inputs: { correction_id: correctionId } }),
+    },
+  );
+
+  const eventType = response.ok
+    ? "phase7_correction_reinterpretation_dispatched"
+    : "phase7_correction_reinterpretation_dispatch_failed";
+  await ctx.supabaseAdmin.from("job_events").insert({
+    job_id: jobId, user_id: userId, event_type: eventType,
+    stage: "phase7_awaiting_reinterpretation",
+    payload: {
+      correction_id: correctionId, repository, ref,
+      ...(response.ok ? {} : { github_http_status: response.status }),
+    },
+  });
+  return response.ok;
+}
+
 export default {
   fetch: withSupabase({ auth: "user" }, async (req, ctx) => {
     if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
@@ -161,9 +211,17 @@ export default {
       },
     });
 
+    let reinterpretationDispatched: boolean | null = null;
+    if (proposedPatch === null) {
+      reinterpretationDispatched = await dispatchReinterpretation(
+        ctx, correctionId, jobId, job.user_id
+      );
+    }
+
     return Response.json({
       ok: true, correction, exception_status: exceptionStatus,
       confirmation_ready: proposedPatch !== null,
+      reinterpretation_dispatched: reinterpretationDispatched,
     }, { status: 201 });
   }),
 };

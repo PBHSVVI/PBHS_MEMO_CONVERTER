@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PBHS Memo Converter — Phase 7.2 Typed Reinterpretation Test</title>
+<style>
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  color:#172033;background:#eef2f7;
+  --card:#fff;--line:#d7deea;--muted:#667085;--navy:#12345b;
+  --green:#146c43;--greenbg:#eaf8f0;--amber:#8a4c00;--amberbg:#fff3e8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(#edf3f9,#f8fafc);min-height:100vh}
+header{background:var(--navy);color:#fff;padding:18px 20px}
+header>div,main{max-width:950px;margin:auto}
+h1{font-size:1.3rem;margin:0}.sub{opacity:.8;margin-top:4px}
+main{padding:20px 12px 60px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:18px;margin-bottom:16px;box-shadow:0 5px 20px #18304b10}
+label{display:block;font-weight:750;font-size:.9rem;margin:11px 0 6px}
+input{width:100%;padding:11px;border:1px solid #bbc6d5;border-radius:9px;font:inherit}
+button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800;cursor:pointer}
+.primary{background:var(--navy);color:white}.confirm{background:var(--green);color:white}
+.secondary{background:#e7eef7;color:#17365d}
+button:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.status{padding:12px;border-radius:10px;background:#edf5ff;color:#17365d;margin-top:14px}
+.success{background:var(--greenbg);color:var(--green)}
+.warn{background:var(--amberbg);color:var(--amber)}
+.proposal{border:1px solid #cce4d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:14px}
+pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}
+code{background:#edf1f6;padding:2px 5px;border-radius:5px}
+.hide{display:none!important}
+@media(max-width:700px){button{width:100%}.actions{display:grid}.panel{border-radius:11px}}
+</style>
+</head>
+<body>
+<header><div>
+<h1>PBHS Mathematics — Phase 7.2 Acceptance</h1>
+<div class="sub">Typed correction → reinterpretation → show-back → confirmation → revalidation</div>
+</div></header>
+
+<main>
+<section class="panel">
+<h2 style="margin-top:0">Controlled test</h2>
+<p>This uses the existing RAW Phase 7 job. It finds the active malformed <b>11.12.1</b> numbering exception and submits typed evidence <code>11.2.1</code>.</p>
+<p>The system must first reinterpret that text into a structured proposal. <b>You must then click Confirm</b>; the test will not confirm automatically.</p>
+
+<label>Email</label>
+<input id="email" type="email" value="ivanvollenhoven@boyshigh.com">
+<label>Password</label>
+<input id="password" type="password">
+<label>Existing RAW Phase 7 job ID</label>
+<input id="jobId" value="459dd947-8f98-4e64-81f1-d56ed9df08de">
+
+<div class="actions">
+<button id="start" class="primary">Submit typed 11.2.1 correction</button>
+</div>
+<div id="status" class="status">Ready.</div>
+</section>
+
+<section id="proposalPanel" class="panel hide">
+<h2 style="margin-top:0">Show-back for confirmation</h2>
+<div id="proposal" class="proposal"></div>
+<div class="actions">
+<button id="confirm" class="confirm">Confirm this interpretation</button>
+<button id="reject" class="secondary">Reject and stop test</button>
+</div>
+</section>
+
+<section class="panel">
+<details open>
+<summary style="font-weight:800;cursor:pointer">Technical log</summary>
+<pre id="log">Ready.</pre>
+</details>
+</section>
+</main>
+
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const supabase=createClient(
+  'https://njrqiurqljwtuqrvguhj.supabase.co',
+  'sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',
+  {auth:{persistSession:false,autoRefreshToken:false}}
+);
+const $=s=>document.querySelector(s);
+const logEl=$('#log'), statusEl=$('#status');
+let user=null, jobId=null, correctionId=null;
+
+function log(m,o){
+  logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;
+  logEl.scrollTop=logEl.scrollHeight;
+}
+function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'');}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function invoke(name,body){
+  const r=await supabase.functions.invoke(name,{body});
+  if(r.error)throw r.error;
+  return r.data;
+}
+async function getCorrection(id){
+  const q=await supabase.from('corrections')
+    .select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at')
+    .eq('id',id).single();
+  if(q.error)throw q.error;
+  return q.data;
+}
+async function privateJson(path){
+  const q=await supabase.storage.from('memo-files').download(path);
+  if(q.error)throw q.error;
+  return JSON.parse(await q.data.text());
+}
+function findItem(items,number){
+  for(const item of items||[]){
+    if(String(item.number)===String(number))return item;
+    const hit=findItem(item.children||[],number);
+    if(hit)return hit;
+  }
+  return null;
+}
+
+async function waitForProposal(){
+  status('Reinterpreting typed evidence…');
+  for(let i=0;i<120;i++){
+    await sleep(1500);
+    const c=await getCorrection(correctionId);
+    if(c.proposed_patch){
+      log('Structured proposal ready',c);
+      $('#proposal').innerHTML=
+        `<b>${esc(c.display_text)}</b><br><br>`+
+        `<code>${esc(c.proposed_patch.operation)}</code> • `+
+        `${esc(c.proposed_patch.affected_id)} → ${esc(c.proposed_patch.target_id)}`;
+      $('#proposalPanel').classList.remove('hide');
+      status('Proposal ready. Inspect it and click Confirm only if it is correct.','success');
+      return;
+    }
+
+    const ev=await supabase.from('job_events')
+      .select('event_type,payload,created_at')
+      .eq('job_id',jobId)
+      .eq('event_type','phase7_correction_reinterpretation_unresolved')
+      .order('created_at',{ascending:false})
+      .limit(10);
+    if(ev.error)throw ev.error;
+    const failed=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId);
+    if(failed){
+      log('Reinterpretation remained unresolved',failed);
+      throw new Error('The typed evidence did not produce a safe structured proposal.');
+    }
+  }
+  throw new Error('Timed out waiting for the correction reinterpretation workflow.');
+}
+
+async function finalAudit(){
+  status('Confirmed. Waiting for controlled revalidation…');
+  let job=null;
+  for(let i=0;i<240;i++){
+    await sleep(2000);
+    const q=await supabase.from('jobs')
+      .select('id,status,stage,review_required,engine_version,error_code,error_message,attempt_count,updated_at')
+      .eq('id',jobId).single();
+    if(q.error)throw q.error;
+    job=q.data;
+    if(i===0||i%5===4||job.status==='needs_review'||job.status==='complete'||job.status==='failed_retryable'||job.status==='failed'){
+      log(`Revalidation poll ${i+1}: ${job.status} / ${job.stage}`,job);
+    }
+    if(job.status==='needs_review' && job.stage==='phase7_review')break;
+    if(['failed','failed_retryable','complete'].includes(job.status))break;
+  }
+
+  const [corrQ,eventQ,exceptionQ]=await Promise.all([
+    supabase.from('corrections')
+      .select('id,exception_id,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at')
+      .eq('id',correctionId).single(),
+    supabase.from('job_events')
+      .select('event_type,stage,payload,created_at')
+      .eq('job_id',jobId).order('created_at',{ascending:true}),
+    supabase.from('exceptions')
+      .select('id,level,category,affected_id,message,status')
+      .eq('job_id',jobId)
+      .in('status',['open','awaiting_reinterpretation','awaiting_confirmation'])
+      .order('created_at',{ascending:true})
+  ]);
+  if(corrQ.error)throw corrQ.error;if(eventQ.error)throw eventQ.error;if(exceptionQ.error)throw exceptionQ.error;
+
+  const correction=corrQ.data, events=eventQ.data||[], active=exceptionQ.data||[];
+  const canonical=await privateJson(`${user.id}/${jobId}/internal/canonical.json`);
+  const item1121=(canonical.questions||[])
+    .map(q=>findItem(q.items||[],'11.2.1'))
+    .find(Boolean);
+
+  const reinterpret=events.find(e=>
+    e.event_type==='phase7_correction_reinterpreted' &&
+    e.payload?.correction_id===correctionId &&
+    e.payload?.operation==='rename_question_identifier' &&
+    e.payload?.target_id==='11.2.1'
+  );
+  const applied=events.find(e=>
+    e.event_type==='phase7_corrections_applied' &&
+    (e.payload?.applied||[]).some(x=>x.correction_id===correctionId && x.target_id==='11.2.1')
+  );
+  const cache=[...events].reverse().find(e=>
+    e.event_type==='phase4_semantic_cache_hit' && e.payload?.mode==='partial'
+  );
+  const oldJumpActive=active.some(e=>e.category==='numbering_jump' && e.affected_id==='11.12.1');
+  const remainingMarkReview=active.some(e=>e.category==='item_total_mismatch' && e.affected_id==='11.2.1');
+  const blockCount=(item1121?.alternatives||[]).reduce((n,a)=>n+(a.blocks||[]).length,0);
+
+  const checks={
+    terminal_state:job?.status==='needs_review' && job?.stage==='phase7_review' && job?.engine_version==='phase7.2',
+    correction_confirmed:correction.confirmation_status==='confirmed',
+    correction_applied:!!correction.applied_at,
+    reinterpretation_event:!!reinterpret,
+    overlay_application_event:!!applied,
+    old_numbering_jump_removed:!oldJumpActive,
+    corrected_canonical_item_present:!!item1121,
+    source_working_recovered:blockCount>0,
+    no_marks_invented:Number(canonical?.totals?.computed)===138,
+    separate_mark_review_preserved:remainingMarkReview,
+    partial_semantic_reuse:!!cache && Number(cache.payload?.reused_ai_candidate_count||0)>0
+  };
+
+  log('PHASE 7.2 FINAL AUDIT',{
+    job_id:jobId,
+    correction_id:correctionId,
+    checks,
+    canonical_total:canonical?.totals?.computed,
+    corrected_item_marks:item1121?.marks,
+    corrected_item_block_count:blockCount,
+    partial_cache:cache?.payload||null,
+    active_exceptions:active
+  });
+
+  if(Object.values(checks).every(Boolean)){
+    status('SUCCESS — Phase 7.2 typed correction reinterpretation, show-back confirmation, source-preserving overlay and deterministic revalidation are verified end-to-end.','success');
+  }else{
+    status('Unexpected Phase 7.2 result. Send the visible log to ChatGPT.','warn');
+  }
+}
+
+$('#start').onclick=async()=>{
+  $('#start').disabled=true;
+  $('#proposalPanel').classList.add('hide');
+  logEl.textContent='Starting…';
+  try{
+    jobId=$('#jobId').value.trim();
+    const auth=await supabase.auth.signInWithPassword({
+      email:$('#email').value.trim(),
+      password:$('#password').value
+    });
+    if(auth.error)throw auth.error;
+    user=auth.data.user; log('Signed in',{user_id:user.id,email:user.email});
+
+    const jq=await supabase.from('jobs').select('id,status,stage,engine_version').eq('id',jobId).single();
+    if(jq.error)throw jq.error;
+    if(jq.data.status!=='needs_review')throw new Error(`Expected existing job to be needs_review; got ${jq.data.status}.`);
+
+    const exq=await supabase.from('exceptions')
+      .select('id,category,affected_id,message,status,created_at')
+      .eq('job_id',jobId)
+      .eq('category','numbering_jump')
+      .eq('affected_id','11.12.1')
+      .eq('status','open')
+      .order('created_at',{ascending:false})
+      .limit(1);
+    if(exq.error)throw exq.error;
+    const exception=exq.data?.[0];
+    if(!exception)throw new Error('No active 11.12.1 numbering_jump exception was found.');
+    log('Target exception',exception);
+
+    const submit=await invoke('submit-correction',{
+      job_id:jobId,
+      exception_id:exception.id,
+      input_kind:'typed',
+      typed_text:'11.2.1'
+    });
+    correctionId=submit.correction?.id;
+    if(!correctionId)throw new Error('Correction ID missing from submit response.');
+    log('Typed evidence submitted',submit);
+
+    if(submit.confirmation_ready){
+      const c=await getCorrection(correctionId);
+      $('#proposal').innerHTML=`<b>${esc(c.display_text)}</b>`;
+      $('#proposalPanel').classList.remove('hide');
+      status('Proposal ready. Inspect it and click Confirm only if correct.','success');
+    }else{
+      if(submit.reinterpretation_dispatched===false){
+        throw new Error('Correction reinterpretation workflow dispatch failed.');
+      }
+      await waitForProposal();
+    }
+  }catch(e){
+    log('TEST ERROR',{name:e?.name,message:e?.message});
+    status('Test stopped: '+e.message,'warn');
+    $('#start').disabled=false;
+  }finally{
+    $('#password').value='';
+  }
+};
+
+$('#confirm').onclick=async()=>{
+  $('#confirm').disabled=true;$('#reject').disabled=true;
+  try{
+    const result=await invoke('confirm-correction',{correction_id:correctionId});
+    log('Teacher confirmed show-back',result);
+    $('#proposalPanel').classList.add('hide');
+    await finalAudit();
+  }catch(e){
+    log('CONFIRM ERROR',{name:e?.name,message:e?.message});
+    status('Confirmation/revalidation failed: '+e.message,'warn');
+  }finally{
+    await supabase.auth.signOut();
+    $('#confirm').disabled=false;$('#reject').disabled=false;$('#start').disabled=false;
+  }
+};
+
+$('#reject').onclick=async()=>{
+  $('#confirm').disabled=true;$('#reject').disabled=true;
+  try{
+    const result=await invoke('reject-correction',{correction_id:correctionId});
+    log('Teacher rejected show-back',result);
+    status('Proposal rejected. The exception has been reopened; no overlay was applied.','warn');
+    $('#proposalPanel').classList.add('hide');
+  }catch(e){
+    log('REJECT ERROR',{name:e?.name,message:e?.message});
+    status('Reject failed: '+e.message,'warn');
+  }finally{
+    await supabase.auth.signOut();
+    $('#confirm').disabled=false;$('#reject').disabled=false;$('#start').disabled=false;
+  }
+};
+</script>
+</body>
+</html>

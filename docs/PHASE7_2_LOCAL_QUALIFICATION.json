@@ -1,0 +1,32 @@
+{
+  "phase": "phase7.2",
+  "status": "implementation_candidate",
+  "unit_tests": {"passed": 5, "failed": 0},
+  "typed_numbering": {
+    "source_id": "11.12.1",
+    "evidence": "11.2.1",
+    "operation": "rename_question_identifier",
+    "target_id": "11.2.1",
+    "passed": true
+  },
+  "ambiguous_numbering": {
+    "evidence": "Could be 11.2.1 or 11.3.1",
+    "proposal_created": false,
+    "passed": true
+  },
+  "photo_ocr": {
+    "synthetic_text": "11.2.1",
+    "ocr_text": "11.2.1",
+    "proposal_target": "11.2.1",
+    "passed": true
+  },
+  "raw_overlay_regression": {
+    "q2_computed": 26,
+    "q2_observed": 26,
+    "canonical_total": 138,
+    "renamed_item": "11.2.1",
+    "source_alias": "11.12.1",
+    "source_working_recovered": true,
+    "mark_semantics_invented": false
+  }
+}
