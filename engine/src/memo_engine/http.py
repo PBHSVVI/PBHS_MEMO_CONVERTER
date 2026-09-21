@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import urllib.error
@@ -183,6 +184,45 @@ class SupabaseRest:
             "/rest/v1/exceptions",
             body=rows,
         )
+
+
+    def get_confirmed_corrections(self, job_id: str) -> list[dict[str, Any]]:
+        job_q = urllib.parse.quote(job_id, safe="")
+        rows = self._request_json(
+            "GET",
+            (
+                "/rest/v1/corrections"
+                f"?job_id=eq.{job_q}"
+                "&confirmation_status=eq.confirmed"
+                "&select=id,job_id,user_id,exception_id,input_kind,typed_text,storage_path,display_text,proposed_patch,confirmation_status,created_at,confirmed_at,applied_at"
+                "&order=confirmed_at.asc"
+            ),
+        )
+        return rows if isinstance(rows, list) else []
+
+    def supersede_unresolved_exceptions(self, job_id: str) -> None:
+        job_q = urllib.parse.quote(job_id, safe="")
+        for status_value in ("open", "awaiting_reinterpretation", "awaiting_confirmation"):
+            status_q = urllib.parse.quote(status_value, safe="")
+            self._request_json(
+                "PATCH",
+                f"/rest/v1/exceptions?job_id=eq.{job_q}&status=eq.{status_q}",
+                body={
+                    "status": "superseded",
+                    "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                },
+                prefer="return=minimal",
+            )
+
+    def mark_corrections_applied(self, correction_ids: list[str], applied_at: str) -> None:
+        for correction_id in correction_ids:
+            cid_q = urllib.parse.quote(correction_id, safe="")
+            self._request_json(
+                "PATCH",
+                f"/rest/v1/corrections?id=eq.{cid_q}&confirmation_status=eq.confirmed",
+                body={"applied_at": applied_at, "updated_at": applied_at},
+                prefer="return=minimal",
+            )
 
     def download_object(self, bucket: str, object_path: str) -> bytes:
         bucket_q = urllib.parse.quote(bucket, safe="")

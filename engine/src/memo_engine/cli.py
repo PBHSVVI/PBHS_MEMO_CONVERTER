@@ -14,6 +14,7 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
+from .corrections import apply_confirmed_corrections
 from .renderer import (
     RENDERER_VERSION,
     RENDER_PROFILE,
@@ -25,6 +26,7 @@ from .canonical import (
     _iter_blocks,
     _iter_marks,
     build_canonical_memo,
+    validate_canonical,
 )
 
 BUCKET = "memo-files"
@@ -102,7 +104,11 @@ def _try_reuse_semantic(
     job: dict[str, Any],
     structure: dict[str, Any],
     source_sha256: str,
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any] | None, str | None, list[dict[str, Any]], str | None]:
+    expected = _semantic_signature(structure)
+    reusable_ai: dict[str, dict[str, Any]] = {}
+    partial_source_job_id: str | None = None
+
     for candidate_job in db.find_reusable_semantic_jobs(
         user_id=str(job["user_id"]),
         source_sha256=source_sha256,
@@ -116,22 +122,50 @@ def _try_reuse_semantic(
             cached = db.download_json(BUCKET, path)
         except Exception:
             continue
-        if not _cached_semantic_matches(structure, cached):
+        if not isinstance(cached, dict) or cached.get("phase") != "phase4_semantics":
             continue
 
-        reused = dict(cached)
-        reused["job_id"] = job["id"]
-        reused["interpreter_runs"] = []
-        reused["cache"] = {
-            "reused": True,
-            "source_job_id": source_job_id,
-            "source_sha256": source_sha256,
-        }
-        summary = dict(reused.get("summary") or {})
-        summary["interpreter_run_count"] = 0
-        reused["summary"] = summary
-        return reused, source_job_id
-    return None, None
+        if _cached_semantic_matches(structure, cached):
+            reused = dict(cached)
+            reused["job_id"] = job["id"]
+            reused["interpreter_runs"] = []
+            reused["cache"] = {
+                "reused": True,
+                "mode": "exact",
+                "source_job_id": source_job_id,
+                "source_sha256": source_sha256,
+            }
+            summary = dict(reused.get("summary") or {})
+            summary["interpreter_run_count"] = 0
+            summary["ai_cache_reused_count"] = len(reused.get("ai_results", []))
+            reused["summary"] = summary
+            return reused, source_job_id, [], None
+
+        for item in cached.get("ai_results", []):
+            try:
+                cid = str(item["candidate_id"])
+                signature = (
+                    str(item["question_id"]),
+                    int(item["mark_index"]),
+                    int(item.get("count") or 0),
+                    item.get("source_shorthand"),
+                    str(item.get("descriptor") or ""),
+                )
+            except Exception:
+                continue
+            if cid not in expected or expected[cid] != signature:
+                continue
+            if item.get("provider_valid") is not True:
+                continue
+            if item.get("band") != "green":
+                continue
+            if float(item.get("confidence_score") or 0) < 0.90:
+                continue
+            if cid not in reusable_ai:
+                reusable_ai[cid] = item
+                partial_source_job_id = partial_source_job_id or source_job_id
+
+    return None, None, list(reusable_ai.values()), partial_source_job_id
 
 
 def run_job(job_id: str) -> int:
@@ -171,7 +205,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase6.0",
+                "engine_version": "phase7.1",
                 "updated_at": utc_now(),
             },
         )
@@ -186,6 +220,42 @@ def run_job(job_id: str) -> int:
             {"stage": "structure", "updated_at": utc_now()},
         )
         structure = extract_structure(normalized)
+        confirmed_corrections = db.get_confirmed_corrections(job_id)
+        applied_corrections: list[dict[str, Any]] = []
+        correction_application_issues: list[dict[str, Any]] = []
+
+        if confirmed_corrections:
+            structure, applied_corrections, correction_application_issues = (
+                apply_confirmed_corrections(
+                    structure,
+                    normalized,
+                    confirmed_corrections,
+                )
+            )
+
+            # Replace only unresolved findings from the previous analysis pass.
+            # Resolved/correction-linked rows remain immutable audit evidence.
+            db.supersede_unresolved_exceptions(job_id)
+
+            if applied_corrections:
+                applied_at = utc_now()
+                db.mark_corrections_applied(
+                    [item["correction_id"] for item in applied_corrections],
+                    applied_at,
+                )
+
+            db.add_event(
+                job,
+                "phase7_corrections_applied",
+                "structure",
+                {
+                    "confirmed_count": len(confirmed_corrections),
+                    "applied_count": len(applied_corrections),
+                    "application_issue_count": len(correction_application_issues),
+                    "applied": applied_corrections,
+                },
+            )
+
         structure_path = f"{job['user_id']}/{job['id']}/internal/structure.json"
         db.upload_json(BUCKET, structure_path, structure)
 
@@ -198,19 +268,46 @@ def run_job(job_id: str) -> int:
             {"stage": "semantic_interpretation", "updated_at": utc_now()},
         )
 
-        semantic, semantic_cache_job_id = _try_reuse_semantic(
-            db, job, structure, source["sha256"]
-        )
+        (
+            semantic,
+            semantic_cache_job_id,
+            reusable_ai_results,
+            partial_cache_job_id,
+        ) = _try_reuse_semantic(db, job, structure, source["sha256"])
+
         if semantic is None:
-            semantic = interpret_semantics(structure)
+            semantic = interpret_semantics(
+                structure,
+                reusable_ai_results=reusable_ai_results,
+            )
+            if reusable_ai_results:
+                db.add_event(
+                    job,
+                    "phase4_semantic_cache_hit",
+                    "semantic_interpretation",
+                    {
+                        "mode": "partial",
+                        "source_job_id": partial_cache_job_id,
+                        "source_sha256": source["sha256"],
+                        "reused_ai_candidate_count": len(reusable_ai_results),
+                        "candidate_count": semantic.get("summary", {}).get(
+                            "ai_candidate_count"
+                        ),
+                    },
+                )
         else:
             db.add_event(
                 job,
                 "phase4_semantic_cache_hit",
                 "semantic_interpretation",
                 {
+                    "mode": "exact",
                     "source_job_id": semantic_cache_job_id,
                     "source_sha256": source["sha256"],
+                    "reused_ai_candidate_count": semantic.get("summary", {}).get(
+                        "ai_cache_reused_count",
+                        semantic.get("summary", {}).get("ai_candidate_count"),
+                    ),
                     "candidate_count": semantic.get("summary", {}).get(
                         "ai_candidate_count"
                     ),
@@ -260,7 +357,16 @@ def run_job(job_id: str) -> int:
                 "ai_candidate_count": summary["ai_candidate_count"],
                 "ai_resolved_green_count": summary["ai_resolved_green_count"],
                 "interpreter_run_count": summary["interpreter_run_count"],
-                "semantic_cache_hit": semantic_cache_job_id is not None,
+                "semantic_cache_hit": (
+                    semantic_cache_job_id is not None or bool(reusable_ai_results)
+                ),
+                "semantic_cache_mode": (
+                    "exact" if semantic_cache_job_id is not None
+                    else ("partial" if reusable_ai_results else "none")
+                ),
+                "ai_cache_reused_count": int(
+                    summary.get("ai_cache_reused_count") or 0
+                ),
                 "review_required": semantic_review_required,
             },
         )
@@ -270,7 +376,7 @@ def run_job(job_id: str) -> int:
             "processing",
             {
                 "stage": "canonicalization",
-                "engine_version": "phase6.0",
+                "engine_version": "phase7.1",
                 "updated_at": utc_now(),
             },
         )
@@ -283,6 +389,36 @@ def run_job(job_id: str) -> int:
             semantic,
             source_bytes,
         )
+        if confirmed_corrections:
+            applied_ids = {item["correction_id"] for item in applied_corrections}
+            canonical["corrections"] = [
+                {
+                    "correction_id": str(correction.get("id")),
+                    "exception_id": correction.get("exception_id"),
+                    "input_kind": correction.get("input_kind"),
+                    "display_text": correction.get("display_text"),
+                    "proposed_patch": correction.get("proposed_patch"),
+                    "applied": str(correction.get("id")) in applied_ids,
+                    "confirmation": {
+                        "required": True,
+                        "status": "confirmed",
+                        "confirmed_at": correction.get("confirmed_at"),
+                    },
+                }
+                for correction in confirmed_corrections
+            ]
+            canonical.setdefault("audit", {}).setdefault("decisions", []).extend([
+                {
+                    "decision_type": "confirmed_correction_overlay",
+                    "correction_id": item["correction_id"],
+                    "operation": item["operation"],
+                    "affected_id": item.get("affected_id"),
+                    "target_id": item.get("target_id"),
+                }
+                for item in applied_corrections
+            ])
+            validation = validate_canonical(canonical)
+
         canonical_path = (
             f"{job['user_id']}/{job['id']}/internal/canonical.json"
         )
@@ -314,15 +450,40 @@ def run_job(job_id: str) -> int:
         )
         review_required = not render_ready
 
+        if confirmed_corrections:
+            db.add_event(
+                job,
+                "phase7_revalidation_complete",
+                "phase7_revalidation",
+                {
+                    "confirmed_correction_count": len(confirmed_corrections),
+                    "applied_correction_count": len(applied_corrections),
+                    "application_issue_count": len(correction_application_issues),
+                    "computed_total": canonical.get("totals", {}).get("computed"),
+                    "canonical_status": canonical.get("status"),
+                    "validation_passed": bool(validation.get("passed")),
+                    "remaining_review_required": review_required,
+                },
+            )
+
         if review_required:
             final_status = "needs_review"
-            final_stage = "phase5_canonicalized"
-            error_code = "PHASE5_REVIEW_REQUIRED"
-            error_message = (
-                "Canonical mathematics and interpretation-schema assembly "
-                "completed, but deterministic or evidence-linked exceptions "
-                "require teacher review."
-            )
+            if confirmed_corrections:
+                final_stage = "phase7_review"
+                error_code = "PHASE7_REVIEW_REQUIRED"
+                error_message = (
+                    "Confirmed correction overlays were applied and revalidated, "
+                    "but additional deterministic or evidence-linked exceptions "
+                    "still require teacher review."
+                )
+            else:
+                final_stage = "phase5_canonicalized"
+                error_code = "PHASE5_REVIEW_REQUIRED"
+                error_message = (
+                    "Canonical mathematics and interpretation-schema assembly "
+                    "completed, but deterministic or evidence-linked exceptions "
+                    "require teacher review."
+                )
 
             job = db.patch_job(
                 job_id,
@@ -331,7 +492,7 @@ def run_job(job_id: str) -> int:
                     "status": final_status,
                     "stage": final_stage,
                     "review_required": True,
-                    "engine_version": "phase6.0",
+                    "engine_version": "phase7.1",
                     "error_code": error_code,
                     "error_message": error_message,
                     "updated_at": utc_now(),
@@ -362,6 +523,8 @@ def run_job(job_id: str) -> int:
                     ),
                     "render_ready": False,
                     "review_required": True,
+                    "confirmed_correction_count": len(confirmed_corrections),
+                    "applied_correction_count": len(applied_corrections),
                 },
             )
 
@@ -398,6 +561,8 @@ def run_job(job_id: str) -> int:
                 ),
                 "render_ready": True,
                 "review_required": False,
+                "confirmed_correction_count": len(confirmed_corrections),
+                "applied_correction_count": len(applied_corrections),
             },
         )
 
@@ -407,7 +572,7 @@ def run_job(job_id: str) -> int:
             {
                 "stage": "rendering",
                 "review_required": False,
-                "engine_version": "phase6.0",
+                "engine_version": "phase7.1",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),
@@ -425,91 +590,20 @@ def run_job(job_id: str) -> int:
             try:
                 rendered = render_outputs(canonical, source_bytes, td_path)
             except RenderingError as exc:
-                diagnostic_root = (
-                    f"{job['user_id']}/{job['id']}/internal/render_failure"
-                )
-                diagnostic_docx_path = diagnostic_root + "/memo.docx"
-                diagnostic_pdf_path = diagnostic_root + "/memo.pdf"
-                diagnostic_json_path = diagnostic_root + "/preflight.json"
-
                 diagnostic_docx = td_path / "memo.docx"
-                diagnostic_pdf = td_path / "memo.pdf"
-
-                uploaded_docx = False
-                uploaded_pdf = False
-
                 if diagnostic_docx.exists() and diagnostic_docx.stat().st_size:
                     try:
                         db.upload_object(
                             BUCKET,
-                            diagnostic_docx_path,
+                            output_docx_path,
                             diagnostic_docx.read_bytes(),
                             content_type=(
                                 "application/vnd.openxmlformats-officedocument."
                                 "wordprocessingml.document"
                             ),
                         )
-                        uploaded_docx = True
                     except Exception:
                         pass
-
-                if diagnostic_pdf.exists() and diagnostic_pdf.stat().st_size:
-                    try:
-                        db.upload_object(
-                            BUCKET,
-                            diagnostic_pdf_path,
-                            diagnostic_pdf.read_bytes(),
-                            content_type="application/pdf",
-                        )
-                        uploaded_pdf = True
-                    except Exception:
-                        pass
-
-                diagnostic_payload = {
-                    "schema_version": "1.0",
-                    "phase": "phase6_render_failure",
-                    "job_id": job_id,
-                    "renderer_version": RENDERER_VERSION,
-                    "render_profile": RENDER_PROFILE,
-                    "error_code": exc.code,
-                    "message": exc.public_message,
-                    "details": exc.details,
-                    "diagnostic_docx_path": (
-                        diagnostic_docx_path if uploaded_docx else None
-                    ),
-                    "diagnostic_pdf_path": (
-                        diagnostic_pdf_path if uploaded_pdf else None
-                    ),
-                }
-                try:
-                    db.upload_json(
-                        BUCKET,
-                        diagnostic_json_path,
-                        diagnostic_payload,
-                    )
-                except Exception:
-                    diagnostic_json_path = None
-
-                try:
-                    db.add_event(
-                        job,
-                        "phase6_render_failed",
-                        "rendering_failed",
-                        {
-                            "error_code": exc.code,
-                            "issues": list(exc.details.get("issues", [])),
-                            "diagnostic_docx_path": (
-                                diagnostic_docx_path if uploaded_docx else None
-                            ),
-                            "diagnostic_pdf_path": (
-                                diagnostic_pdf_path if uploaded_pdf else None
-                            ),
-                            "diagnostic_json_path": diagnostic_json_path,
-                        },
-                    )
-                except Exception:
-                    pass
-
                 db.add_exceptions(
                     job,
                     [{
@@ -578,7 +672,7 @@ def run_job(job_id: str) -> int:
                 "status": "complete",
                 "stage": "complete",
                 "review_required": False,
-                "engine_version": "phase6.0",
+                "engine_version": "phase7.1",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),

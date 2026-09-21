@@ -173,11 +173,11 @@ async function refreshReview(){
   structure=await downloadJson(`${user.id}/${jobId}/internal/structure.json`);
   canonical=await downloadJson(`${user.id}/${jobId}/internal/canonical.json`);
 
-  $('#jobMeta').textContent=`${job.source_filename||''} • ${job.status} / ${job.stage} • ${exceptions.filter(x=>x.status!=='resolved').length} unresolved`;
+  $('#jobMeta').textContent=`${job.source_filename||''} • ${job.status} / ${job.stage} • ${exceptions.filter(x=>['open','awaiting_reinterpretation','awaiting_confirmation'].includes(x.status)).length} unresolved`;
   panel.classList.remove('hide');
   cards.innerHTML='';
 
-  for(const ex of exceptions){
+  for(const ex of exceptions.filter(x=>x.status!=='superseded')){
     const corr=corrections.find(c=>c.exception_id===ex.id && c.confirmation_status==='pending');
     const ev=evidenceFor(ex);
     const el=document.createElement('article');
@@ -270,7 +270,7 @@ async function refreshReview(){
         log('Correction confirmed',data);
         const events=await supabase.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true});
         const confirmed=(events.data||[]).some(e=>e.event_type==='phase7_correction_confirmed'&&e.payload?.correction_id===corr.id);
-        if(confirmed)setStatus('SUCCESS — Phase 7 two-stage correction lifecycle verified: proposal shown, explicitly confirmed, exception resolved and audit event persisted.','success');
+        if(confirmed)setStatus('Correction confirmed. A controlled revalidation pass has been dispatched automatically; refresh when processing finishes.','success');
         await refreshReview();
       }catch(e){alert(e.message);cb.disabled=false}
     };

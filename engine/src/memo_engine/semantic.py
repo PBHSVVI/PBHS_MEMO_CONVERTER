@@ -278,19 +278,61 @@ def _run_batches(
     return output, runs
 
 
-def interpret_semantics(structure: dict[str, Any]) -> dict[str, Any]:
+def interpret_semantics(
+    structure: dict[str, Any],
+    *,
+    reusable_ai_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     deterministic, candidates = build_semantic_plan(structure)
     batch_size = max(1, min(20, int(os.environ.get("MEMO_AI_BATCH_SIZE", "16"))))
 
-    fast_results: list[dict[str, Any]] = []
+    reusable_by_id = {
+        str(item.get("candidate_id")): item
+        for item in (reusable_ai_results or [])
+        if isinstance(item, dict)
+    }
+    reused_results: list[dict[str, Any]] = []
+    uncached_candidates: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        cached = reusable_by_id.get(str(candidate["candidate_id"]))
+        reusable = False
+        if cached is not None:
+            reusable = (
+                str(cached.get("question_id")) == str(candidate["question_id"])
+                and int(cached.get("mark_index") or 0) == int(candidate["mark_index"])
+                and int(cached.get("count") or 0) == int(candidate.get("count") or 0)
+                and cached.get("source_shorthand") == candidate.get("source_shorthand")
+                and str(cached.get("descriptor") or "") == str(candidate.get("descriptor") or "")
+                and cached.get("provider_valid") is True
+                and cached.get("band") == "green"
+                and float(cached.get("confidence_score") or 0) >= 0.90
+            )
+
+        if reusable:
+            reused_results.append({
+                **candidate,
+                "semantic_type": cached["semantic_type"],
+                "confidence_score": cached["confidence_score"],
+                "band": "green",
+                "rationale": cached.get("rationale") or "Reused from an identical semantic candidate.",
+                "provider_valid": True,
+                "provider_validation_issue": None,
+                "resolution_method": f"cache:{cached.get('resolution_method') or 'prior'}",
+            })
+        else:
+            uncached_candidates.append(candidate)
+
+    fast_results: list[dict[str, Any]] = list(reused_results)
     runs: list[ProviderRun] = []
 
-    if candidates:
-        fast_results, fast_runs = _run_batches(
-            candidates,
+    if uncached_candidates:
+        fresh_results, fast_runs = _run_batches(
+            uncached_candidates,
             strong=False,
             batch_size=batch_size,
         )
+        fast_results.extend(fresh_results)
         runs.extend(fast_runs)
 
     escalation_candidates: list[dict[str, Any]] = []
@@ -417,5 +459,6 @@ def interpret_semantics(structure: dict[str, Any]) -> dict[str, Any]:
             "ai_resolved_green_count": sum(1 for item in final_ai if item["band"] == "green"),
             "semantic_exception_count": len(exceptions),
             "interpreter_run_count": len(runs),
+            "ai_cache_reused_count": len(reused_results),
         },
     }

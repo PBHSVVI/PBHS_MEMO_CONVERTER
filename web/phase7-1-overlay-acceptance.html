@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PBHS Memo Converter — Phase 7.1 Overlay Acceptance</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#f3f6fa;color:#162033;padding:28px}
+main{max-width:920px;margin:auto;background:#fff;padding:26px;border-radius:16px;box-shadow:0 8px 30px #10203018}
+label{display:block;font-weight:700;margin:13px 0 6px}input{width:100%;padding:10px 12px;box-sizing:border-box;border:1px solid #c5cfdb;border-radius:9px}
+button{margin-top:18px;padding:11px 16px;border:0;border-radius:9px;background:#163a69;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.5}
+pre{white-space:pre-wrap;word-break:break-word;background:#0c1626;color:#d9e6f4;padding:15px;border-radius:10px;min-height:380px;max-height:650px;overflow:auto}
+.ok,.warn{display:none;padding:12px;border-radius:10px;margin:16px 0;font-weight:800}.ok{background:#eaf8f0;color:#146c43}.warn{background:#fff4e8;color:#8a4c00}
+.note{background:#eef5ff;color:#17365d;padding:12px;border-radius:10px}
+</style></head>
+<body><main>
+<h1>Phase 7.1 — Confirmed Correction Overlay Acceptance</h1>
+<p class="note">This resumes the already-confirmed RAW Question 2.2 correction. Expected: the source stays unchanged, Q2.2 becomes a 4-mark canonical item, Question 2 becomes 26/26, RAW computed total becomes 138, old unresolved findings are superseded, and remaining unrelated defects stay in review.</p>
+<label>Email</label><input id="email" type="email" value="ivanvollenhoven@boyshigh.com">
+<label>Password</label><input id="password" type="password">
+<label>Accepted Phase 7 review job ID</label><input id="job" value="459dd947-8f98-4e64-81f1-d56ed9df08de">
+<button id="run">Resume confirmed correction and verify</button>
+<div id="ok" class="ok"></div><div id="warn" class="warn"></div>
+<pre id="log">Ready.</pre>
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+const supabase=createClient('https://njrqiurqljwtuqrvguhj.supabase.co','sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',{auth:{persistSession:false,autoRefreshToken:false}});
+const $=s=>document.querySelector(s), logEl=$('#log');
+const log=(m,o)=>{logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function getJson(path){const r=await supabase.storage.from('memo-files').download(path);if(r.error)throw r.error;return JSON.parse(await r.data.text())}
+$('#run').onclick=async()=>{
+  $('#run').disabled=true;$('#ok').style.display=$('#warn').style.display='none';logEl.textContent='Starting…';
+  try{
+    const jobId=$('#job').value.trim();
+    const auth=await supabase.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(auth.error)throw auth.error;
+    const user=auth.data.user;log('Signed in',{user_id:user.id});
+
+    const before=await supabase.from('corrections').select('id,confirmation_status,applied_at,proposed_patch').eq('job_id',jobId).eq('confirmation_status','confirmed');
+    if(before.error)throw before.error;log('Confirmed correction before resume',before.data);
+    if(!(before.data||[]).some(x=>!x.applied_at))throw new Error('This job has no confirmed unapplied correction. It may already have been reprocessed.');
+
+    const resume=await supabase.functions.invoke('resume-correction',{body:{job_id:jobId}});if(resume.error)throw resume.error;log('Correction redispatch accepted',resume.data);
+
+    const terminal=new Set(['needs_review','complete','failed_retryable','failed']);let job=null;
+    for(let i=0;i<360;i++){
+      await sleep(2000);
+      const q=await supabase.from('jobs').select('id,status,stage,review_required,engine_version,error_code,error_message,attempt_count,source_sha256,updated_at').eq('id',jobId).single();if(q.error)throw q.error;job=q.data;
+      if(i===0||i%5===4||terminal.has(job.status))log(`Poll ${i+1}: ${job.status} / ${job.stage}`,job);
+      if(terminal.has(job.status)&&job.engine_version==='phase7.1')break;
+    }
+
+    const ev=await supabase.from('job_events').select('event_type,stage,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true});if(ev.error)throw ev.error;
+    const ex=await supabase.from('exceptions').select('id,level,category,affected_id,status,resolved_by_correction_id,created_at').eq('job_id',jobId).order('created_at',{ascending:true});if(ex.error)throw ex.error;
+    const cr=await supabase.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at').eq('job_id',jobId).order('created_at',{ascending:true});if(cr.error)throw cr.error;
+    log('Audit events',ev.data);log('Exception rows',ex.data);log('Corrections',cr.data);
+
+    const structure=await getJson(`${user.id}/${jobId}/internal/structure.json`);
+    const canonical=await getJson(`${user.id}/${jobId}/internal/canonical.json`);
+    const semantic=await getJson(`${user.id}/${jobId}/internal/semantic.json`);
+    const q22=(structure.questions||[]).find(q=>q.question_id==='2.2');
+    const q2=(canonical.questions||[]).find(q=>q.number==='2');
+    const current=(ex.data||[]).filter(x=>['open','awaiting_reinterpretation','awaiting_confirmation'].includes(x.status));
+    const applied=(cr.data||[]).find(x=>x.confirmation_status==='confirmed'&&x.applied_at);
+    const applyEvent=(ev.data||[]).find(x=>x.event_type==='phase7_corrections_applied');
+    const reval=(ev.data||[]).find(x=>x.event_type==='phase7_revalidation_complete');
+    const cache=[...(ev.data||[])].reverse().find(x=>x.event_type==='phase4_semantic_cache_hit'&&x.payload?.mode==='partial');
+    const phase4=[...(ev.data||[])].reverse().find(x=>x.event_type==='phase4_semantic_complete');
+
+    const noOldQ2=current.every(x=>!(x.category==='unlabeled_mark_bearing_question'&&x.affected_id==='2.2')&&!(x.category==='question_total_mismatch'&&x.affected_id==='2'));
+    const canonicalCorrection=(canonical.corrections||[]).some(x=>x.correction_id===applied?.id&&x.applied===true&&x.confirmation?.status==='confirmed');
+    const pass=
+      job?.status==='needs_review' && job?.stage==='phase7_review' && job?.engine_version==='phase7.1' && job?.error_code==='PHASE7_REVIEW_REQUIRED' &&
+      !!q22 && Number(q22.printed_marks)===4 && Number(q22.computed_shorthand_marks)===4 &&
+      Number(q2?.subtotal?.observed)===26 && Number(q2?.subtotal?.computed)===26 &&
+      Number(canonical?.totals?.computed)===138 && !!applied && !!applyEvent && Number(applyEvent.payload?.applied_count)===1 &&
+      !!reval && Number(reval.payload?.computed_total)===138 && noOldQ2 && canonicalCorrection &&
+      !!cache && Number(cache.payload?.reused_ai_candidate_count)>0 && Number(phase4?.payload?.semantic_exception_count)===0;
+
+    log('PHASE 7.1 ACCEPTANCE SIGNALS',{q22,q2_subtotal:q2?.subtotal,computed_total:canonical?.totals?.computed,current_exception_count:current.length,applied_correction:applied,apply_event:applyEvent?.payload,revalidation:reval?.payload,partial_cache:cache?.payload,phase4:phase4?.payload,canonical_correction:canonicalCorrection});
+    if(pass){$('#ok').textContent='SUCCESS — Phase 7.1 confirmed correction overlay, partial semantic reuse and deterministic revalidation are verified end-to-end.';$('#ok').style.display='block'}
+    else{$('#warn').textContent='Unexpected Phase 7.1 result. Send the visible log to ChatGPT.';$('#warn').style.display='block'}
+  }catch(e){log('TEST ERROR',{name:e?.name,message:e?.message});$('#warn').textContent='Test stopped on an error. Send the visible log to ChatGPT.';$('#warn').style.display='block'}
+  finally{$('#password').value='';await supabase.auth.signOut();$('#run').disabled=false}
+};
+</script></main></body></html>
