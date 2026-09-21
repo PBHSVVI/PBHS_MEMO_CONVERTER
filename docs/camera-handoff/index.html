@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PBHS Memo Converter — Send Correction Photo</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#172033;background:#eef3f8}
+*{box-sizing:border-box}body{margin:0;padding:18px}main{max-width:540px;margin:auto;background:white;border:1px solid #d7deea;border-radius:16px;padding:20px;box-shadow:0 8px 30px #17324f14}
+h1{font-size:1.3rem;margin-top:0}.note{background:#edf5ff;padding:12px;border-radius:10px;color:#17365d}.good{background:#eaf8f0;color:#146c43;padding:12px;border-radius:10px}.warn{background:#fff3e8;color:#8a4c00;padding:12px;border-radius:10px}
+input{width:100%;font:inherit;margin-top:12px}button{width:100%;border:0;border-radius:10px;padding:13px;background:#12345b;color:white;font:inherit;font-weight:800;margin-top:14px}button:disabled{opacity:.5}
+#status{margin-top:12px;white-space:pre-wrap}.meta{font-size:.85rem;color:#667085;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>Send correction photo</h1>
+<div class="note">Take one clear photo of the correction. This link works once and expires automatically.</div>
+<div id="meta" class="meta"></div>
+<form id="form">
+  <input id="photo" name="photo" type="file" accept="image/jpeg,image/png" capture="environment" required>
+  <button id="send" type="submit">Send photo to desktop</button>
+</form>
+<div id="status"></div>
+</main>
+
+<script>
+const API='https://njrqiurqljwtuqrvguhj.supabase.co/functions/v1/camera-handoff';
+const params=new URLSearchParams(location.search);
+const token=params.get('token')||'';
+const form=document.getElementById('form');
+const send=document.getElementById('send');
+const statusEl=document.getElementById('status');
+const meta=document.getElementById('meta');
+
+function setStatus(text,kind=''){
+  statusEl.textContent=text;
+  statusEl.className=kind;
+}
+async function loadStatus(){
+  if(!token){
+    setStatus('This QR link is invalid. Return to the desktop and create a new QR code.','warn');
+    form.hidden=true;
+    return;
+  }
+  try{
+    const r=await fetch(API+'?token='+encodeURIComponent(token),{method:'GET',cache:'no-store'});
+    const data=await r.json();
+    if(!r.ok||!data.ok){
+      setStatus(data.error==='handoff_expired'
+        ?'This QR code has expired.'
+        :'This QR code is no longer active.','warn');
+      form.hidden=true;
+      return;
+    }
+    const expires=new Date(data.expires_at);
+    meta.textContent='Link expires at '+expires.toLocaleTimeString()+'.';
+    if(!data.can_upload){
+      setStatus(data.status==='uploaded'
+        ?'This photo handoff has already been used successfully.'
+        :'This QR code is no longer available.','good');
+      form.hidden=true;
+    }
+  }catch(e){
+    setStatus('Could not verify this handoff. Check your connection and try again.','warn');
+  }
+}
+form.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const file=document.getElementById('photo').files[0];
+  if(!file)return;
+  send.disabled=true;
+  setStatus('Uploading…');
+  try{
+    const fd=new FormData();
+    fd.append('photo',file,file.name);
+    const r=await fetch(API+'?token='+encodeURIComponent(token),{
+      method:'POST',
+      body:fd
+    });
+    const data=await r.json();
+    if(!r.ok||!data.ok){
+      const msg=data.error==='handoff_expired'
+        ?'This QR code expired before upload. Create a new one on the desktop.'
+        :data.error==='handoff_not_pending'
+        ?'This QR code was already used.'
+        :'Upload failed. Return to the desktop and retry.';
+      setStatus(msg,'warn');
+      send.disabled=false;
+      return;
+    }
+    form.hidden=true;
+    setStatus(
+      'Photo sent successfully. Return to the desktop review screen; the interpretation will appear there automatically.',
+      'good'
+    );
+  }catch(e){
+    setStatus('Upload failed. Check your connection and try again.','warn');
+    send.disabled=false;
+  }
+});
+loadStatus();
+</script>
+</body>
+</html>
