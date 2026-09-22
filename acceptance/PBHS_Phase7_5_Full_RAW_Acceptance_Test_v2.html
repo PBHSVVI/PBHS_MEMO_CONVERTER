@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PBHS Memo Converter — Phase 7.5 Full RAW Acceptance v2</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;--navy:#12345b;--ink:#172033;--line:#d7deea;--green:#146c43;--greenbg:#eaf8f0;--amber:#8a4c00;--amberbg:#fff3e8}
+*{box-sizing:border-box}body{margin:0;background:#eef3f8;color:var(--ink)}header{background:var(--navy);color:#fff;padding:18px 20px}header>div,main{max-width:980px;margin:auto}h1{margin:0;font-size:1.3rem}.sub{opacity:.82;margin-top:4px}main{padding:18px 12px 60px}.panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}label{display:block;font-weight:750;margin:10px 0 6px}input{width:100%;padding:10px;border:1px solid #bbc6d5;border-radius:9px;font:inherit}button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800;cursor:pointer}.primary{background:var(--navy);color:#fff}.confirm{background:var(--green);color:#fff}.secondary{background:#e8eef7;color:#17365d}button:disabled{opacity:.5}.status{padding:12px;border-radius:10px;background:#edf5ff;color:#17365d;margin-top:12px}.success{background:var(--greenbg);color:var(--green)}.warn{background:var(--amberbg);color:var(--amber)}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.progress{font-weight:800;margin-bottom:8px}.hide{display:none!important}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:460px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
+</style>
+</head>
+<body>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Acceptance v2</h1><div class="sub">Cause-level RAW review → 150 marks → automatic DOCX/PDF render</div></div></header>
+<main>
+<section class="panel">
+<h2 style="margin-top:0">Existing Phase 7.4 RAW job</h2>
+<p>This test reuses the accepted QR-handoff job and keeps its already-confirmed <b>11.12.1 → 11.2.1</b> correction. It will prepare one remaining cause-level correction at a time. <b>You must confirm every proposal.</b></p>
+<label>Email</label><input id="email" value="ivanvollenhoven@boyshigh.com">
+<label>Password</label><input id="password" type="password">
+<label>Job ID</label><input id="job" value="a284e625-6a71-43bd-ac81-7679a29de421" readonly>
+<button id="start" class="primary">Start Phase 7.5 guided acceptance</button>
+<div id="status" class="status">Ready.</div>
+</section>
+
+<section id="review" class="panel hide">
+<div id="progress" class="progress"></div>
+<h2 id="stepTitle" style="margin-top:0"></h2>
+<p id="stepWhy"></p>
+<div id="proposal" class="proposal"></div>
+<p><small>Confirm only if the displayed interpretation matches the controlled correction described above.</small></p>
+<button id="confirm" class="confirm">Confirm and continue</button>
+<button id="stop" class="secondary">Stop test</button>
+</section>
+
+<section class="panel"><details open><summary><b>Technical log</b></summary><pre id="log">Ready.</pre></details></section>
+</main>
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+const sb=createClient('https://njrqiurqljwtuqrvguhj.supabase.co','sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',{auth:{persistSession:false,autoRefreshToken:true}});
+const $=s=>document.querySelector(s), logEl=$('#log'), statusEl=$('#status');
+const jobId=$('#job').value; let user=null,currentCorrection=null,currentStep=null,stepIndex=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
+function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
+async function invoke(name,body){const r=await sb.functions.invoke(name,{body});if(r.error)throw r.error;return r.data}
+async function jsonFile(path){const r=await sb.storage.from('memo-files').download(path);if(r.error)throw r.error;return JSON.parse(await r.data.text())}
+
+const steps=[
+ {title:'Recover Question 2.2',why:'Accept the sequence-supported missing 2.2 row.',category:'unlabeled_mark_bearing_question',affected:'2.2',kind:'suggestion',candidate:'2.2'},
+ {title:'Resolve Question 5.1 printed allocation',why:'The source cell shows multiple printed allocations; confirm the intended total is 2 marks.',category:'multiple_printed_allocations',affected:'5.1',kind:'typed',text:'Use 2 marks'},
+ {title:'Recover Question 5.2',why:'Promote the marking-only row between 5.1 and 5.3 as Question 5.2.',category:'unlabeled_mark_bearing_question',affected:'5.2',kind:'suggestion',candidate:'5.2'},
+ {title:'Correct Question 7.4 mark semantics',why:'Replace the five-mark shorthand parse with the explicit four-mark teacher scheme.',category:'mark_arithmetic_mismatch',affected:'7.4',kind:'typed',text:'1M derivative; 1F factorisation; 1A critical values; 1A answer intervals'},
+ {title:'Recover Question 8.1 numbering',why:'The scored row printed as major 8 is followed by 8.2; confirm it is 8.1.',category:'scored_major_precedes_subquestions',affected:'8',kind:'typed',text:'8.1'},
+ {title:'Recover Question 10',why:'The source contains exactly one scored unlabeled problem between Question 9 and Question 11.',category:'major_question_gap',affected:'11.1.1',kind:'typed',text:'Question 10'},
+ {title:'Restore the missing Question 3 subtotal',why:'Confirm the observed Question 3 subtotal so the source subtotal ledger reconciles to 150.',category:'subtotal_sum_unexpected',affected:null,kind:'typed',text:'Q3 subtotal 4'},
+ {title:'Supply the four-mark scheme for Question 11.2.1',why:'The RAW source prints (4) but contains no mark descriptors. Supply a bounded explicit scheme; do not invent marks automatically.',category:'item_total_mismatch',affected:'11.2.1',kind:'typed',text:'3M valid calculation; 1A answer'},
+];
+
+async function currentJob(){const r=await sb.from('jobs').select('id,status,stage,engine_version,error_code,error_message,updated_at').eq('id',jobId).single();if(r.error)throw r.error;return r.data}
+async function waitStable(){
+ for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4||['needs_review','complete','failed','failed_retryable'].includes(j.status))log(`Worker poll ${i+1}`,j);
+  if(j.status==='complete')return j;
+  if(j.status==='needs_review'&&j.stage==='phase7_review'&&String(j.engine_version)==='phase7.5')return j;
+  if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`);
+ }
+ throw new Error('Timed out waiting for Phase 7.5 revalidation.');
+}
+async function findException(step){
+ let q=sb.from('exceptions').select('id,level,category,affected_id,message,suggestions,status,created_at').eq('job_id',jobId).eq('status','open').eq('category',step.category).order('created_at',{ascending:false}).limit(20);
+ const r=await q;if(r.error)throw r.error;
+ const row=(r.data||[]).find(x=>step.affected===null?x.affected_id===null:String(x.affected_id)===String(step.affected));
+ return row||null;
+}
+async function waitProposal(correctionId,submittedAt){
+ for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,display_text,proposed_patch,confirmation_status').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;
+  const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(30);if(ev.error)throw ev.error;
+  const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad)throw new Error('Correction reinterpretation remained unresolved.');
+ }
+ throw new Error('Timed out waiting for structured correction proposal.');
+}
+async function prepareStep(){
+ if(stepIndex>=steps.length){await finalAudit();return}
+ currentStep=steps[stepIndex];status(`Preparing ${stepIndex+1}/${steps.length}: ${currentStep.title}…`);
+ let ex=null;
+ for(let i=0;i<30&&!ex;i++){ex=await findException(currentStep);if(!ex)await sleep(2000)}
+ if(!ex)throw new Error(`Required active exception not found: ${currentStep.category} / ${currentStep.affected??'document'}`);
+ log('Cause-level exception',ex);
+ const submittedAt=new Date(); let result;
+ if(currentStep.kind==='suggestion'){
+  const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[];
+  let idx=suggestions.findIndex(s=>String(s?.candidate)===String(currentStep.candidate));
+  if(idx>=0){result=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'suggestion',suggestion_index:idx});}
+  else{
+    const fallback=currentStep.category==='major_question_gap'?`Question ${currentStep.candidate}`:String(currentStep.candidate);
+    result=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:fallback});
+  }
+ }else{
+  result=await invoke('submit-correction',{job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:currentStep.text});
+ }
+ const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');
+ currentCorrection=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);
+ if(!currentCorrection.proposed_patch){const fresh=await sb.from('corrections').select('id,display_text,proposed_patch,confirmation_status').eq('id',cid).single();if(fresh.error)throw fresh.error;currentCorrection=fresh.data}
+ log('Show-back ready',currentCorrection);
+ $('#progress').textContent=`Correction ${stepIndex+1} of ${steps.length}`;$('#stepTitle').textContent=currentStep.title;$('#stepWhy').textContent=currentStep.why;
+ $('#proposal').innerHTML=`<b>${currentCorrection.display_text||'Structured correction ready.'}</b><br><br><code>${currentCorrection.proposed_patch?.operation||'unknown'}</code>`;
+ $('#review').classList.remove('hide');status('Proposal ready. Inspect it and confirm to continue.','success');
+}
+async function finalAudit(){
+ status('All controlled corrections confirmed. Waiting for final renderer completion…');
+ let j=await currentJob();if(j.status!=='complete')j=await waitStable();
+ for(let i=0;i<180&&j.status!=='complete';i++){await sleep(2000);j=await currentJob();if(i%5===4)log('Final render poll',j);if(['failed','failed_retryable'].includes(j.status))throw new Error(`Final render failed: ${j.error_code||''}`)}
+ const [eq,cq,evq]=await Promise.all([
+  sb.from('exceptions').select('id,level,category,affected_id,status').eq('job_id',jobId).in('status',['open','awaiting_reinterpretation','awaiting_confirmation']),
+  sb.from('corrections').select('id,confirmation_status,applied_at,proposed_patch').eq('job_id',jobId).eq('confirmation_status','confirmed'),
+  sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true})
+ ]);if(eq.error||cq.error||evq.error)throw new Error('Final audit query failed.');
+ const canonical=await jsonFile(`${user.id}/${jobId}/internal/canonical.json`);const rv=await jsonFile(`${user.id}/${jobId}/internal/render_validation.json`);const events=evq.data||[];
+ const checks={
+  complete:j.status==='complete'&&j.stage==='complete',
+  engine_phase7_5:j.engine_version==='phase7.5',
+  no_open_review:(eq.data||[]).length===0,
+  canonical_render_ready:canonical.status==='render_ready',
+  total_150:Number(canonical?.totals?.computed)===150,
+  eleven_questions:(canonical.questions||[]).length===11,
+  confirmed_corrections:(cq.data||[]).length>=9,
+  all_confirmed_applied:(cq.data||[]).every(c=>!!c.applied_at),
+  render_validation_passed:rv.passed===true,
+  docx_preflight:rv?.docx?.preflight?.passed===true,
+  pdf_preflight:rv?.pdf?.preflight?.passed===true,
+  render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===150)
+ };
+ log('PHASE 7.5 FINAL AUDIT',{job:j,checks,canonical_totals:canonical.totals,render_validation:rv,confirmed_correction_count:(cq.data||[]).length,active_exceptions:eq.data||[]});
+ if(Object.values(checks).every(Boolean))status('SUCCESS — Phase 7.5 full RAW cause-level review reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.','success');
+ else status('Unexpected Phase 7.5 result. Send the visible technical log to ChatGPT.','warn');
+ $('#review').classList.add('hide');
+}
+$('#start').onclick=async()=>{
+ $('#start').disabled=true;logEl.textContent='Starting…';
+ try{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value='';const j=await currentJob();log('Signed in / starting job',j);if(j.status!=='needs_review')throw new Error(`Expected needs_review; got ${j.status}/${j.stage}.`);await prepareStep()}
+ catch(e){log('START ERROR',{message:e.message});status('Test stopped: '+e.message,'warn');$('#start').disabled=false}
+};
+$('#confirm').onclick=async()=>{
+ $('#confirm').disabled=true;$('#stop').disabled=true;
+ try{const r=await invoke('confirm-correction',{correction_id:currentCorrection.id});log('Teacher confirmed show-back',r);$('#review').classList.add('hide');status('Confirmed. Revalidating the immutable RAW source…');const j=await waitStable();log('Revalidation terminal',j);stepIndex++;if(j.status==='complete'&&stepIndex<steps.length)throw new Error(`Job completed early after step ${stepIndex}; expected additional cause-level review.`);await prepareStep()}
+ catch(e){log('CONFIRM ERROR',{message:e.message});status('Test stopped: '+e.message,'warn')}
+ finally{$('#confirm').disabled=false;$('#stop').disabled=false}
+};
+$('#stop').onclick=async()=>{status('Test stopped by teacher. Current pending proposal was not confirmed.','warn');$('#review').classList.add('hide');await sb.auth.signOut();$('#start').disabled=false};
+</script>
+</body>
+</html>
