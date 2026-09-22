@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PBHS Memo Converter — Phase 7.5 Full RAW Acceptance v3</title>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;--navy:#12345b;--ink:#172033;--line:#d7deea;--green:#146c43;--greenbg:#eaf8f0;--amber:#8a4c00;--amberbg:#fff3e8;--soft:#f7f9fc}
+*{box-sizing:border-box}body{margin:0;background:#eef3f8;color:var(--ink)}header{background:var(--navy);color:#fff;padding:18px 20px}header>div,main{max-width:1180px;margin:auto}h1{margin:0;font-size:1.3rem}.sub{opacity:.82;margin-top:4px}main{padding:18px 12px 60px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+label{display:block;font-weight:750;margin:10px 0 6px}input{width:100%;padding:10px;border:1px solid #bbc6d5;border-radius:9px;font:inherit}
+button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800;cursor:pointer;margin:3px}.primary{background:var(--navy);color:#fff}.confirm{background:var(--green);color:#fff}.secondary{background:#e8eef7;color:#17365d}.dangerLite{background:#fff3e8;color:#8a4c00}button:disabled{opacity:.5}
+.status{padding:12px;border-radius:10px;background:#edf5ff;color:#17365d;margin-top:12px}.success{background:var(--greenbg);color:var(--green)}.warn{background:var(--amberbg);color:var(--amber)}
+.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.progress{font-weight:800;margin-bottom:8px}.hide{display:none!important}
+.reviewGrid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr);gap:16px;align-items:start}@media(max-width:850px){.reviewGrid{grid-template-columns:1fr}}
+.sourceCard{border:1px solid var(--line);border-radius:12px;background:var(--soft);overflow:hidden}.sourceHead{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap}.sourceTools{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.sourceTools button{padding:7px 10px}.zoomReadout{font-size:.9rem;font-weight:800;min-width:52px;text-align:center}
+#sourceViewport{height:560px;overflow:auto;position:relative;background:#cfd7e2;cursor:grab;padding:16px;overscroll-behavior:contain}#sourceViewport.dragging{cursor:grabbing;user-select:none}
+#sourceRender{transform-origin:top left;min-width:max-content}.docx-wrapper{background:#cfd7e2!important;padding:0!important}.docx-wrapper>section.docx{box-shadow:0 2px 10px #0002;margin:0 auto 18px!important}
+.evidence-hit{outline:4px solid #f0a000!important;outline-offset:3px!important;background:#fff4c4!important}
+#fallback{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}#fallback pre{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:250px}
+pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:460px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
+.pauseNote{background:#edf5ff;border-radius:10px;padding:10px;margin-top:10px}.muted{opacity:.72}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+</style>
+</head>
+<body>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Acceptance v3</h1><div class="sub">Evidence-first review • pause/resume • cause-level correction • deterministic render</div></div></header>
+<main>
+<section class="panel">
+<h2 style="margin-top:0">RAW memo review</h2>
+<p>This version resumes from the server-side correction state. If a proposal is already waiting for confirmation, it will reopen that same proposal rather than creating another one.</p>
+<label>Email</label><input id="email" value="ivanvollenhoven@boyshigh.com">
+<label>Password</label><input id="password" type="password">
+<label>Job ID</label><input id="job" value="a284e625-6a71-43bd-ac81-7679a29de421" readonly>
+<div class="buttonRow"><button id="start" class="primary">Start / resume Phase 7.5 review</button><button id="signout" class="secondary">Sign out</button></div>
+<div id="status" class="status">Ready. Your correction state lives in Supabase, not in this page.</div>
+</section>
+
+<section id="review" class="panel hide">
+<div class="reviewGrid">
+<div>
+  <div class="sourceCard">
+    <div class="sourceHead">
+      <div><b>Original uploaded memo — review evidence</b><div id="sourceLabel" class="muted">Loading source…</div></div>
+      <div class="sourceTools">
+        <button id="zoomOut" class="secondary">−</button><span id="zoomReadout" class="zoomReadout">100%</span><button id="zoomIn" class="secondary">+</button>
+        <button id="zoomReset" class="secondary">Reset</button><button id="refocus" class="secondary">Refocus</button>
+      </div>
+    </div>
+    <div id="sourceViewport"><div id="sourceRender"></div></div>
+  </div>
+  <div id="fallback">
+    <b>Extracted source context</b>
+    <div class="muted">Fallback evidence from the immutable normalized source; useful if browser rendering differs from Word.</div>
+    <pre id="sourceText">Loading…</pre>
+  </div>
+</div>
+
+<div>
+  <div id="progress" class="progress"></div>
+  <h2 id="stepTitle" style="margin-top:0"></h2>
+  <p id="stepWhy"></p>
+  <div id="exceptionBox" class="status"></div>
+  <div id="proposal" class="proposal"></div>
+  <p><small>Inspect the source evidence first. Confirm only when the displayed interpretation agrees with what the uploaded memo actually shows.</small></p>
+  <div class="buttonRow">
+    <button id="confirm" class="confirm">Confirm and continue</button>
+    <button id="pause" class="secondary">Pause review</button>
+  </div>
+  <div class="pauseNote"><b>Pause/resume:</b> pausing does not reject or alter the correction. You can close the browser and return later; the pending proposal remains in Supabase.</div>
+</div>
+</div>
+</section>
+
+<section class="panel"><details><summary><b>Technical log</b></summary><pre id="log">Ready.</pre></details></section>
+</main>
+
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+const sb=createClient('https://njrqiurqljwtuqrvguhj.supabase.co','sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',{
+  auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}
+});
+const $=s=>document.querySelector(s), logEl=$('#log'), statusEl=$('#status');
+const jobId=$('#job').value;
+let user=null,currentCorrection=null,currentStep=null,currentException=null,stepIndex=0,currentJobData=null;
+let sourceLoaded=false,sourceKind=null,normalizedCache=null,sourceObjectUrl=null,zoom=1;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
+function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
+async function invoke(name,body){const r=await sb.functions.invoke(name,{body});if(r.error)throw r.error;return r.data}
+async function jsonFile(path){const r=await sb.storage.from('memo-files').download(path);if(r.error)throw r.error;return JSON.parse(await r.data.text())}
+
+const steps=[
+ {title:'Recover Question 2.2',why:'The source has a mark-bearing row with no printed number between neighbouring Question 2 items. Confirm only if the visual source supports 2.2.',category:'unlabeled_mark_bearing_question',affected:'2.2',kind:'suggestion',candidate:'2.2',anchors:['2.1','2.3']},
+ {title:'Resolve Question 5.1 printed allocation',why:'The source cell contains more than one printed allocation. Confirm which allocation belongs to Question 5.1.',category:'multiple_printed_allocations',affected:'5.1',kind:'typed',text:'Use 2 marks',anchors:['5.1']},
+ {title:'Recover Question 5.2',why:'Inspect the marking-only row between 5.1 and 5.3 and confirm whether it is the missing Question 5.2.',category:'unlabeled_mark_bearing_question',affected:'5.2',kind:'suggestion',candidate:'5.2',anchors:['5.1','5.3']},
+ {title:'Correct Question 7.4 mark semantics',why:'Compare the printed (4) with the marking shorthand and confirm the intended four-mark scheme.',category:'mark_arithmetic_mismatch',affected:'7.4',kind:'typed',text:'1M derivative; 1F factorisation; 1A critical values; 1A answer intervals',anchors:['7.4']},
+ {title:'Recover Question 8.1 numbering',why:'Inspect the scored row printed as major 8 immediately before 8.2; confirm whether it is actually 8.1.',category:'scored_major_precedes_subquestions',affected:'8',kind:'typed',text:'8.1',anchors:['8.2','8']},
+ {title:'Recover Question 10',why:'Inspect the scored unlabeled problem between the end of Question 9 and the beginning of Question 11.',category:'major_question_gap',affected:'11.1.1',kind:'typed',text:'Question 10',anchors:['9.4','11.1.1']},
+ {title:'Restore the missing Question 3 subtotal',why:'Inspect the end of Question 3 and confirm the observed subtotal shown in the original memo.',category:'subtotal_sum_unexpected',affected:null,kind:'typed',text:'Q3 subtotal 4',anchors:['3']},
+ {title:'Supply the four-mark scheme for Question 11.2.1',why:'Inspect the original Question 11.2.1 working and printed (4), then confirm the explicit teacher mark scheme.',category:'item_total_mismatch',affected:'11.2.1',kind:'typed',text:'3M valid calculation; 1A answer',anchors:['11.12.1','11.2.1']},
+];
+
+function matchStep(ex){
+  return steps.findIndex(s =>
+    s.category===ex.category &&
+    (s.affected===null ? ex.affected_id===null : String(s.affected)===String(ex.affected_id))
+  );
+}
+async function currentJob(){
+ const r=await sb.from('jobs').select('id,user_id,status,stage,engine_version,error_code,error_message,attempt_count,source_path,source_filename,source_mime,updated_at').eq('id',jobId).single();
+ if(r.error)throw r.error; currentJobData=r.data; return r.data
+}
+async function activeExceptionFor(step){
+ let q=sb.from('exceptions').select('id,level,category,affected_id,message,suggestions,status,created_at').eq('job_id',jobId).in('status',['open','awaiting_reinterpretation','awaiting_confirmation']).eq('category',step.category).order('created_at',{ascending:false}).limit(30);
+ const r=await q;if(r.error)throw r.error;
+ return (r.data||[]).find(x=>step.affected===null?x.affected_id===null:String(x.affected_id)===String(step.affected))||null;
+}
+async function pendingCorrection(){
+ const r=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('job_id',jobId).eq('confirmation_status','pending').order('created_at',{ascending:false}).limit(1);
+ if(r.error)throw r.error; return (r.data||[])[0]||null;
+}
+async function exceptionById(id){
+ const r=await sb.from('exceptions').select('id,level,category,affected_id,message,suggestions,status,created_at').eq('id',id).eq('job_id',jobId).single();
+ if(r.error)throw r.error; return r.data;
+}
+async function confirmedCorrections(){
+ const r=await sb.from('corrections').select('id,exception_id,proposed_patch,confirmation_status,applied_at').eq('job_id',jobId).eq('confirmation_status','confirmed');
+ if(r.error)throw r.error; return r.data||[];
+}
+async function waitStable(){
+ for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4||['needs_review','complete','failed','failed_retryable','correction_pending'].includes(j.status))log(`Worker poll ${i+1}`,j);
+  if(j.status==='complete')return j;
+  if(j.status==='needs_review'&&j.stage==='phase7_review'&&String(j.engine_version)==='phase7.5')return j;
+  if(j.status==='correction_pending')return j;
+  if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`);
+ }
+ throw new Error('Timed out waiting for Phase 7.5 revalidation.');
+}
+async function waitProposal(correctionId,submittedAt){
+ for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;
+  const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(30);if(ev.error)throw ev.error;
+  const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad)throw new Error('Correction reinterpretation remained unresolved.');
+ }
+ throw new Error('Timed out waiting for structured correction proposal.');
+}
+
+function flattenNormalized(normalized){
+ const content=normalized?.content||{}, units=content.units;
+ if(!Array.isArray(units)){
+   return (content.pages||[]).map((p,i)=>({index:i,cells:[String(p.effective_text||p.text||'')],combined:String(p.effective_text||p.text||'')}));
+ }
+ const blocks=[]; let idx=0;
+ for(const unit of units){
+   if(unit.type==='paragraph'){
+     const text=String(unit.text||''); if(text.trim()) blocks.push({index:idx++,cells:[text],combined:text});
+   }else if(unit.type==='table'){
+     for(const row of unit.rows||[]){
+       const cells=(row||[]).map(c=>String(c?.text||''));
+       if(cells.some(c=>c.trim())) blocks.push({index:idx++,cells,combined:cells.join('\n')});
+     }
+   }
+ }
+ return blocks;
+}
+async function ensureNormalized(){
+ if(normalizedCache)return normalizedCache;
+ normalizedCache=await jsonFile(`${user.id}/${jobId}/internal/normalized.json`);
+ return normalizedCache;
+}
+async function extractedContext(step){
+ try{
+   const norm=await ensureNormalized(), blocks=flattenNormalized(norm), anchors=step.anchors||[];
+   const hits=[];
+   blocks.forEach((b,i)=>{if(anchors.some(a=>a&&b.combined.includes(a)))hits.push(i)});
+   let start=0,end=Math.min(blocks.length-1,5);
+   if(hits.length){
+     start=Math.max(0,Math.min(...hits)-2);end=Math.min(blocks.length-1,Math.max(...hits)+2);
+   }else{
+     const target=String(step.affected??step.candidate??'');
+     const i=blocks.findIndex(b=>target&&b.combined.includes(target));
+     if(i>=0){start=Math.max(0,i-2);end=Math.min(blocks.length-1,i+2)}
+   }
+   return blocks.slice(start,end+1).map(b=>`SOURCE BLOCK ${b.index}\n${b.cells.map((c,i)=>`[cell ${i+1}] ${c}`).join('\n')}`).join('\n\n');
+ }catch(e){return `Could not load normalized source context: ${e.message}`}
+}
+
+function setZoom(value){
+ zoom=Math.max(.55,Math.min(2.4,value));
+ $('#sourceRender').style.zoom=String(zoom);
+ $('#zoomReadout').textContent=`${Math.round(zoom*100)}%`;
+}
+function clearEvidenceHits(){document.querySelectorAll('.evidence-hit').forEach(el=>el.classList.remove('evidence-hit'))}
+function findAnchorElement(token){
+ const candidates=[...$('#sourceRender').querySelectorAll('td,p,span,div')].filter(el=>{
+   const t=(el.textContent||'').trim(); return t.includes(token)&&t.length<700;
+ });
+ candidates.sort((a,b)=>(a.textContent||'').length-(b.textContent||'').length);
+ return candidates[0]||null;
+}
+function refocusEvidence(){
+ if(sourceKind!=='docx'||!currentStep)return;
+ clearEvidenceHits();
+ const found=[];
+ for(const token of currentStep.anchors||[]){
+   const el=findAnchorElement(token); if(el){el.classList.add('evidence-hit');found.push(el)}
+ }
+ const el=found[0];
+ if(el){
+   const vp=$('#sourceViewport'), er=el.getBoundingClientRect(), vr=vp.getBoundingClientRect();
+   vp.scrollTop += er.top-vr.top-vp.clientHeight*.28;
+   vp.scrollLeft += Math.max(0,er.left-vr.left-vp.clientWidth*.1);
+ }
+}
+async function ensureSourceLoaded(){
+ if(sourceLoaded)return;
+ const j=currentJobData||await currentJob();
+ if(!j.source_path)throw new Error('Source storage path is unavailable.');
+ const d=await sb.storage.from('memo-files').download(j.source_path);if(d.error)throw d.error;
+ const blob=d.data, name=String(j.source_filename||''), mime=String(j.source_mime||blob.type||'');
+ const render=$('#sourceRender');render.innerHTML='';
+ if(/\.docx$/i.test(name)||mime.includes('wordprocessingml')){
+   sourceKind='docx';$('#sourceLabel').textContent=`${name} — browser-rendered original DOCX`;
+   if(!window.docx?.renderAsync)throw new Error('DOCX preview library did not load.');
+   await window.docx.renderAsync(blob,render,null,{breakPages:true,ignoreLastRenderedPageBreak:false,ignoreWidth:false,ignoreHeight:false,ignoreFonts:false});
+ }else if(/\.pdf$/i.test(name)||mime==='application/pdf'){
+   sourceKind='pdf';$('#sourceLabel').textContent=`${name} — original PDF`;
+   sourceObjectUrl=URL.createObjectURL(blob);
+   render.innerHTML=`<iframe title="Original memo PDF" src="${sourceObjectUrl}" style="width:900px;height:1200px;border:0;background:white"></iframe>`;
+ }else if(/^image\//.test(mime)||/\.(png|jpe?g)$/i.test(name)){
+   sourceKind='image';$('#sourceLabel').textContent=`${name} — original image`;
+   sourceObjectUrl=URL.createObjectURL(blob);
+   render.innerHTML=`<img src="${sourceObjectUrl}" alt="Original memo evidence" style="display:block;max-width:none">`;
+ }else{
+   sourceKind='unknown';$('#sourceLabel').textContent=name||'Original source';render.textContent='This source type cannot be previewed in-browser.';
+ }
+ sourceLoaded=true;setZoom(1);
+}
+async function showEvidence(step){
+ $('#sourceText').textContent=await extractedContext(step);
+ try{await ensureSourceLoaded();await sleep(150);refocusEvidence()}
+ catch(e){$('#sourceLabel').textContent='Visual preview unavailable — extracted source context remains below.';log('SOURCE PREVIEW WARNING',{message:e.message})}
+}
+
+async function showReview(step,correction,ex){
+ currentStep=step;currentCorrection=correction;currentException=ex;stepIndex=steps.indexOf(step);
+ $('#progress').textContent=`Correction ${stepIndex+1} of ${steps.length}`;
+ $('#stepTitle').textContent=step.title;$('#stepWhy').textContent=step.why;
+ $('#exceptionBox').textContent=`${String(ex.level||'').toUpperCase()} — ${ex.message||ex.category}`;
+ $('#proposal').innerHTML=`<b>${correction.display_text||'Structured correction ready.'}</b><br><br><code>${correction.proposed_patch?.operation||'awaiting reinterpretation'}</code>`;
+ $('#review').classList.remove('hide');status('Proposal ready. Inspect the original memo evidence, then confirm or pause.','success');
+ await showEvidence(step);
+}
+
+async function resumeExistingPending(){
+ const pending=await pendingCorrection(); if(!pending)return false;
+ const ex=await exceptionById(pending.exception_id);
+ let idx=matchStep(ex);
+ if(idx<0)throw new Error(`Pending correction does not map to the controlled Phase 7.5 queue: ${ex.category}/${ex.affected_id}`);
+ stepIndex=idx;currentStep=steps[idx];currentException=ex;
+ let corr=pending;
+ if(!corr.proposed_patch){
+   status('A saved correction is still being reinterpreted. Resuming that work…');
+   corr=await waitProposal(corr.id,new Date(corr.created_at));
+ }
+ log('Resumed existing pending correction',{correction:corr,exception:ex});
+ await showReview(currentStep,corr,ex);return true;
+}
+async function nextIncompleteStep(){
+ const confirmed=await confirmedCorrections();
+ const done=new Set((confirmed||[]).map(c=>{
+   const p=c.proposed_patch||{};return `${p.category||''}|${p.affected_id===null?'NULL':String(p.affected_id??'')}`;
+ }));
+ for(let i=0;i<steps.length;i++){
+   const s=steps[i],key=`${s.category}|${s.affected===null?'NULL':String(s.affected)}`;
+   if(done.has(key))continue;
+   const ex=await activeExceptionFor(s);
+   if(ex){return {index:i,step:s,exception:ex}}
+ }
+ return null;
+}
+async function prepareStep(item=null){
+ const next=item||await nextIncompleteStep();
+ if(!next){await finalAudit();return}
+ stepIndex=next.index;currentStep=next.step;currentException=next.exception;
+ status(`Preparing ${stepIndex+1}/${steps.length}: ${currentStep.title}…`);
+ log('Cause-level exception',currentException);
+ const submittedAt=new Date();let result;
+ if(currentStep.kind==='suggestion'){
+   const suggestions=Array.isArray(currentException.suggestions)?currentException.suggestions:[];
+   const idx=suggestions.findIndex(s=>String(s?.candidate)===String(currentStep.candidate));
+   if(idx>=0)result=await invoke('submit-correction',{job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:idx});
+   else result=await invoke('submit-correction',{job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:String(currentStep.candidate)});
+ }else result=await invoke('submit-correction',{job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:currentStep.text});
+ const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');
+ let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);
+ if(!corr.proposed_patch){const fresh=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(fresh.error)throw fresh.error;corr=fresh.data}
+ log('Show-back ready',corr);await showReview(currentStep,corr,currentException);
+}
+async function resumeFlow(){
+ const j=await currentJob();log('Resume state',j);
+ if(j.status==='complete'){await finalAudit();return}
+ if(await resumeExistingPending())return;
+ if(['processing','dispatched','correction_confirmed'].includes(j.status)){
+   status('Processing is still running. Waiting for a stable review state…');await waitStable();
+   if(await resumeExistingPending())return;
+ }
+ const next=await nextIncompleteStep();
+ if(next){await prepareStep(next);return}
+ await finalAudit();
+}
+async function finalAudit(){
+ status('No further controlled correction step is available. Checking final state…');
+ const j=await currentJob();
+ if(j.status!=='complete'){status(`Review is saved. Current job state: ${j.status}/${j.stage}. Resume after the worker has produced the next review state.`,'warn');return}
+ const [eq,cq,evq]=await Promise.all([
+  sb.from('exceptions').select('id,level,category,affected_id,status').eq('job_id',jobId).in('status',['open','awaiting_reinterpretation','awaiting_confirmation']),
+  sb.from('corrections').select('id,confirmation_status,applied_at,proposed_patch').eq('job_id',jobId).eq('confirmation_status','confirmed'),
+  sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true})
+ ]);if(eq.error||cq.error||evq.error)throw new Error('Final audit query failed.');
+ const canonical=await jsonFile(`${user.id}/${jobId}/internal/canonical.json`),rv=await jsonFile(`${user.id}/${jobId}/internal/render_validation.json`),events=evq.data||[];
+ const checks={complete:j.status==='complete'&&j.stage==='complete',engine_phase7_5:j.engine_version==='phase7.5',no_open_review:(eq.data||[]).length===0,canonical_render_ready:canonical.status==='render_ready',total_150:Number(canonical?.totals?.computed)===150,eleven_questions:(canonical.questions||[]).length===11,confirmed_corrections:(cq.data||[]).length>=9,all_confirmed_applied:(cq.data||[]).every(c=>!!c.applied_at),render_validation_passed:rv.passed===true,docx_preflight:rv?.docx?.preflight?.passed===true,pdf_preflight:rv?.pdf?.preflight?.passed===true,render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===150)};
+ log('PHASE 7.5 FINAL AUDIT',{job:j,checks,canonical_totals:canonical.totals,render_validation:rv});
+ $('#review').classList.add('hide');
+ status(Object.values(checks).every(Boolean)?'SUCCESS — Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.':'Unexpected Phase 7.5 result. Send the technical log to ChatGPT.',Object.values(checks).every(Boolean)?'success':'warn');
+}
+
+$('#start').onclick=async()=>{
+ $('#start').disabled=true;logEl.textContent='Starting / resuming…';
+ try{
+   const session=(await sb.auth.getSession()).data.session;
+   if(session){user=session.user}
+   else{
+     const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value='';
+   }
+   await resumeFlow();
+ }catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'warn')}
+ finally{$('#start').disabled=false}
+};
+$('#confirm').onclick=async()=>{
+ $('#confirm').disabled=true;$('#pause').disabled=true;
+ try{
+   const r=await invoke('confirm-correction',{correction_id:currentCorrection.id});log('Teacher confirmed show-back',r);
+   $('#review').classList.add('hide');status('Confirmed. Revalidating the immutable RAW source…');
+   await waitStable();await resumeFlow();
+ }catch(e){log('CONFIRM ERROR',{message:e.message});status('Review stopped: '+e.message,'warn')}
+ finally{$('#confirm').disabled=false;$('#pause').disabled=false}
+};
+$('#pause').onclick=()=>{
+ $('#review').classList.add('hide');
+ status('Paused safely. Nothing was rejected or changed. You may close this page and use Start / resume later.','success');
+ $('#start').textContent='Resume Phase 7.5 review';
+};
+$('#signout').onclick=async()=>{await sb.auth.signOut();user=null;$('#review').classList.add('hide');status('Signed out. The job and any pending proposal remain saved in Supabase.');$('#start').textContent='Start / resume Phase 7.5 review'};
+$('#zoomIn').onclick=()=>setZoom(zoom+.15);$('#zoomOut').onclick=()=>setZoom(zoom-.15);$('#zoomReset').onclick=()=>setZoom(1);$('#refocus').onclick=()=>refocusEvidence();
+
+const vp=$('#sourceViewport');let drag=null;
+vp.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag={x:e.clientX,y:e.clientY,left:vp.scrollLeft,top:vp.scrollTop};vp.setPointerCapture(e.pointerId);vp.classList.add('dragging')});
+vp.addEventListener('pointermove',e=>{if(!drag)return;vp.scrollLeft=drag.left-(e.clientX-drag.x);vp.scrollTop=drag.top-(e.clientY-drag.y)});
+vp.addEventListener('pointerup',e=>{drag=null;vp.classList.remove('dragging');try{vp.releasePointerCapture(e.pointerId)}catch{}});
+vp.addEventListener('pointercancel',()=>{drag=null;vp.classList.remove('dragging')});
+
+(async()=>{
+ try{
+   const session=(await sb.auth.getSession()).data.session;
+   if(session){user=session.user;$('#start').textContent='Resume Phase 7.5 review';status('Saved sign-in found. Your review can be resumed from the server-side state.','success')}
+ }catch{}
+})();
+</script>
+</body>
+</html>
