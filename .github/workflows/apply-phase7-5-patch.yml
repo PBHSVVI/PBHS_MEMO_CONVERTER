@@ -36,19 +36,20 @@ jobs:
       - name: Check diff
         run: git diff --check
 
-      - name: Commit Phase 7.5 implementation
+      - name: Exclude workflow mutation from Actions commit
+        run: |
+          # GitHub's workflow GITHUB_TOKEN has contents:write but cannot itself
+          # create/update another workflow file without the separate workflows
+          # permission. Keep the tested process-memo.yml change for manual upload.
+          git restore .github/workflows/process-memo.yml
+
+      - name: Commit Phase 7.5 engine implementation
         run: |
           git config user.name "PBHS Memo Converter"
           git config user.email "actions@users.noreply.github.com"
-          git add \
-            engine/src/memo_engine/phase7_5.py \
-            engine/src/memo_engine/corrections.py \
-            engine/src/memo_engine/correction_reinterpretation.py \
-            engine/src/memo_engine/cli.py \
-            engine/tests/test_phase7_5_raw_categories.py \
-            .github/workflows/process-memo.yml
+          git add             engine/src/memo_engine/phase7_5.py             engine/src/memo_engine/corrections.py             engine/src/memo_engine/correction_reinterpretation.py             engine/src/memo_engine/cli.py             engine/tests/test_phase7_5_raw_categories.py
           if git diff --cached --quiet; then
-            echo "No Phase 7.5 implementation changes to commit."
+            echo "No Phase 7.5 engine changes to commit."
             exit 0
           fi
           git commit -m "Implement Phase 7.5 RAW exception correction semantics"
