@@ -265,3 +265,67 @@ def test_q3_subtotal_overlay_only_passes_when_observed_ledger_reaches_150():
     assert applied["subtotal"] == 4
     assert sum(item["value"] for item in structure["subtotals"]) == 150
     assert not any(e["category"] == "subtotal_sum_unexpected" for e in structure["exceptions"])
+
+def test_item_total_teacher_override_accepts_plain_language():
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.1.1"},
+        "award 3 marks",
+    )
+    assert proposal["operation"] == "set_item_total_override"
+    assert proposal["printed_marks"] == 3
+    assert proposal["reinterpretation_method"] == "deterministic_teacher_item_total"
+    assert evidence["teacher_item_total"] == 3
+    assert "3 marks" in display
+
+
+def test_item_total_teacher_override_accepts_parenthesised_total():
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.1.1"},
+        "(3)",
+    )
+    assert proposal["operation"] == "set_item_total_override"
+    assert proposal["printed_marks"] == 3
+    assert evidence["teacher_item_total"] == 3
+    assert "3 marks" in display
+
+
+def test_item_total_override_reconciles_printed_two_to_computed_three():
+    normalised = _normalised_rows([
+        ["11.1.1", "working", "1A one\\n1A two\\n1A three", "(2)"],
+    ])
+    structure = {
+        "questions": [_q("11.1.1", 0, printed=2, computed=3, points=[
+            {"count": 1, "descriptor": "one"},
+            {"count": 1, "descriptor": "two"},
+            {"count": 1, "descriptor": "three"},
+        ])],
+        "exceptions": [{
+            "level": "red",
+            "category": "item_total_mismatch",
+            "affected_id": "11.1.1",
+            "message": "prints 2 but computes 3",
+            "suggestions": [],
+        }],
+        "subtotals": [],
+        "summary": {},
+    }
+    patch = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.1.1"},
+        "award 3 marks",
+    )[0]
+    applied, issue, handled = apply_phase7_5_patch(
+        structure,
+        normalised,
+        correction_id="corr-11-1-1",
+        category="item_total_mismatch",
+        affected_id="11.1.1",
+        operation=patch["operation"],
+        patch=patch,
+    )
+    assert handled is True
+    assert issue is None
+    assert applied["source_printed_marks"] == 2
+    assert applied["printed_marks"] == 3
+    assert structure["questions"][0]["printed_marks"] == 3
+    assert structure["questions"][0]["computed_shorthand_marks"] == 3
+    assert structure["exceptions"] == []

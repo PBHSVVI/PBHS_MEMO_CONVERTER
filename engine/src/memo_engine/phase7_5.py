@@ -17,6 +17,12 @@ QUESTION_TOKEN_ANY_RE = re.compile(
     r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){0,2})(?![\d.])"
 )
 MARK_TOTAL_RE = re.compile(r"(?i)\b(\d{1,2})\s*marks?\b")
+TEACHER_ITEM_TOTAL_RE = re.compile(
+    r"(?i)^\s*(?:(?:award|use|make(?:\s+it)?|total(?:\s+is)?|"
+    r"set(?:\s+(?:the\s+)?(?:item\s+)?total(?:\s+to)?)?)\s+)?"
+    r"(\d{1,2})\s*marks?\s*[.!]?\s*$"
+)
+BARE_ITEM_TOTAL_RE = re.compile(r"^\s*\(\s*(\d{1,2})\s*\)\s*$")
 SUBTOTAL_INSTRUCTION_RE = re.compile(
     r"(?i)\bq(?:uestion)?\s*(\d{1,2})\b.*?\b(?:sub\s*total|subtotal|total)"
     r"\s*(?:to|=|as)?\s*(\d{1,3})\b"
@@ -331,6 +337,74 @@ def _apply_set_printed_marks(
         "source_block_index": question.get("source_block_index"),
     }, None
 
+
+
+def _apply_set_item_total_override(
+    structure: dict[str, Any],
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    question = _question(structure, affected_id)
+    if question is None:
+        return None, _issue(
+            "correction_evidence_unresolved",
+            affected_id,
+            f"Confirmed correction {correction_id} could not resolve Question {affected_id}.",
+        )
+
+    try:
+        chosen = int(patch.get("printed_marks"))
+    except Exception:
+        chosen = 0
+    if not 1 <= chosen <= 20:
+        return None, _issue(
+            "correction_mark_total_invalid",
+            affected_id,
+            f"Confirmed correction {correction_id} does not contain a safe item total.",
+        )
+
+    computed = int(question.get("computed_shorthand_marks") or 0)
+    if computed <= 0:
+        return None, _issue(
+            "correction_evidence_unresolved",
+            affected_id,
+            f"Question {affected_id} has no bounded computed mark total to reconcile.",
+        )
+    if chosen != computed:
+        return None, _issue(
+            "correction_mark_total_invalid",
+            affected_id,
+            (
+                f"Teacher total {chosen} does not match the existing computed mark "
+                f"scheme total {computed} for Question {affected_id}; provide the "
+                "replacement mark scheme instead."
+            ),
+        )
+
+    original = question.get("printed_marks")
+    question["printed_marks"] = chosen
+    question["correction_overlay"] = {
+        "correction_id": correction_id,
+        "operation": "set_item_total_override",
+        "source_printed_marks": original,
+    }
+    _remove_exception(structure, category, affected_id)
+    _remove_exception(structure, "mark_arithmetic_mismatch", affected_id)
+
+    return {
+        "correction_id": correction_id,
+        "operation": "set_item_total_override",
+        "category": category,
+        "affected_id": affected_id,
+        "target_id": affected_id,
+        "source_printed_marks": original,
+        "printed_marks": chosen,
+        "mark_total": computed,
+        "source_block_index": question.get("source_block_index"),
+    }, None
 
 def _apply_replace_mark_points(
     structure: dict[str, Any],
@@ -711,6 +785,16 @@ def apply_phase7_5_patch(
         )
         return applied, issue, True
 
+    if category == "item_total_mismatch" and operation == "set_item_total_override":
+        applied, issue = _apply_set_item_total_override(
+            structure,
+            correction_id=correction_id,
+            category=category,
+            affected_id=affected,
+            patch=patch,
+        )
+        return applied, issue, True
+
     if (
         category in {"mark_arithmetic_mismatch", "item_total_mismatch"}
         and operation == "replace_mark_points"
@@ -793,6 +877,37 @@ def phase7_5_deterministic_proposal(
         )
 
     if category in {"mark_arithmetic_mismatch", "item_total_mismatch"}:
+        if category == "item_total_mismatch":
+            total_match = TEACHER_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
+            bare_match = BARE_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
+            raw_total = (
+                total_match.group(1)
+                if total_match
+                else bare_match.group(1)
+                if bare_match
+                else None
+            )
+            if raw_total is not None:
+                total = int(raw_total)
+                evidence["teacher_item_total"] = total
+                if 1 <= total <= 20:
+                    proposal = {
+                        "schema_version": "1.0",
+                        "operation": "set_item_total_override",
+                        "category": category,
+                        "affected_id": exception.get("affected_id"),
+                        "printed_marks": total,
+                        "reinterpretation_method": "deterministic_teacher_item_total",
+                    }
+                    return (
+                        proposal,
+                        (
+                            f"Override the printed item total for Question {affected} "
+                            f"to {total} marks."
+                        ),
+                        evidence,
+                    )
+
         normalised = re.sub(r"\s*[;|]\s*", "\n", evidence_text.strip())
         points = parse_mark_points(normalised)
         total, _ = effective_mark_total(points, normalised)
