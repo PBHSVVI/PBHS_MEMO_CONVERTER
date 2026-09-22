@@ -14,6 +14,7 @@ from .http import SupabaseRest
 from .ai_router import ProviderError, _post_json
 from .ingestion import IngestionError, ingest_bytes
 from .normalization import NormalizationError, normalize_source
+from .phase7_5 import phase7_5_deterministic_proposal
 
 BUCKET = "memo-files"
 QUESTION_TOKEN_RE = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){1,2})(?![\d.])")
@@ -324,6 +325,13 @@ def deterministic_proposal(
 ) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
     category = str(exception.get("category") or "")
     affected = str(exception.get("affected_id") or "").strip()
+
+    phase_proposal, phase_display, phase_evidence = phase7_5_deterministic_proposal(
+        exception, evidence_text
+    )
+    if phase_evidence.get("phase7_5_handled"):
+        return phase_proposal, phase_display, phase_evidence
+
     candidates = _question_candidates(evidence_text)
     evidence = {
         "candidate_question_ids": candidates,
@@ -566,7 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{exc.code}: {exc.public_message}", file=sys.stderr)
         return 1
     print(
-        "Phase 7.2 correction reinterpretation: "
+        "Phase 7.5 correction reinterpretation: "
         f"{result['correction_id']} -> {result['status']}"
     )
     return 0

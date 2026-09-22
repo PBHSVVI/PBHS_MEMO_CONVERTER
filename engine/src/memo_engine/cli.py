@@ -15,6 +15,7 @@ from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
 from .corrections import apply_confirmed_corrections
+from .phase7_5 import enrich_structure_phase7_5
 from .renderer import (
     RENDERER_VERSION,
     RENDER_PROFILE,
@@ -205,7 +206,7 @@ def run_job(job_id: str) -> int:
                 "stage": "normalization",
                 "source_sha256": source["sha256"],
                 "source_size_bytes": source["size_bytes"],
-                "engine_version": "phase7.2",
+                "engine_version": "phase7.5",
                 "updated_at": utc_now(),
             },
         )
@@ -219,7 +220,9 @@ def run_job(job_id: str) -> int:
             "processing",
             {"stage": "structure", "updated_at": utc_now()},
         )
-        structure = extract_structure(normalized)
+        structure = enrich_structure_phase7_5(
+            extract_structure(normalized), normalized
+        )
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []
         correction_application_issues: list[dict[str, Any]] = []
@@ -376,7 +379,7 @@ def run_job(job_id: str) -> int:
             "processing",
             {
                 "stage": "canonicalization",
-                "engine_version": "phase7.2",
+                "engine_version": "phase7.5",
                 "updated_at": utc_now(),
             },
         )
@@ -492,7 +495,7 @@ def run_job(job_id: str) -> int:
                     "status": final_status,
                     "stage": final_stage,
                     "review_required": True,
-                    "engine_version": "phase7.2",
+                    "engine_version": "phase7.5",
                     "error_code": error_code,
                     "error_message": error_message,
                     "updated_at": utc_now(),
@@ -572,7 +575,7 @@ def run_job(job_id: str) -> int:
             {
                 "stage": "rendering",
                 "review_required": False,
-                "engine_version": "phase7.2",
+                "engine_version": "phase7.5",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),
@@ -672,7 +675,7 @@ def run_job(job_id: str) -> int:
                 "status": "complete",
                 "stage": "complete",
                 "review_required": False,
-                "engine_version": "phase7.2",
+                "engine_version": "phase7.5",
                 "error_code": None,
                 "error_message": None,
                 "updated_at": utc_now(),

@@ -11,6 +11,7 @@ from .structure import (
     printed_allocations,
     qtuple,
 )
+from .phase7_5 import apply_phase7_5_patch
 
 QUESTION_ID_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 
@@ -178,17 +179,27 @@ def apply_confirmed_corrections(
                 result, normalized, correction_id=correction_id, category=category,
                 affected_id=affected_id, target_id=target_id,
             )
-        elif category in {"numbering_jump", "suspicious_question_identifier"} and operation in {"accept_suggestion", "rename_question_identifier"} and target_id:
+        elif category in {"numbering_jump", "suspicious_question_identifier", "scored_major_precedes_subquestions"} and operation in {"accept_suggestion", "rename_question_identifier"} and target_id:
             applied_item, issue = _rename_question_identifier(
                 result, correction_id=correction_id, category=category,
                 affected_id=affected_id, target_id=target_id,
             )
         else:
-            issue = _issue(
-                "correction_application_unsupported",
-                str(affected_id) if affected_id is not None else None,
-                f"Confirmed correction {correction_id} cannot yet be applied deterministically; further reinterpretation is required.",
+            applied_item, issue, handled = apply_phase7_5_patch(
+                result,
+                normalized,
+                correction_id=correction_id,
+                category=category,
+                affected_id=affected_id,
+                operation=operation,
+                patch=patch,
             )
+            if not handled:
+                issue = _issue(
+                    "correction_application_unsupported",
+                    str(affected_id) if affected_id is not None else None,
+                    f"Confirmed correction {correction_id} cannot yet be applied deterministically; further reinterpretation is required.",
+                )
 
         if applied_item:
             applied.append(applied_item)
