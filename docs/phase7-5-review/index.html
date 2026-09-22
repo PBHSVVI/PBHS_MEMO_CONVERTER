@@ -22,7 +22,7 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 </style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.1</h1><div class="sub">Focused evidence • discrepancy pointer • reviewer chooses correction method • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.2</h1><div class="sub">Focused evidence • discrepancy pointer • reviewer chooses correction method • dynamic resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -86,8 +86,18 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
       <span class="pendingBadge">SHOW-BACK — not applied yet</span>
       <h3 style="margin:.65rem 0 .35rem">How the system interpreted your correction</h3>
       <div id="proposalText"></div>
-      <div class="buttonRow"><button id="confirm" class="confirm">Confirm and revalidate</button><button id="pause2" class="secondary">Pause review</button></div>
+      <div class="buttonRow"><button id="confirm" class="confirm">Confirm and revalidate</button><button id="editProposal" class="secondary">Edit / resubmit</button><button id="pause2" class="secondary">Pause review</button></div>
       <div class="muted" style="margin-top:8px">Confirm only if this show-back matches what you intended.</div>
+    </div>
+
+    <div id="recoveryPanel" class="choiceBlock hide">
+      <b>Correction interpretation needs attention</b>
+      <div id="recoveryMessage" class="muted" style="margin:6px 0 10px"></div>
+      <div class="buttonRow">
+        <button id="retryInterpretation" class="primary">Retry interpretation</button>
+        <button id="editResubmit" class="secondary">Edit / resubmit correction</button>
+        <button id="cancelCorrection" class="dangerLite">Cancel this correction attempt</button>
+      </div>
     </div>
 
     <div class="pauseNote"><b>Pause/resume:</b> closing the page does not lose the job. A submitted-but-unconfirmed proposal also remains saved.</div>
@@ -131,6 +141,7 @@ function genericExplain(ex){
   case 'question_total_mismatch': return {title:`Check Question ${a} subtotal`,what:ex.message||'The question subtotal and item totals do not agree.',need:'This is usually a consequence of an unresolved item inside the same question. It should only be corrected directly if no more specific item-level cause remains.'};
   case 'document_total_mismatch': return {title:'Check document total',what:ex.message||'The document total does not agree with the sum of questions.',need:'Treat this as a diagnostic signal. Correct a specific question or subtotal only when the source evidence identifies it.'};
   case 'mark_arithmetic_mismatch': return {title:`Check Question ${a} mark arithmetic`,what:ex.message||'The marking-point arithmetic does not match the printed total.',need:'Provide the intended marking-point breakdown or corrected total.'};
+  case 'correction_mark_total_invalid': return {title:`Clarify Question ${a} marking rule`,what:ex.message||'The previous correction could not be reconciled with the marking rule.',need:'Describe the actual scoring rule in normal teacher language. Conditional rules such as “2A for 3 correct; 1A for 2 correct” are alternatives, not marks to add together.'};
   case 'numbering_jump': return {title:`Check numbering near ${a}`,what:ex.message||'A numbering jump was detected.',need:'Provide the correct question identifier.'};
   default:return {title:a?`Review Question ${a}`:`Review ${humanCategory(ex.category)}`,what:ex.message||`The engine raised ${humanCategory(ex.category)}.`,need:'Inspect the source evidence and choose a correction method. Do not accept a change unless the source supports it.'};
  }
@@ -240,12 +251,41 @@ function renderExplanation(ex,step){
  const deps=dependentsFor(ex,currentActive);if(deps.length){$('#dependentNotice').classList.remove('hide');$('#dependentNotice').innerHTML=`<b>${deps.length} dependent check${deps.length===1?' is':'s are'} being held back.</b><br>${deps.map(d=>esc(d.message)).join('<br>')}<br><span class="muted">We will re-check ${deps.length===1?'it':'them'} automatically after this underlying item is resolved.</span>`}else $('#dependentNotice').classList.add('hide');
 }
 function renderChoices(ex){
- currentCorrection=null;$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
+ currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
  const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';
  if(suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
 }
 async function showException(ex){
  currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Live review • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;status('Inspect the focused source evidence, then choose how you want to correct it.','success');await showEvidence();
+}
+
+function showRecovery(corr,message){
+ currentCorrection=corr;
+ $('#choices').classList.add('hide');
+ $('#proposalPanel').classList.add('hide');
+ $('#recoveryPanel').classList.remove('hide');
+ $('#recoveryMessage').textContent=message||'The submitted evidence could not yet be converted into a safe structured correction.';
+ status('Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
+}
+async function rejectAndReopen(prefill=''){
+ if(!currentCorrection)return;
+ const ex=currentException||await exceptionById(currentCorrection.exception_id);
+ await invoke('reject-correction',{correction_id:currentCorrection.id});
+ currentCorrection=null;
+ currentActive=await activeExceptions();
+ await showException(ex);
+ if(prefill)$('#typedText').value=prefill;
+}
+async function retryCurrentInterpretation(){
+ if(!currentCorrection)return;
+ setBusy(true);
+ try{
+  const startedAt=new Date();
+  const r=await invoke('retry-correction-reinterpretation',{correction_id:currentCorrection.id});
+  log('MANUAL RETRY INTERPRETATION',r);
+  const corr=await waitProposal(currentCorrection.id,startedAt);
+  if(corr)showProposal(corr);
+ }finally{setBusy(false)}
 }
 async function unresolvedEventFor(correctionId){
  const r=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(50);
@@ -262,10 +302,10 @@ async function retrySavedInterpretation(corr){
  return await waitProposal(corr.id,startedAt);
 }
 async function waitProposal(correctionId,submittedAt){
- for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(20);if(ev.error)throw ev.error;const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad)throw new Error('Correction reinterpretation remained unresolved. Try another correction method or provide more explicit evidence.')}
+ for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(20);if(ev.error)throw ev.error;const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad){const fresh=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('id',correctionId).single();if(fresh.error)throw fresh.error;showRecovery(fresh.data,'The interpreter could not safely translate this evidence yet. Your correction has not been applied.');return null;}}
  throw new Error('Timed out waiting for the correction interpretation.')
 }
-function showProposal(corr){currentCorrection=corr;$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');const p=corr.proposed_patch||{};$('#proposalText').innerHTML=`<b>${esc(corr.display_text||'Structured correction ready.')}</b><br><br><code>${esc(p.operation||'awaiting reinterpretation')}</code>${p.target_id?` → <b>${esc(p.target_id)}</b>`:''}${p.expected_total!=null?`<br>Expected total: <b>${esc(p.expected_total)}</b>`:''}${p.printed_marks!=null?`<br>Teacher item total: <b>${esc(p.printed_marks)} marks</b>`:''}`;status('Show-back ready. Confirm only if this matches what you intended.','success')}
+function showProposal(corr){currentCorrection=corr;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');const p=corr.proposed_patch||{};$('#proposalText').innerHTML=`<b>${esc(corr.display_text||'Structured correction ready.')}</b><br><br><code>${esc(p.operation||'awaiting reinterpretation')}</code>${p.target_id?` → <b>${esc(p.target_id)}</b>`:''}${p.expected_total!=null?`<br>Expected total: <b>${esc(p.expected_total)}</b>`:''}${p.printed_marks!=null?`<br>Teacher item total: <b>${esc(p.printed_marks)} marks</b>`:''}`;status('Show-back ready. Confirm only if this matches what you intended.','success')}
 async function submitAndInterpret(body){
  setBusy(true);try{
   const saved=await pendingCorrection();
@@ -273,16 +313,16 @@ async function submitAndInterpret(body){
    status('A saved correction attempt already exists for this item. Resuming that attempt instead of creating a duplicate.','warn');
    await resumePending();return;
   }
-  const submittedAt=new Date();const result=await invoke('submit-correction',body);const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
+  const submittedAt=new Date();const result=await invoke('submit-correction',body);const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
  }finally{setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
 async function submitTyped(){const t=$('#typedText').value.trim();if(!t){status('Type the correction or LaTeX first.','warn');return}await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:t})}
 function safeName(name){return String(name||'evidence.bin').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-120)||'evidence.bin'}
 async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status('Choose a file first.','warn');return}setBusy(true);try{const cid=crypto.randomUUID(),path=`${user.id}/${jobId}/corrections/${cid}/${safeName(f.name)}`;status('Uploading correction evidence…');const up=await sb.storage.from('memo-files').upload(path,f,{upsert:false,contentType:f.type||undefined});if(up.error)throw up.error;await submitAndInterpret({job_id:jobId,exception_id:currentException.id,correction_id:cid,input_kind:kind,storage_path:path})}finally{setBusy(false)}}
-function setBusy(v){for(const id of ['submitTyped','submitPhoto','submitFile','confirm','start']){const el=$('#'+id);if(el)el.disabled=v}}
+function setBusy(v){for(const id of ['submitTyped','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
 
 async function waitStable(){for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4)log(`Worker poll ${i+1}`,j);if(j.status==='complete')return j;if(j.status==='needs_review'&&j.stage==='phase7_review'&&j.engine_version==='phase7.5')return j;if(j.status==='correction_pending')return j;if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`)}throw new Error('Timed out waiting for Phase 7.5 revalidation.')}
-async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr)}showProposal(corr);return true}
+async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
 async function resumeFlow(){
  const j=await currentJob();log('RESUME STATE',j);if(j.status==='complete'){await finalAudit();return}if(await resumePending())return;
  if(['processing','dispatched','correction_confirmed'].includes(j.status)){status('Processing is running. Waiting for the next stable review state…');await waitStable();if(await resumePending())return}
@@ -297,6 +337,11 @@ $('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resumi
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});
 $('#submitFile').onclick=()=>{const f=$('#fileInput').files?.[0],kind=f?.type?.startsWith('image/')?'photo':'upload';submitFileFrom($('#fileInput'),kind).catch(e=>{log('FILE ERROR',{message:e.message});status('File correction failed: '+e.message,'error')})};
+
+$('#retryInterpretation').onclick=()=>retryCurrentInterpretation().catch(e=>{log('RETRY ERROR',{message:e.message});status('Retry failed: '+e.message,'error')});
+$('#editResubmit').onclick=()=>{const t=currentCorrection?.typed_text||'';rejectAndReopen(t).catch(e=>{log('EDIT/RESUBMIT ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')})};
+$('#cancelCorrection').onclick=()=>rejectAndReopen('').catch(e=>{log('CANCEL CORRECTION ERROR',{message:e.message});status('Could not cancel the correction attempt: '+e.message,'error')});
+$('#editProposal').onclick=()=>{const t=currentCorrection?.typed_text||'';rejectAndReopen(t).catch(e=>{log('EDIT PROPOSAL ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')})};
 $('#confirm').onclick=async()=>{if(!currentCorrection)return;setBusy(true);try{const r=await invoke('confirm-correction',{correction_id:currentCorrection.id});log('TEACHER CONFIRMED SHOW-BACK',r);$('#review').classList.add('hide');status('Confirmed. The worker is revalidating the immutable RAW source…');await waitStable();await resumeFlow()}catch(e){log('CONFIRM ERROR',{message:e.message});status('Confirmation stopped: '+e.message,'error')}finally{setBusy(false)}};
 function pause(){ $('#review').classList.add('hide');status('Paused safely. Nothing else was accepted or changed. Resume whenever you are ready.','success');$('#start').textContent='Resume review'}
 $('#pause').onclick=pause;$('#pause2').onclick=pause;

@@ -912,6 +912,50 @@ def _marking_points_for_alternatives(
         parsed_mark_branches = [qdata.get("mark_points") or []]
 
     partial_credit_rules: list[dict[str, Any]] = []
+
+    # Conditional accuracy thresholds are mutually exclusive, not additive.
+    # Example: 2A for 3 correct answers; 1A for 2 correct answers.
+    if (
+        source_branch_count == 1
+        and len(parsed_mark_branches) == 1
+        and qdata.get("mark_calculation_mode") == "conditional_accuracy"
+    ):
+        conditional_points = list(parsed_mark_branches[0])
+        counts = [int(point.get("count") or 0) for point in conditional_points]
+        max_total = max(counts or [0])
+        observed = qdata.get("printed_marks")
+        expected_max = (
+            int(observed)
+            if observed is not None
+            else int(qdata.get("computed_shorthand_marks") or 0)
+        )
+        if max_total and (not expected_max or max_total == expected_max):
+            primary_index = counts.index(max_total)
+            primary = conditional_points[primary_index]
+            for idx, point in enumerate(conditional_points):
+                if idx == primary_index:
+                    continue
+                count = int(point.get("count") or 0)
+                if count <= 0 or count >= max_total:
+                    continue
+                partial_credit_rules.append({
+                    "count": count,
+                    "descriptor": _collapse(point.get("descriptor", "")),
+                    "source": _collapse(point.get("source", "")),
+                })
+            parsed_mark_branches = [[primary]]
+            raw_mark_branches = [_collapse(primary.get("source", ""))]
+        else:
+            issues.append({
+                "level": "amber",
+                "category": "conditional_accuracy_conflict",
+                "affected_id": qid,
+                "message": (
+                    "Conditional accuracy thresholds do not reconcile with the "
+                    "observed item total and require review."
+                ),
+            })
+
     if (
         source_branch_count == 1
         and len(parsed_mark_branches) > 1

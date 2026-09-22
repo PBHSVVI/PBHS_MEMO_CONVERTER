@@ -32,6 +32,7 @@ PHASE7_5_REINTERPRET_CATEGORIES = {
     "multiple_printed_allocations",
     "mark_arithmetic_mismatch",
     "item_total_mismatch",
+    "correction_mark_total_invalid",
     "subtotal_sum_unexpected",
     "major_question_gap",
     "scored_major_precedes_subquestions",
@@ -462,7 +463,12 @@ def _apply_replace_mark_points(
             "notation": "teacher_confirmed",
         })
 
-    total = sum(int(item["count"]) for item in points)
+    teacher_marking_text = "\n".join(
+        str(item.get("source") or "").strip()
+        for item in points
+        if str(item.get("source") or "").strip()
+    )
+    total, calc_mode = effective_mark_total(points, teacher_marking_text)
     observed = question.get("printed_marks")
     if observed is not None and total != int(observed):
         return None, _issue(
@@ -483,7 +489,7 @@ def _apply_replace_mark_points(
 
     question["mark_points"] = points
     question["computed_shorthand_marks"] = total
-    question["mark_calculation_mode"] = "teacher_confirmed"
+    question["mark_calculation_mode"] = calc_mode
     question["correction_overlay"] = {
         "correction_id": correction_id,
         "operation": "replace_mark_points",
@@ -497,6 +503,7 @@ def _apply_replace_mark_points(
         "affected_id": affected_id,
         "target_id": affected_id,
         "mark_total": total,
+        "mark_calculation_mode": calc_mode,
         "source_block_index": question.get("source_block_index"),
     }, None
 
@@ -796,7 +803,11 @@ def apply_phase7_5_patch(
         return applied, issue, True
 
     if (
-        category in {"mark_arithmetic_mismatch", "item_total_mismatch"}
+        category in {
+            "mark_arithmetic_mismatch",
+            "item_total_mismatch",
+            "correction_mark_total_invalid",
+        }
         and operation == "replace_mark_points"
     ):
         applied, issue = _apply_replace_mark_points(
@@ -876,7 +887,11 @@ def phase7_5_deterministic_proposal(
             evidence,
         )
 
-    if category in {"mark_arithmetic_mismatch", "item_total_mismatch"}:
+    if category in {
+        "mark_arithmetic_mismatch",
+        "item_total_mismatch",
+        "correction_mark_total_invalid",
+    }:
         if category == "item_total_mismatch":
             total_match = TEACHER_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
             bare_match = BARE_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
@@ -910,9 +925,10 @@ def phase7_5_deterministic_proposal(
 
         normalised = re.sub(r"\s*[;|]\s*", "\n", evidence_text.strip())
         points = parse_mark_points(normalised)
-        total, _ = effective_mark_total(points, normalised)
+        total, calc_mode = effective_mark_total(points, normalised)
         evidence["parsed_mark_points"] = points
         evidence["parsed_mark_total"] = total
+        evidence["parsed_mark_calculation_mode"] = calc_mode
         if not points or total <= 0:
             return None, None, evidence
         if any(
@@ -928,6 +944,7 @@ def phase7_5_deterministic_proposal(
             "affected_id": exception.get("affected_id"),
             "mark_points": points,
             "expected_total": total,
+            "mark_calculation_mode": calc_mode,
             "reinterpretation_method": "deterministic_teacher_mark_scheme",
         }
         return (

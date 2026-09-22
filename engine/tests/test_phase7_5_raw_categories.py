@@ -329,3 +329,64 @@ def test_item_total_override_reconciles_printed_two_to_computed_three():
     assert structure["questions"][0]["printed_marks"] == 3
     assert structure["questions"][0]["computed_shorthand_marks"] == 3
     assert structure["exceptions"] == []
+
+def test_conditional_accuracy_correction_is_max_not_sum():
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {
+            "category": "correction_mark_total_invalid",
+            "affected_id": "11.1.1",
+        },
+        "2A for 3 correct answers; 1A for 2 correct answers.",
+    )
+    assert proposal["operation"] == "replace_mark_points"
+    assert proposal["expected_total"] == 2
+    assert proposal["mark_calculation_mode"] == "conditional_accuracy"
+    assert evidence["parsed_mark_total"] == 2
+    assert evidence["parsed_mark_calculation_mode"] == "conditional_accuracy"
+    assert "2-mark" in display
+
+
+def test_conditional_accuracy_overlay_replaces_bad_additive_total():
+    normalised = _normalised_rows([
+        ["11.1.1", "working", "2A for 3 correct answers\\n1A for 2 correct answers", "(2)"],
+    ])
+    structure = {
+        "questions": [_q(
+            "11.1.1", 0, printed=2, computed=3,
+            points=[
+                {"count": 2, "code": "A", "descriptor": "for 3 correct answers"},
+                {"count": 1, "code": "A", "descriptor": "for 2 correct answers"},
+            ],
+        )],
+        "exceptions": [{
+            "level": "red",
+            "category": "correction_mark_total_invalid",
+            "affected_id": "11.1.1",
+            "message": "teacher total conflict",
+            "suggestions": [],
+        }],
+        "subtotals": [],
+        "summary": {},
+    }
+    patch = phase7_5_deterministic_proposal(
+        {
+            "category": "correction_mark_total_invalid",
+            "affected_id": "11.1.1",
+        },
+        "2A for 3 correct answers; 1A for 2 correct answers.",
+    )[0]
+    applied, issue, handled = apply_phase7_5_patch(
+        structure,
+        normalised,
+        correction_id="corr-conditional",
+        category="correction_mark_total_invalid",
+        affected_id="11.1.1",
+        operation="replace_mark_points",
+        patch=patch,
+    )
+    assert handled is True
+    assert issue is None
+    assert applied["mark_total"] == 2
+    assert applied["mark_calculation_mode"] == "conditional_accuracy"
+    assert structure["questions"][0]["computed_shorthand_marks"] == 2
+    assert structure["questions"][0]["mark_calculation_mode"] == "conditional_accuracy"
