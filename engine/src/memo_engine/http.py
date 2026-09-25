@@ -195,7 +195,7 @@ class SupabaseRest:
                 f"?job_id=eq.{job_q}"
                 "&confirmation_status=eq.confirmed"
                 "&select=id,job_id,user_id,exception_id,input_kind,typed_text,storage_path,display_text,proposed_patch,confirmation_status,created_at,confirmed_at,applied_at"
-                "&order=confirmed_at.asc"
+                "&order=confirmed_at.asc,id.asc"
             ),
         )
         return rows if isinstance(rows, list) else []

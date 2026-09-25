@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from .structure import (
@@ -14,6 +15,110 @@ from .structure import (
 from .phase7_5 import apply_phase7_5_patch
 
 QUESTION_ID_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
+
+
+def effective_correction_history(
+    corrections: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Derive replay history without changing confirmed evidence or database rows.
+
+    A complete marking replacement retires older schemes and item-total overrides
+    on the exact same target. A total-only override retires only earlier total
+    overrides: it still needs the current scheme to validate against. Source
+    allocation, numbering and subtotal operations compose independently.
+    """
+    def order(entry: tuple[int, dict[str, Any]]) -> tuple[Any, ...]:
+        index, correction = entry
+        value = correction.get("confirmed_at")
+        try:
+            timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            return (timestamp, str(correction.get("id") or ""), index)
+        except ValueError:
+            # Legacy callers without timestamps retain their supplied order.
+            return (datetime.min.replace(tzinfo=timezone.utc), "", index)
+
+    ordered = [c for _, c in sorted(
+        ((i, c) for i, c in enumerate(corrections)
+         if c.get("confirmation_status") == "confirmed"), key=order,
+    )]
+    newer: dict[tuple[str, str], str] = {}
+    history: list[dict[str, Any]] = []
+    effective: list[dict[str, Any]] = []
+    for correction in reversed(ordered):
+        patch = correction.get("proposed_patch")
+        patch = patch if isinstance(patch, dict) else {}
+        operation = patch.get("operation")
+        category = patch.get("category")
+        target = str(patch.get("affected_id") or "").strip()
+        correction_id = str(correction.get("id") or "")
+        domain = None
+        if QUESTION_ID_RE.fullmatch(target) and correction_id:
+            if operation == "replace_mark_points" and category in {
+                "mark_arithmetic_mismatch", "item_total_mismatch",
+                "correction_mark_total_invalid",
+            }:
+                domain = "mark_scheme"
+            elif operation == "set_item_total_override" and category == "item_total_mismatch":
+                domain = "item_total"
+        successor = newer.get((target, domain)) if domain else None
+        history.append({
+            "correction_id": correction_id,
+            "operation": operation,
+            "affected_id": patch.get("affected_id"),
+            "domain": domain,
+            "effective": successor is None,
+            "superseded_by": successor,
+            "supersession_reason": "newer_confirmed_marking_decision" if successor else None,
+        })
+        if successor is not None:
+            continue
+        effective.append(correction)
+        if domain:
+            newer[(target, domain)] = correction_id
+            if domain == "mark_scheme":
+                # Preserve a still-newer total override as the direct successor.
+                newer.setdefault((target, "item_total"), correction_id)
+    return list(reversed(effective)), list(reversed(history))
+
+
+def attach_correction_audit(
+    canonical: dict[str, Any],
+    corrections: list[dict[str, Any]],
+    overlay: dict[str, Any],
+) -> None:
+    """Keep all confirmed evidence, separating current replay from historical use."""
+    states = {item["correction_id"]: item for item in overlay["history"]}
+    canonical["corrections"] = [
+        {
+            "correction_id": str(correction.get("id")),
+            "exception_id": correction.get("exception_id"),
+            "input_kind": correction.get("input_kind"),
+            "display_text": correction.get("display_text"),
+            "proposed_patch": copy.deepcopy(correction.get("proposed_patch")),
+            "historical_applied_at": correction.get("applied_at"),
+            **states[str(correction.get("id"))],
+            "confirmation": {
+                "required": True, "status": "confirmed",
+                "confirmed_at": correction.get("confirmed_at"),
+            },
+        }
+        for correction in corrections
+        if correction.get("confirmation_status") == "confirmed"
+    ]
+    audit = canonical.setdefault("audit", {})
+    audit["correction_overlay"] = copy.deepcopy(overlay)
+    audit.setdefault("decisions", []).extend([
+        {
+            "decision_type": "confirmed_correction_overlay",
+            "correction_id": item["correction_id"],
+            "operation": item["operation"],
+            "affected_id": item.get("affected_id"),
+            "target_id": item.get("target_id"),
+        }
+        for item in overlay["applied"]
+    ])
 
 
 def _issue(category: str, affected_id: str | None, message: str, level: str = "red") -> dict[str, Any]:
@@ -153,9 +258,8 @@ def apply_confirmed_corrections(
     applied: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
 
-    for correction in corrections:
-        if correction.get("confirmation_status") != "confirmed":
-            continue
+    effective, history = effective_correction_history(corrections)
+    for correction in effective:
         correction_id = str(correction.get("id") or "")
         patch = correction.get("proposed_patch")
         if not isinstance(patch, dict):
@@ -207,8 +311,14 @@ def apply_confirmed_corrections(
             issues.append(issue)
 
     result.setdefault("exceptions", []).extend(issues)
+    applied_ids = {item["correction_id"] for item in applied}
+    for entry in history:
+        entry["applied"] = entry["correction_id"] in applied_ids
     result["correction_overlay"] = {
-        "confirmed_count": sum(1 for c in corrections if c.get("confirmation_status") == "confirmed"),
+        "confirmed_count": len(history),
+        "effective_count": len(effective),
+        "superseded_count": len(history) - len(effective),
+        "history": history,
         "applied_count": len(applied),
         "issue_count": len(issues),
         "applied": applied,

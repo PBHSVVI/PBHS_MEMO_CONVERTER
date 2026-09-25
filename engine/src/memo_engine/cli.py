@@ -14,7 +14,7 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
-from .corrections import apply_confirmed_corrections
+from .corrections import apply_confirmed_corrections, attach_correction_audit
 from .phase7_5 import enrich_structure_phase7_5
 from .renderer import (
     RENDERER_VERSION,
@@ -253,6 +253,9 @@ def run_job(job_id: str) -> int:
                 "structure",
                 {
                     "confirmed_count": len(confirmed_corrections),
+                    "effective_count": structure["correction_overlay"]["effective_count"],
+                    "superseded_count": structure["correction_overlay"]["superseded_count"],
+                    "history": structure["correction_overlay"]["history"],
                     "applied_count": len(applied_corrections),
                     "application_issue_count": len(correction_application_issues),
                     "applied": applied_corrections,
@@ -393,33 +396,9 @@ def run_job(job_id: str) -> int:
             source_bytes,
         )
         if confirmed_corrections:
-            applied_ids = {item["correction_id"] for item in applied_corrections}
-            canonical["corrections"] = [
-                {
-                    "correction_id": str(correction.get("id")),
-                    "exception_id": correction.get("exception_id"),
-                    "input_kind": correction.get("input_kind"),
-                    "display_text": correction.get("display_text"),
-                    "proposed_patch": correction.get("proposed_patch"),
-                    "applied": str(correction.get("id")) in applied_ids,
-                    "confirmation": {
-                        "required": True,
-                        "status": "confirmed",
-                        "confirmed_at": correction.get("confirmed_at"),
-                    },
-                }
-                for correction in confirmed_corrections
-            ]
-            canonical.setdefault("audit", {}).setdefault("decisions", []).extend([
-                {
-                    "decision_type": "confirmed_correction_overlay",
-                    "correction_id": item["correction_id"],
-                    "operation": item["operation"],
-                    "affected_id": item.get("affected_id"),
-                    "target_id": item.get("target_id"),
-                }
-                for item in applied_corrections
-            ])
+            attach_correction_audit(
+                canonical, confirmed_corrections, structure["correction_overlay"],
+            )
             validation = validate_canonical(canonical)
 
         canonical_path = (
