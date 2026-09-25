@@ -64,9 +64,13 @@ count, and zero application issues. Verify all effective corrections applied,
 no active review exceptions, canonical/validation readiness, DOCX/PDF outputs and
 both preflights, and the teacher download flow.
 
-The existing review page's final audit still checks database `applied_at` for every
-historical confirmation. That historical timestamp is not an effective-history
-check: a legitimately superseded correction may never have applied. Use the new
-canonical audit when verifying effective replay; align the UI acceptance check
-with it before declaring hosted acceptance. Parent discrepancy context in review
-and the broader teacher-language interpreter remain separate follow-ups.
+The review page final audit uses `canonical.audit.correction_overlay` as its
+correction source of truth. It requires a present and internally consistent audit,
+zero application issues, every effective correction applied, every non-effective
+entry linked to a valid `superseded_by` correction and left unapplied in the current
+pass, and `applied_count == effective_count`. Missing audit data fails acceptance
+explicitly, so output from an older worker cannot pass by falling back to database
+`applied_at`. Historical database timestamps are logged only as diagnostics.
+
+Parent discrepancy context in review and the broader teacher-language interpreter
+remain separate follow-ups.

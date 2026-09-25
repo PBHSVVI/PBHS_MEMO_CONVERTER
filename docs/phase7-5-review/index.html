@@ -123,6 +123,56 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function humanCategory(c){return String(c||'review issue').replaceAll('_',' ')}
 function candidateText(s){if(!s||typeof s!=='object')return null;return typeof s.candidate==='string'?s.candidate:(typeof s.label==='string'?s.label:null)}
 
+// BEGIN CORRECTION AUDIT EVALUATOR
+function evaluateCorrectionAudit(canonical){
+ const overlay=canonical?.audit?.correction_overlay;
+ const history=Array.isArray(overlay?.history)?overlay.history:null;
+ const correction_audit_present=!!overlay&&history!==null;
+ const counts={
+  confirmed:Number(overlay?.confirmed_count),
+  effective:Number(overlay?.effective_count),
+  superseded:Number(overlay?.superseded_count),
+  applied_effective:Number(overlay?.applied_count),
+  issues:Number(overlay?.issue_count),
+ };
+ const countValues=Object.values(counts);
+ const countFieldsValid=correction_audit_present&&countValues.every(value=>Number.isInteger(value)&&value>=0);
+ const effective=history?.filter(entry=>entry?.effective===true)||[];
+ const superseded=history?.filter(entry=>entry?.effective===false)||[];
+ const correctionIds=new Set((history||[]).map(entry=>entry?.correction_id).filter(id=>typeof id==='string'&&id.length>0));
+ const checks={
+  correction_audit_present,
+  correction_counts_consistent:countFieldsValid
+   &&counts.confirmed===history.length
+   &&counts.effective===effective.length
+   &&counts.superseded===superseded.length
+   &&counts.confirmed===counts.effective+counts.superseded,
+  effective_corrections_applied:correction_audit_present&&effective.every(entry=>entry.applied===true),
+  superseded_corrections_valid:correction_audit_present&&superseded.every(entry=>
+   entry.applied===false
+   &&typeof entry.superseded_by==='string'
+   &&entry.superseded_by.length>0
+   &&entry.superseded_by!==entry.correction_id
+   &&correctionIds.has(entry.superseded_by)
+  ),
+  correction_application_issues_zero:countFieldsValid&&counts.issues===0,
+  correction_applied_count_matches_effective:countFieldsValid
+   &&counts.applied_effective===counts.effective
+   &&counts.applied_effective===effective.filter(entry=>entry.applied===true).length,
+ };
+ const failures=[];
+ if(!checks.correction_audit_present)failures.push('Canonical correction audit is missing. This output may come from an older worker.');
+ else{
+  if(!checks.correction_counts_consistent)failures.push('Correction audit counts do not match its history.');
+  if(!checks.effective_corrections_applied)failures.push('At least one effective correction was not applied.');
+  if(!checks.correction_application_issues_zero)failures.push(`Correction application issues remain (${Number.isInteger(counts.issues)?counts.issues:'invalid count'}).`);
+  if(!checks.superseded_corrections_valid)failures.push('At least one superseded correction lacks a valid superseded_by reference or is incorrectly marked applied.');
+  if(!checks.correction_applied_count_matches_effective)failures.push('Applied correction count does not equal effective correction count.');
+ }
+ return {overlay,history:history||[],counts,checks,failures};
+}
+// END CORRECTION AUDIT EVALUATOR
+
 const knownSpecs={
  'unlabeled_mark_bearing_question|2.2':{title:'Recover Question 2.2',anchors:['2.1','2.3'],gap:true,what:'A mark-bearing row appears between Questions 2.1 and 2.3 without a printed question number.',need:'Decide whether that unlabelled row is Question 2.2. Use the supplied suggestion if it is correct, or provide your own correction.'},
  'multiple_printed_allocations|5.1':{title:'Resolve Question 5.1 printed allocation',anchors:['5.1'],what:'More than one printed allocation was detected in the same source cell for Question 5.1.',need:'Tell the system which printed mark total actually belongs to Question 5.1.'},
@@ -330,7 +380,42 @@ async function resumeFlow(){
 }
 async function finalAudit(){
  const j=await currentJob(),active=await activeExceptions();if(j.status!=='complete'){status(active.length?`There are ${active.length} unresolved review exception(s), but none could be selected. See technical log.`:`Review state is ${j.status}/${j.stage}; waiting for a new review exception or completion.`,'warn');log('FINAL/RESUME DIAGNOSTIC',{job:j,active});return}
- const [cq,evq]=await Promise.all([sb.from('corrections').select('id,confirmation_status,applied_at,proposed_patch').eq('job_id',jobId).eq('confirmation_status','confirmed'),sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true})]);if(cq.error||evq.error)throw new Error('Final audit query failed.');const canonical=await jsonFile(`${user.id}/${jobId}/internal/canonical.json`),rv=await jsonFile(`${user.id}/${jobId}/internal/render_validation.json`),events=evq.data||[];const checks={complete:j.status==='complete'&&j.stage==='complete',engine_phase7_5:j.engine_version==='phase7.5',no_open_review:active.length===0,canonical_render_ready:canonical.status==='render_ready',total_150:Number(canonical?.totals?.computed)===150,eleven_questions:(canonical.questions||[]).length===11,confirmed_corrections:(cq.data||[]).length>=9,all_confirmed_applied:(cq.data||[]).every(c=>!!c.applied_at),render_validation_passed:rv.passed===true,docx_preflight:rv?.docx?.preflight?.passed===true,pdf_preflight:rv?.pdf?.preflight?.passed===true,render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===150)};log('PHASE 7.5 FINAL AUDIT',{job:j,checks,canonical_totals:canonical.totals,render_validation:rv});$('#review').classList.add('hide');status(Object.values(checks).every(Boolean)?'SUCCESS — Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.':'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',Object.values(checks).every(Boolean)?'success':'warn')
+ const [cq,evq]=await Promise.all([sb.from('corrections').select('id,confirmation_status,applied_at,proposed_patch').eq('job_id',jobId).eq('confirmation_status','confirmed'),sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true})]);
+ if(cq.error||evq.error)throw new Error('Final audit query failed.');
+ const canonical=await jsonFile(`${user.id}/${jobId}/internal/canonical.json`),rv=await jsonFile(`${user.id}/${jobId}/internal/render_validation.json`),events=evq.data||[];
+ const correctionAudit=evaluateCorrectionAudit(canonical);
+ const checks={
+  complete:j.status==='complete'&&j.stage==='complete',
+  engine_phase7_5:j.engine_version==='phase7.5',
+  no_open_review:active.length===0,
+  canonical_render_ready:canonical.status==='render_ready',
+  total_150:Number(canonical?.totals?.computed)===150,
+  eleven_questions:(canonical.questions||[]).length===11,
+  confirmed_corrections:correctionAudit.checks.correction_audit_present&&correctionAudit.counts.confirmed>=9,
+  ...correctionAudit.checks,
+  render_validation_passed:rv.passed===true,
+  docx_preflight:rv?.docx?.preflight?.passed===true,
+  pdf_preflight:rv?.pdf?.preflight?.passed===true,
+  render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===150),
+ };
+ const passed=Object.values(checks).every(Boolean);
+ const databaseCorrectionDiagnostic={
+  confirmed_rows:(cq.data||[]).length,
+  historical_rows_with_applied_at:(cq.data||[]).filter(c=>!!c.applied_at).length,
+  historical_rows_without_applied_at:(cq.data||[]).filter(c=>!c.applied_at).map(c=>c.id),
+ };
+ log('PHASE 7.5 FINAL AUDIT',{
+  job:j,
+  checks,
+  correction_counts:correctionAudit.counts,
+  correction_history_failures:correctionAudit.failures,
+  correction_history:correctionAudit.history,
+  database_correction_diagnostic:databaseCorrectionDiagnostic,
+  canonical_totals:canonical.totals,
+  render_validation:rv,
+ });
+ $('#review').classList.add('hide');
+ status(passed?'SUCCESS — Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.':'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',passed?'success':'warn')
 }
 
 $('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resuming…';try{const session=(await sb.auth.getSession()).data.session;if(session)user=session.user;else{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value=''}await resumeFlow()}catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'error')}finally{setBusy(false)}};
