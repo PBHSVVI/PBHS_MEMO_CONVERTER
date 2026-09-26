@@ -1,5 +1,25 @@
 # Phase 7 — Responsive Review & Correction Foundation
 
+## Parent discrepancy context increment
+
+Review page version: **v4.3**.
+
+The review UX follows this rule: **Show the cause, but always retain the parent
+discrepancy context.** When an active child exception is the likely cause of a
+`question_total_mismatch`, the child remains the correction target while the page
+shows the parent question ID and its source/converter subtotals when those values
+are available. The parent context is informational. It becomes a separate review
+step only if it remains active after the child correction is confirmed and the
+worker revalidates the memo.
+
+The relationship is derived generically from hierarchical question identifiers;
+there are no Question 11-specific rules. The focused immutable source evidence
+remains beside the active child issue, and this feature adds no AI call.
+
+This is a review UX increment after the formally accepted Phase 7.5 baseline. It
+does not change that accepted status or any correction, audit, validation, or
+rendering semantics.
+
 ## Scope of this slice
 
 This release establishes the two-stage correction lifecycle required by the

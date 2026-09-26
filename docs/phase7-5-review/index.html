@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 7.5 Review v4</title>
+<title>PBHS Memo Converter — Phase 7.5 Review v4.3</title>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
 <style>
@@ -17,12 +17,12 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 #focusViewport{min-height:260px;max-height:560px;overflow:auto;position:relative;background:#cfd7e2;padding:16px}#focusRender{background:#fff;border-radius:6px;padding:10px;min-width:680px;box-shadow:0 2px 12px #0002}.focus-docx table{border-collapse:collapse}.focus-docx td,.focus-docx th{position:relative}.evidence-context{outline:4px solid #f0b000!important;outline-offset:2px!important;background:#fff4c4!important}.discrepancy-target{outline:4px solid #dc2626!important;outline-offset:2px!important}.arrow-badge{display:inline-flex;align-items:center;gap:6px;margin:4px 0 8px;padding:6px 9px;background:#dc2626;color:white;border-radius:999px;font-weight:900;font-size:.83rem;box-shadow:0 2px 8px #0002}.arrow-badge::before{content:'➜';font-size:1.3rem;line-height:1}.gap-callout{border:2px solid #dc2626;background:#fff1f0;color:#8f1515;padding:8px 10px;border-radius:9px;margin:6px 0;font-weight:850}.gap-callout::before{content:'➜ ';font-size:1.15rem}.focus-note{padding:10px 12px;background:#fff;border-top:1px solid var(--line);font-size:.9rem}
 #fullMemoPanel{margin-top:12px}.fullViewport{height:580px;overflow:auto;background:#cfd7e2;padding:16px}.docx-wrapper{background:#cfd7e2!important;padding:0!important}.docx-wrapper>section.docx{box-shadow:0 2px 10px #0002;margin:0 auto 18px!important}
 #sourceFullHost.offscreen{position:fixed;left:-12000px;top:0;width:980px;visibility:hidden;pointer-events:none}.pdfFrame{width:900px;height:1200px;border:0;background:white}.sourceImg{display:block;max-width:none}
-.explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.dependent{background:#f7f9fc;color:#526071}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
+.explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
 #sourceText{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:260px}.pendingBadge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3e8;color:#8a4c00;font-size:.82rem;font-weight:850}.sectionTitle{margin:.2rem 0 .4rem;font-size:1.05rem}
 </style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.2</h1><div class="sub">Focused evidence • discrepancy pointer • reviewer chooses correction method • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.3</h1><div class="sub">Focused evidence • parent discrepancy context • reviewer chooses correction method • dynamic resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -59,10 +59,11 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 
   <div>
     <div id="progress" class="progress"></div>
+    <div class="reviewEyebrow">What needs review now</div>
     <h2 id="stepTitle" style="margin-top:0"></h2>
     <div id="exceptionBox" class="status"></div>
     <div id="explain" class="explain"></div>
-    <div id="dependentNotice" class="status hide"></div>
+    <aside id="parentContext" class="parentContext hide" aria-live="polite"></aside>
 
     <div id="choices" class="choices">
       <h3 class="sectionTitle">Choose how to correct it</h3>
@@ -207,10 +208,14 @@ async function activeExceptions(){const r=await sb.from('exceptions').select('id
 async function pendingCorrection(){const r=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('job_id',jobId).eq('confirmation_status','pending').order('created_at',{ascending:false}).limit(1);if(r.error)throw r.error;return (r.data||[])[0]||null}
 async function exceptionById(id){const r=await sb.from('exceptions').select('id,level,category,affected_id,message,suggestions,status,created_at').eq('id',id).eq('job_id',jobId).single();if(r.error)throw r.error;return r.data}
 
+// BEGIN REVIEW DEPENDENCY MODEL
+function isDescendantId(childId,parentId){
+ const child=String(childId??''),parent=String(parentId??'');
+ return !!child&&!!parent&&child!==parent&&child.startsWith(parent+'.');
+}
 function isDependent(ex,list){
  if(ex.category==='question_total_mismatch'){
-   const q=String(ex.affected_id||'');
-   return list.some(o=>o.id!==ex.id && o.affected_id!=null && String(o.affected_id).startsWith(q+'.') && o.category!=='question_total_mismatch');
+   return list.some(o=>o.id!==ex.id&&o.category!=='question_total_mismatch'&&isDescendantId(o.affected_id,ex.affected_id));
  }
  if(['document_total_mismatch','subtotal_sum_unexpected'].includes(ex.category)){
    if(knownSpecs[`${ex.category}|${ex.affected_id===null?'NULL':String(ex.affected_id)}`])return false;
@@ -219,7 +224,30 @@ function isDependent(ex,list){
  return false;
 }
 function choosePrimary(list){const causes=list.filter(x=>!isDependent(x,list));return causes[0]||list[0]||null}
-function dependentsFor(ex,list){if(!ex)return[];const a=String(ex.affected_id||'');const q=a.split('.')[0];return list.filter(o=>o.id!==ex.id && (o.category==='question_total_mismatch'&&String(o.affected_id||'')===q));}
+function parentMismatchesFor(ex,list){
+ if(!ex||ex.category==='question_total_mismatch')return[];
+ return list.filter(parent=>parent.id!==ex.id&&parent.category==='question_total_mismatch'&&isDescendantId(ex.affected_id,parent.affected_id));
+}
+function firstAvailableNumber(ex,keys){
+ for(const key of keys){const value=ex?.[key];if(value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value)))return String(value)}
+ return null;
+}
+function messageNumber(message,patterns){
+ for(const pattern of patterns){const match=String(message||'').match(pattern);if(match)return match[1]}
+ return null;
+}
+function parentDiscrepancyDetails(parent,child){
+ const message=String(parent?.message||'');
+ const sourceTotal=firstAvailableNumber(parent,['source_total','observed_total','observed_subtotal','expected_total'])
+  ??messageNumber(message,[/observed\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i,/source\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i]);
+ const converterTotal=firstAvailableNumber(parent,['converter_total','computed_total','computed_subtotal'])
+  ??messageNumber(message,[/computed(?:\s+(?:sub)?total)?\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i,/converter(?:\s+calculated)?\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i]);
+ return {parent_id:String(parent?.affected_id||''),child_id:String(child?.affected_id||''),source_total:sourceTotal,converter_total:converterTotal,message};
+}
+function reviewDependencyContext(ex,list){return {child_id:String(ex?.affected_id||''),parents:parentMismatchesFor(ex,list).map(parent=>parentDiscrepancyDetails(parent,ex))}}
+// Backward-compatible name for the existing review flow and historical tests.
+function dependentsFor(ex,list){return parentMismatchesFor(ex,list)}
+// END REVIEW DEPENDENCY MODEL
 
 function flattenNormalized(normalized){
  const content=normalized?.content||{},units=content.units;
@@ -297,8 +325,14 @@ async function showEvidence(){
 
 function renderExplanation(ex,step){
  $('#stepTitle').textContent=step.title;$('#exceptionBox').textContent=`${String(ex.level||'').toUpperCase()} — ${ex.message||humanCategory(ex.category)}`;
- $('#explain').innerHTML=`<div><b>What the system found</b>${esc(step.what||ex.message||'A review exception was raised.')}</div><div><b>What we need from you</b>${esc(step.need||'Inspect the source and choose the correct interpretation.')}</div>`;
- const deps=dependentsFor(ex,currentActive);if(deps.length){$('#dependentNotice').classList.remove('hide');$('#dependentNotice').innerHTML=`<b>${deps.length} dependent check${deps.length===1?' is':'s are'} being held back.</b><br>${deps.map(d=>esc(d.message)).join('<br>')}<br><span class="muted">We will re-check ${deps.length===1?'it':'them'} automatically after this underlying item is resolved.</span>`}else $('#dependentNotice').classList.add('hide');
+ $('#explain').innerHTML=`<div><b>What the system found</b>${esc(step.what||ex.message||'A review exception was raised.')}</div><div><b>What to decide now</b>${esc(step.need||'Inspect the source and choose the correct interpretation.')}</div>`;
+ const context=reviewDependencyContext(ex,currentActive),host=$('#parentContext');
+ if(!context.parents.length){host.classList.add('hide');host.innerHTML='';return}
+ host.classList.remove('hide');
+ host.innerHTML=`<div class="parentContextTitle">Why the system is asking</div>${context.parents.map(parent=>{
+  const totals=(parent.source_total!==null||parent.converter_total!==null)?`<div class="parentTotals">${parent.source_total!==null?`<div class="parentTotal"><span>Question ${esc(parent.parent_id)} source subtotal</span><strong>${esc(parent.source_total)}</strong></div>`:''}${parent.converter_total!==null?`<div class="parentTotal"><span>Converter subtotal</span><strong>${esc(parent.converter_total)}</strong></div>`:''}</div>`:`<p>${esc(parent.message||`Question ${parent.parent_id} has a subtotal discrepancy.`)}</p>`;
+  return `<div class="parentDiscrepancy"><div class="reviewEyebrow">Larger discrepancy this may resolve</div><div class="parentQuestion">Question ${esc(parent.parent_id)} subtotal does not currently balance.</div>${totals}<p class="parentRelationship"><b>Likely cause:</b> Question ${esc(parent.child_id)} — the item being reviewed now.</p><p class="parentContextNote">Correcting this item may resolve Question ${esc(parent.parent_id)} automatically. The parent subtotal will only become a separate review step if it is still unresolved after revalidation.</p></div>`
+ }).join('')}`;
 }
 function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
@@ -306,7 +340,7 @@ function renderChoices(ex){
  if(suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
 }
 async function showException(ex){
- currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Live review • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;status('Inspect the focused source evidence, then choose how you want to correct it.','success');await showEvidence();
+ currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;status('Review the focused source evidence, then choose how to correct the item shown.','success');await showEvidence();
 }
 
 function showRecovery(corr,message){
