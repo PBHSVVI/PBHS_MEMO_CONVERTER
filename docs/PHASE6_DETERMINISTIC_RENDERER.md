@@ -1,6 +1,9 @@
 # Phase 6 — Deterministic GDE Renderer
 
-Status: implementation candidate ready for hosted acceptance.
+Status: hosted DOCX/PDF rendering accepted as part of the
+[Phase 7.5 RAW baseline](../README.md#phase-75-accepted-baseline) on 2026-09-26,
+run `36212752841`. Both preflights passed and both output files exist.
+The implementation notes below describe the Phase 6 renderer contract.
 
 ## Contract
 

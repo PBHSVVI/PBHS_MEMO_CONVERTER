@@ -1,5 +1,11 @@
 # PBHS Memo Converter — Phase 7.5 Main Patch
 
+Current status: **ACCEPTED — Hosted RAW end-to-end acceptance completed successfully.**
+See the [accepted baseline](README.md#phase-75-accepted-baseline), dated 2026-09-26.
+The patch sequence below is retained as historical documentation of the original
+22 September implementation, before later conditional-scoring and supersession fixes.
+Do not reapply it to the accepted checkpoint.
+
 Purpose: repair the Drive/GitHub drift discovered on 22 September 2026 and put the locally qualified Phase 7.5 category-specific correction semantics onto the current `main` implementation without redesigning accepted phases.
 
 ## What this patch changes
@@ -44,11 +50,11 @@ git commit -m "Implement Phase 7.5 RAW exception correction semantics"
 git push origin main
 ```
 
-## Hosted acceptance
+## Historical hosted acceptance plan
 
 Do **not** mark Phase 7.5 accepted after the push or merely because tests pass.
 
-Use `acceptance/PBHS_Phase7_5_Full_RAW_Acceptance_Test_v2.html` for the real RAW job `a284e625-6a71-43bd-ac81-7679a29de421`. It retains the already-confirmed 11.12.1 → 11.2.1 correction and guides the teacher through the eight remaining cause-level corrections, one show-back/confirmation at a time.
+The original plan used `acceptance/PBHS_Phase7_5_Full_RAW_Acceptance_Test_v2.html` for RAW job `a284e625-6a71-43bd-ac81-7679a29de421`. It retained the already-confirmed 11.12.1 → 11.2.1 correction and guided the teacher through eight remaining cause-level corrections, one show-back/confirmation at a time. The accepted run used the later effective-history audit in `docs/phase7-5-review/index.html`.
 
 Version 2 intentionally submits the new Q8.1 and Q10 categories as **typed evidence** so the existing deployed `submit-correction` Edge Function can remain unchanged. Reinterpretation still produces a structured proposal and confirmation is still mandatory.
 
@@ -58,9 +64,15 @@ Phase 7.5 is accepted only after the live audit shows all of the following:
 - no open/awaiting review exceptions;
 - canonical `status=render_ready` and computed total `150`;
 - 11 major questions with the benchmark subtotals;
-- all confirmed corrections have `applied_at`;
+- the current effective correction audit is present and consistent, all effective corrections applied, zero application issues, and every superseded correction has a valid `superseded_by` and is unapplied in the current pass;
 - deterministic DOCX and PDF render completed;
 - DOCX and PDF preflight both passed;
 - `phase6_render_complete` event records computed total 150.
 
-Until that hosted run succeeds, Phase 7.5 remains **candidate / hosted acceptance pending**.
+The original rule required every confirmed row to have `applied_at`. The later
+supersession implementation replaced that rule: historical timestamps are diagnostic
+only. See [correction-history acceptance](docs/PHASE7_5_CORRECTION_HISTORY.md).
+
+Hosted acceptance succeeded on 2026-09-26 in run `36212752841`, using commit
+`55792320fde6c2c86c62ca85d524a4b0849fe599`: 150 marks, 11 questions, effective
+correction history accepted, and hosted DOCX/PDF rendering and preflights passed.

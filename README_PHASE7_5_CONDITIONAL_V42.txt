@@ -1,6 +1,11 @@
 PBHS Memo Converter — Phase 7.5 Review v4.2
 
-Current live issue:
+Historical v4.2 patch instructions. Phase 7.5 hosted RAW acceptance completed
+successfully on 2026-09-26; see README.md, "Phase 7.5 Accepted Baseline".
+The instructions below record the recovery sequence at that time, not a pending
+action for the accepted job.
+
+Live issue at the time of this patch:
   2A for 3 correct answers; 1A for 2 correct answers.
 
 This is conditional partial-credit logic, so the item is worth a maximum of

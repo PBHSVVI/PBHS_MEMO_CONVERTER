@@ -1,6 +1,11 @@
 PBHS Memo Converter — Phase 7.5 item-total recovery v4.1
 
-The live Question 11.1.1 exception already has a pending typed correction "(3)".
+Historical v4.1 patch instructions. Phase 7.5 hosted RAW acceptance completed
+successfully on 2026-09-26; see README.md, "Phase 7.5 Accepted Baseline".
+The 3-mark decision described below was later superseded by the conditional
+2-mark scheme. Do not repeat these historical correction steps for the accepted job.
+
+At the time of this patch, the live Question 11.1.1 exception had a pending typed correction "(3)".
 That earlier correction was dispatched for reinterpretation but came back unresolved.
 A second typed attempt such as "award 3 marks" is therefore rejected because the
 backend correctly allows only one pending correction per exception.

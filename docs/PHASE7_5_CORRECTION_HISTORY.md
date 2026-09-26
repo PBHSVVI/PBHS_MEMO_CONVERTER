@@ -1,5 +1,9 @@
 # Phase 7.5 effective correction history
 
+**ACCEPTED — Hosted RAW end-to-end acceptance completed successfully on 2026-09-26.**
+See the [Phase 7.5 Accepted Baseline](../README.md#phase-75-accepted-baseline)
+for the accepted run, implementation commit, and full result.
+
 Confirmed corrections remain immutable audit evidence. Before replay, the engine
 derives an effective history so obsolete marking decisions cannot regenerate
 application exceptions on every revalidation.
@@ -57,12 +61,14 @@ Regression coverage includes the obsolete 3-mark decision, successive schemes,
 independent numbering and other targets, unconfirmed input, invalid replacements,
 total-only composition, canonical partial credit/audit, repeatability and ordering.
 
-Hosted acceptance remains required. Revalidate the existing RAW job on the updated
-worker and inspect the old correction's `superseded_by`, effective application
-count, and zero application issues. Verify all effective corrections applied,
-11 questions with subtotals 23, 26, 4, 14, 8, 13, 20, 13, 8, 5, 16, total 150,
-no active review exceptions, canonical/validation readiness, DOCX/PDF outputs and
-both preflights, and the teacher download flow.
+Hosted acceptance completed in Process Memo run `36212752841` on commit
+`55792320fde6c2c86c62ca85d524a4b0849fe599`. The audit recorded 13 confirmed,
+10 effective, 3 superseded, 10 effective applied, and zero application issues.
+All supersession links were valid; the historical 3-mark override remained
+confirmed but non-effective and unapplied in the current pass. The job reached
+`complete / complete` with no active review exceptions, 11 questions totaling
+150, canonical `render_ready`, and passing validation. Both hosted DOCX/PDF
+outputs exist and passed preflight; the render-complete event records total 150.
 
 The review page final audit uses `canonical.audit.correction_overlay` as its
 correction source of truth. It requires a present and internally consistent audit,
