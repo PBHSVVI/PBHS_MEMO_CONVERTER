@@ -12,9 +12,12 @@ from typing import Any
 
 from .http import SupabaseRest
 from .ai_router import ProviderError, _post_json
+from .corrections import apply_confirmed_corrections
 from .ingestion import IngestionError, ingest_bytes
 from .normalization import NormalizationError, normalize_source
 from .phase7_5 import phase7_5_deterministic_proposal
+from .structure import flatten_units
+from .teacher_language import interpret_teacher_language
 
 BUCKET = "memo-files"
 QUESTION_TOKEN_RE = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){1,2})(?![\d.])")
@@ -388,6 +391,140 @@ def deterministic_proposal(
     return None, None, evidence
 
 
+def _artifact_json(db: SupabaseRest, path: str) -> dict[str, Any]:
+    try:
+        value = json.loads(db.download_object(BUCKET, path).decode("utf-8"))
+    except Exception as exc:
+        raise CorrectionReinterpretationError(
+            "CORRECTION_CONTEXT_UNAVAILABLE",
+            "The current memo evidence could not be loaded for safe interpretation.",
+        ) from exc
+    if not isinstance(value, dict):
+        raise CorrectionReinterpretationError(
+            "CORRECTION_CONTEXT_INVALID",
+            "The current memo evidence is not a valid structured artifact.",
+        )
+    return value
+
+
+def load_interpretation_context(
+    db: SupabaseRest,
+    correction: dict[str, Any],
+    exception: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    prefix = f"{correction['user_id']}/{correction['job_id']}/internal"
+    structure = _artifact_json(db, f"{prefix}/structure.json")
+    normalized = _artifact_json(db, f"{prefix}/normalized.json")
+    affected = str(exception.get("affected_id") or "")
+    questions = [
+        item for item in structure.get("questions", [])
+        if str(item.get("question_id") or "") == affected
+    ]
+    current_question = None
+    source_excerpt = ""
+    if len(questions) == 1:
+        question = questions[0]
+        current_question = {
+            "question_id": question.get("question_id"),
+            "printed_marks": question.get("printed_marks"),
+            "computed_marks": question.get("computed_shorthand_marks"),
+            "mark_calculation_mode": question.get("mark_calculation_mode"),
+            "mark_points": (question.get("mark_points") or [])[:20],
+        }
+        blocks = flatten_units(normalized)
+        index = int(question.get("source_block_index", -1))
+        if 0 <= index < len(blocks):
+            nearby = blocks[max(0, index - 1):min(len(blocks), index + 2)]
+            source_excerpt = "\n\n".join(
+                " | ".join(str(cell) for cell in block.get("cells", []) if str(cell).strip())
+                for block in nearby
+            )[:2400]
+
+    job_id = urllib.parse.quote(str(correction["job_id"]), safe="")
+    parent_rows = _rows(
+        db,
+        "/rest/v1/exceptions"
+        f"?job_id=eq.{job_id}&category=eq.question_total_mismatch"
+        "&status=in.(open,awaiting_reinterpretation,awaiting_confirmation)"
+        "&select=affected_id,message",
+    )
+    parent_discrepancies = [
+        {"affected_id": row.get("affected_id"), "message": row.get("message")}
+        for row in parent_rows
+        if affected.startswith(str(row.get("affected_id") or "") + ".")
+    ]
+    context = {
+        "current_question": current_question,
+        "source_excerpt": source_excerpt,
+        "parent_discrepancies": parent_discrepancies,
+    }
+    return structure, normalized, context
+
+
+def deterministic_proposal_validator(
+    structure: dict[str, Any],
+    normalized: dict[str, Any],
+):
+    def validate(proposal: dict[str, Any]) -> tuple[bool, str | None]:
+        _, applied, issues = apply_confirmed_corrections(
+            structure,
+            normalized,
+            [{
+                "id": "reinterpretation-validation",
+                "confirmation_status": "confirmed",
+                "confirmed_at": "9999-12-31T23:59:59+00:00",
+                "proposed_patch": proposal,
+            }],
+        )
+        if len(applied) == 1 and not issues:
+            return True, None
+        message = str((issues[0] if issues else {}).get("message") or "")
+        return False, message or "The proposal did not pass deterministic correction validation."
+    return validate
+
+
+def interpret_evidence_ladder(
+    exception: dict[str, Any],
+    evidence_text: str,
+    structure: dict[str, Any],
+    normalized: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    tier0_result: tuple[
+        dict[str, Any] | None,
+        str | None,
+        dict[str, Any],
+    ] | None = None,
+    provider=None,
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
+    proposal, display_text, tier0 = tier0_result or deterministic_proposal(
+        exception, evidence_text
+    )
+    validator = deterministic_proposal_validator(structure, normalized)
+    if proposal is not None:
+        valid, reason = validator(proposal)
+        tier0["deterministic_validation"] = {"passed": valid, "message": reason}
+        if valid:
+            return proposal, display_text, {
+                **tier0,
+                "status": "resolved",
+                "method": proposal.get("reinterpretation_method"),
+                "deterministic_resolution_count": 1,
+                "fast_model_interpretation_count": 0,
+                "strong_model_escalation_count": 0,
+                "unresolved_count": 0,
+                "runs": [],
+            }
+
+    kwargs: dict[str, Any] = {"proposal_validator": validator}
+    if provider is not None:
+        kwargs["provider"] = provider
+    ai_proposal, ai_display, language_audit = interpret_teacher_language(
+        exception, evidence_text, context, **kwargs
+    )
+    return ai_proposal, ai_display, {**tier0, "tier0": tier0, **language_audit}
+
+
 def _patch_correction(
     db: SupabaseRest,
     correction_id: str,
@@ -417,12 +554,14 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
     db = SupabaseRest()
     correction, exception, job = load_bundle(db, correction_id)
     now = utc_now()
+    interpretation_context: dict[str, Any] = {}
 
     try:
         evidence_text, extraction = extract_evidence_text(db, correction)
-        proposal, display_text, interpretation = deterministic_proposal(
+        proposal, display_text, tier0 = deterministic_proposal(
             exception, evidence_text
         )
+        language_text = evidence_text
 
         # Tesseract remains the free/local first pass. Handwritten correction
         # evidence is escalated to the approved vision provider only when the
@@ -439,13 +578,16 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
             mime_type = str(extraction.get("detected_mime") or "")
             vision_ids, vision = _vision_question_candidates(blob, mime_type)
             extraction["vision_fallback"] = vision
+            vision_text = str(vision.get("transcription") or "").strip()
+            if vision_text:
+                language_text = vision_text
 
             if vision_ids:
-                tesseract_interpretation = interpretation
+                tesseract_interpretation = tier0
                 proposal, display_text, vision_interpretation = deterministic_proposal(
                     exception, "\n".join(vision_ids)
                 )
-                interpretation = {
+                tier0 = {
                     **vision_interpretation,
                     "local_ocr_candidate_question_ids": (
                         tesseract_interpretation.get("candidate_question_ids") or []
@@ -456,6 +598,36 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
                     proposal["reinterpretation_method"] = (
                         "groq_vision_ocr_then_deterministic_numbering"
                     )
+
+        structure, normalized, context = load_interpretation_context(
+            db, correction, exception
+        )
+        interpretation_context = {
+            "active_exception": {
+                "category": exception.get("category"),
+                "affected_id": exception.get("affected_id"),
+                "message": exception.get("message"),
+            },
+            "existing_suggestions": (exception.get("suggestions") or [])[:10],
+            "source_excerpt": str(context.get("source_excerpt") or "")[:2400],
+            "current_question": context.get("current_question"),
+            "parent_discrepancies": context.get("parent_discrepancies") or [],
+            "teacher_evidence_length": len(language_text),
+        }
+        proposal, display_text, interpretation = interpret_evidence_ladder(
+            exception,
+            language_text,
+            structure,
+            normalized,
+            context,
+            tier0_result=(proposal, display_text, tier0),
+        )
+        if proposal is None:
+            display_text = (
+                "I could not interpret this correction safely yet. "
+                "Please edit it with one specific question number, mark total, "
+                "or marking instruction, then try again."
+            )
     except CorrectionReinterpretationError as exc:
         extraction = {"method": "failed", "error_code": exc.code}
         proposal = None
@@ -477,6 +649,7 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
         "exception_id": correction["exception_id"],
         "input_kind": correction.get("input_kind"),
         "extraction": extraction,
+        "interpretation_context": interpretation_context,
         "interpretation": interpretation,
         "proposal": proposal,
         "confirmation_ready": proposal is not None,
@@ -523,6 +696,19 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
                 "method": proposal.get("reinterpretation_method"),
                 "operation": proposal.get("operation"),
                 "target_id": proposal.get("target_id"),
+                "provider_runs": interpretation.get("runs") or [],
+                "escalation_reason": interpretation.get("escalation_reason"),
+                "deterministic_validation": interpretation.get("deterministic_validation"),
+                "deterministic_resolution_count": interpretation.get(
+                    "deterministic_resolution_count", 0
+                ),
+                "fast_model_interpretation_count": interpretation.get(
+                    "fast_model_interpretation_count", 0
+                ),
+                "strong_model_escalation_count": interpretation.get(
+                    "strong_model_escalation_count", 0
+                ),
+                "unresolved_count": interpretation.get("unresolved_count", 0),
                 "artifact_path": artifact_path,
             },
         )
@@ -553,6 +739,20 @@ def reinterpret_correction(correction_id: str) -> dict[str, Any]:
             "artifact_path": artifact_path,
             "candidate_count": interpretation.get("candidate_count"),
             "error_code": interpretation.get("error_code"),
+            "failure_code": interpretation.get("failure_code"),
+            "provider_error": interpretation.get("provider_error"),
+            "provider_runs": interpretation.get("runs") or [],
+            "escalation_reason": interpretation.get("escalation_reason"),
+            "deterministic_resolution_count": interpretation.get(
+                "deterministic_resolution_count", 0
+            ),
+            "fast_model_interpretation_count": interpretation.get(
+                "fast_model_interpretation_count", 0
+            ),
+            "strong_model_escalation_count": interpretation.get(
+                "strong_model_escalation_count", 0
+            ),
+            "unresolved_count": interpretation.get("unresolved_count", 1),
         },
     )
     return {

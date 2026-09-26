@@ -78,5 +78,6 @@ pass, and `applied_count == effective_count`. Missing audit data fails acceptanc
 explicitly, so output from an older worker cannot pass by falling back to database
 `applied_at`. Historical database timestamps are logged only as diagnostics.
 
-Parent discrepancy context in review and the broader teacher-language interpreter
-remain separate follow-ups.
+Parent discrepancy context was added after acceptance. The subsequent
+[teacher-language interpretation increment](PHASE7_6_TEACHER_LANGUAGE_INTERPRETATION.md)
+also preserves this accepted effective-history contract.

@@ -121,6 +121,40 @@ def attach_correction_audit(
     ])
 
 
+SUPPORTED_CORRECTION_OPERATIONS = frozenset({
+    "replace_mark_points",
+    "set_item_total_override",
+    "set_printed_marks",
+    "rename_question_identifier",
+    "promote_unlabeled_question",
+    "insert_missing_major_question",
+    "set_question_subtotal",
+})
+
+CORRECTION_OPERATION_CATEGORIES = {
+    "replace_mark_points": frozenset({
+        "mark_arithmetic_mismatch",
+        "item_total_mismatch",
+        "correction_mark_total_invalid",
+    }),
+    "set_item_total_override": frozenset({"item_total_mismatch"}),
+    "set_printed_marks": frozenset({"multiple_printed_allocations"}),
+    "rename_question_identifier": frozenset({
+        "numbering_jump",
+        "suspicious_question_identifier",
+        "scored_major_precedes_subquestions",
+    }),
+    "promote_unlabeled_question": frozenset({"unlabeled_mark_bearing_question"}),
+    "insert_missing_major_question": frozenset({"major_question_gap"}),
+    "set_question_subtotal": frozenset({"subtotal_sum_unexpected"}),
+}
+
+
+def correction_operation_supported(category: str, operation: str) -> bool:
+    """Return whether the bounded operation is valid for the active exception."""
+    return category in CORRECTION_OPERATION_CATEGORIES.get(operation, frozenset())
+
+
 def _issue(category: str, affected_id: str | None, message: str, level: str = "red") -> dict[str, Any]:
     return {
         "level": level,

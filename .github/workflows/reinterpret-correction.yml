@@ -28,6 +28,8 @@ jobs:
       MEMO_PRIVACY_MODE: APPROVED_EXTERNAL_ONLY
       MEMO_APPROVED_PROVIDERS: groq
       MEMO_GROQ_VISION_MODEL: qwen/qwen3.8-27b
+      MEMO_GROQ_FAST_MODEL: openai/gpt-oss-20b
+      MEMO_GROQ_STRONG_MODEL: openai/gpt-oss-120b
       MEMO_AI_MAX_RATE_RETRIES: "5"
 
     steps:

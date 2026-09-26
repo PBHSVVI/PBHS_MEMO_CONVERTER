@@ -25,6 +25,18 @@ def _dependency_source() -> str:
     return match.group(1)
 
 
+def _showback_source() -> str:
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    match = re.search(
+        r"// BEGIN TEACHER SHOWBACK MODEL\s*(.*?)\s*"
+        r"// END TEACHER SHOWBACK MODEL",
+        html,
+        flags=re.S,
+    )
+    assert match, "teacher show-back model is missing from the review page"
+    return match.group(1)
+
+
 def _evaluate(exceptions: list[dict], selected_id: str | None = None) -> dict:
     node = shutil.which("node")
     if not node:
@@ -37,6 +49,23 @@ def _evaluate(exceptions: list[dict], selected_id: str | None = None) -> dict:
     )
     result = subprocess.run(
         [node, "--input-type=module", "-e", program, json.dumps(exceptions), selected_id or ""],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _showback(correction: dict) -> dict:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the review show-back regression")
+    program = (
+        _showback_source()
+        + "\nconsole.log(JSON.stringify(teacherShowBackModel(JSON.parse(process.argv[1]))));"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", program, json.dumps(correction)],
         check=True,
         capture_output=True,
         text=True,
@@ -107,3 +136,37 @@ def test_resolved_parent_is_not_retained_after_active_list_refresh():
 def test_unrelated_question_mismatch_is_not_shown_as_parent_context():
     result = _evaluate([_parent("parent", "5", 8, 9), _child("child", "7.4")], "child")
     assert result["context"]["parents"] == []
+
+
+def test_teacher_showback_exposes_plain_mark_scheme_lines():
+    result = _showback({
+        "display_text": "Question 7.4 should use the following 2-mark scheme.",
+        "proposed_patch": {
+            "operation": "replace_mark_points",
+            "affected_id": "7.4",
+            "expected_total": 2,
+            "mark_points": [
+                {"count": 1, "code": "M", "descriptor": "factorising"},
+                {"count": 1, "code": "A", "descriptor": "answer"},
+            ],
+        },
+    })
+    assert result["summary"].startswith("Question 7.4")
+    assert result["mark_points"] == [
+        {"count": 1, "code": "M", "descriptor": "factorising"},
+        {"count": 1, "code": "A", "descriptor": "answer"},
+    ]
+    assert result["expected_total"] == 2
+
+
+def test_teacher_showback_keeps_internal_operation_in_technical_model():
+    result = _showback({
+        "display_text": "Rename Question 11.12.1 to Question 11.2.1.",
+        "proposed_patch": {
+            "operation": "rename_question_identifier",
+            "target_id": "11.2.1",
+        },
+    })
+    assert result["summary"] == "Rename Question 11.12.1 to Question 11.2.1."
+    assert result["operation"] == "rename_question_identifier"
+    assert result["target_id"] == "11.2.1"

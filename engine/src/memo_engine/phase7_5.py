@@ -23,9 +23,21 @@ TEACHER_ITEM_TOTAL_RE = re.compile(
     r"(\d{1,2})\s*marks?\s*[.!]?\s*$"
 )
 BARE_ITEM_TOTAL_RE = re.compile(r"^\s*\(\s*(\d{1,2})\s*\)\s*$")
+NATURAL_ITEM_TOTAL_RE = re.compile(
+    r"(?i)^\s*(?:this\s+(?:question|item)\s+is\s+worth|"
+    r"the\s+total\s+(?:for\s+this\s+(?:question|item)\s+)?is)\s+"
+    r"(\d{1,2})\s*marks?\s*[.!]?\s*$"
+)
+CORRECTED_PAREN_TOTAL_RE = re.compile(
+    r"(?i)^\s*the\s*\(\s*\d{1,2}\s*\)\s+is\s+wrong\s*[,;]?\s*"
+    r"it\s+should\s+be\s*\(\s*(\d{1,2})\s*\)\s*[.!]?\s*$"
+)
 SUBTOTAL_INSTRUCTION_RE = re.compile(
     r"(?i)\bq(?:uestion)?\s*(\d{1,2})\b.*?\b(?:sub\s*total|subtotal|total)"
-    r"\s*(?:to|=|as)?\s*(\d{1,3})\b"
+    r"\s*(?:to|=|as|is)?\s*(\d{1,3})\b"
+)
+MAJOR_QUESTION_INSTRUCTION_RE = re.compile(
+    r"(?i)\b(?:question|q)\s*(\d{1,2})\b"
 )
 
 PHASE7_5_REINTERPRET_CATEGORIES = {
@@ -895,11 +907,17 @@ def phase7_5_deterministic_proposal(
         if category == "item_total_mismatch":
             total_match = TEACHER_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
             bare_match = BARE_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
+            natural_match = NATURAL_ITEM_TOTAL_RE.fullmatch(evidence_text.strip())
+            corrected_match = CORRECTED_PAREN_TOTAL_RE.fullmatch(evidence_text.strip())
             raw_total = (
                 total_match.group(1)
                 if total_match
                 else bare_match.group(1)
                 if bare_match
+                else natural_match.group(1)
+                if natural_match
+                else corrected_match.group(1)
+                if corrected_match
                 else None
             )
             if raw_total is not None:
@@ -979,8 +997,10 @@ def phase7_5_deterministic_proposal(
         )
 
     if category == "major_question_gap":
-        tokens = _question_tokens_any(evidence_text)
-        bare = [token for token in tokens if "." not in token]
+        explicit = [match.group(1) for match in MAJOR_QUESTION_INSTRUCTION_RE.finditer(evidence_text)]
+        bare = list(dict.fromkeys(explicit)) if explicit else [
+            token for token in _question_tokens_any(evidence_text) if "." not in token
+        ]
         evidence["candidate_major_question_ids"] = bare
         if len(bare) != 1:
             return None, None, evidence

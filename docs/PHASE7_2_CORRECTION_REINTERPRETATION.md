@@ -24,6 +24,11 @@ A proposal is created only when exactly one safe target question identifier can 
 resolved. Ambiguous evidence remains `awaiting_reinterpretation`; it is never promoted by
 confidence or guesswork.
 
+The later [general teacher-language interpretation increment](PHASE7_6_TEACHER_LANGUAGE_INTERPRETATION.md)
+extends this deterministic-first path to the full existing correction-operation
+allowlist. This section records the original Phase 7.2 implementation and is retained
+as history rather than rewritten to imply that broader interpretation existed then.
+
 ## Source provenance
 
 A numbering overlay never rewrites the source file. Renamed questions retain
