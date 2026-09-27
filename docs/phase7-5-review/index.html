@@ -113,12 +113,29 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 <script type="module">
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 const sb=createClient('https://njrqiurqljwtuqrvguhj.supabase.co','sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
-const $=s=>document.querySelector(s), statusEl=$('#status'), logEl=$('#log'), jobId=$('#job').value;
+const $=s=>document.querySelector(s), statusEl=$('#status'), logEl=$('#log');
+const DEFAULT_JOB_ID='a284e625-6a71-43bd-ac81-7679a29de421';
+const requestedJobId=new URLSearchParams(location.search).get('job_id');
+const jobId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedJobId||'')?requestedJobId:DEFAULT_JOB_ID;
+$('#job').value=jobId;
 let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],sourceLoaded=false,sourceKind=null,normalizedCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
 function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
-async function invoke(name,body){const r=await sb.functions.invoke(name,{body});if(r.error)throw r.error;return r.data}
+async function invoke(name,body){
+ const r=await sb.functions.invoke(name,{body});
+ if(!r.error)return r.data;
+ let detail=null;
+ try{detail=await r.error.context?.json()}catch{}
+ const code=detail?.error||r.error.message;
+ const messages={
+  job_not_reviewable:`This memo is currently ${detail?.status||'being processed'}. Wait for revalidation to finish, then refresh before submitting another correction.`,
+  exception_not_active:'This review item was replaced during revalidation. Refresh to load its current version.',
+  pending_correction_exists:'This review item already has a pending correction. Review, edit, or cancel that correction first.'
+ };
+ const error=new Error(messages[code]||r.error.message);
+ error.code=code;error.detail=detail;throw error;
+}
 async function jsonFile(path){const r=await sb.storage.from('memo-files').download(path);if(r.error)throw r.error;return JSON.parse(await r.data.text())}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function humanCategory(c){return String(c||'review issue').replaceAll('_',' ')}

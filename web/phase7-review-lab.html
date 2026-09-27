@@ -28,8 +28,10 @@ input[type=email],input[type=password],textarea{
 }
 textarea{min-height:92px;resize:vertical}
 button{border:0;border-radius:10px;padding:10px 13px;font-weight:750;cursor:pointer}
+.buttonLink{display:inline-block;border-radius:10px;padding:10px 13px;font-weight:750;text-decoration:none}
 button.primary{background:var(--blue);color:white}
 button.secondary{background:#e8eef6;color:#17365d}
+.buttonLink.secondary{background:#e8eef6;color:#17365d}
 button.confirm{background:var(--green);color:white}
 button.reject{background:#f5d9dd;color:#85101c}
 button:disabled{opacity:.5;cursor:not-allowed}
@@ -92,7 +94,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
       <h2 style="margin:0">2. Review exceptions</h2>
       <div id="jobMeta" class="meta"></div>
     </div>
-    <button id="refresh" class="secondary">Refresh</button>
+    <div class="actions" style="margin-top:0"><a id="visualReview" class="buttonLink secondary hide" target="_blank" rel="noopener">Open focused visual review</a><button id="refresh" class="secondary">Refresh</button></div>
   </div>
   <p><small>Amber always keeps typed/photo/upload routes. Red never forces a suggested answer. Nothing changes the memo until a displayed proposal is explicitly confirmed.</small></p>
   <div id="cards"></div>
@@ -115,6 +117,7 @@ const supabase=createClient(URL,KEY,{auth:{persistSession:false,autoRefreshToken
 const $=s=>document.querySelector(s);
 let user=null, jobId=null, structure=null, canonical=null;
 const statusEl=$('#status'), cards=$('#cards'), panel=$('#reviewPanel'), logEl=$('#log');
+const HOSTED_REVIEW='https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/phase7-5-review/';
 
 function log(msg,obj){
   logEl.textContent += `\n\n${new Date().toLocaleTimeString()} — ${msg}${obj===undefined?'':'\n'+JSON.stringify(obj,null,2)}`;
@@ -189,6 +192,26 @@ async function waitForReinterpretation(correctionId){
   await refreshReview();
 }
 
+async function waitForRevalidation(){
+  setStatus('Correction confirmed. Revalidating the immutable source…');
+  const terminal=new Set(['needs_review','complete','failed_retryable','failed']);
+  for(let i=0;i<180;i++){
+    await sleep(2000);
+    const q=await supabase.from('jobs').select('status,stage,error_code,error_message').eq('id',jobId).single();
+    if(q.error)throw q.error;
+    if(terminal.has(q.data.status)){
+      setStatus(q.data.status==='needs_review'
+        ?'Revalidation finished. Review the next current exception below.'
+        :`Revalidation finished: ${q.data.status} / ${q.data.stage}.`,
+        q.data.status==='needs_review'||q.data.status==='complete'?'success':'warn');
+      await refreshReview();
+      return;
+    }
+  }
+  setStatus('Revalidation is still running. Use Refresh before submitting another correction.','warn');
+  await refreshReview();
+}
+
 async function refreshReview(){
   if(!jobId||!user)return;
   const [jr,er,cr]=await Promise.all([
@@ -198,6 +221,10 @@ async function refreshReview(){
   ]);
   if(jr.error)throw jr.error;if(er.error)throw er.error;if(cr.error)throw cr.error;
   const job=jr.data, exceptions=er.data||[], corrections=cr.data||[];
+  const canSubmit=['needs_review','correction_pending'].includes(job.status);
+  const visualReview=$('#visualReview');
+  visualReview.href=`${HOSTED_REVIEW}?job_id=${encodeURIComponent(jobId)}`;
+  visualReview.classList.remove('hide');
 
   structure=await downloadJson(`${user.id}/${jobId}/internal/structure.json`);
   canonical=await downloadJson(`${user.id}/${jobId}/internal/canonical.json`);
@@ -216,7 +243,7 @@ async function refreshReview(){
     const suggestionHtml=suggestions.map((s,i)=>{
       const label=s.candidate||s.value||s.display_text||s.text||JSON.stringify(s);
       return `<div class="suggestion"><b>Suggested interpretation:</b> ${esc(label)}
-        <div class="actions"><button class="secondary suggestionBtn" data-index="${i}">Use this suggestion</button></div></div>`;
+        <div class="actions"><button class="secondary suggestionBtn" data-index="${i}" ${canSubmit?'':'disabled'}>Use this suggestion</button></div></div>`;
     }).join('');
 
     const marks=(ev.mark_points||[]).map(m=>`${m.count||''}${m.code||''} ${m.descriptor||''}`.trim()).join(' • ');
@@ -238,7 +265,7 @@ async function refreshReview(){
       ${ev.printed_marks!==undefined?`<div class="meta">Printed marks: ${esc(ev.printed_marks)}${ev.computed_shorthand_marks!=null?` • shorthand computes: ${esc(ev.computed_shorthand_marks)}`:''}</div>`:''}
       ${marks?`<div class="meta">${esc(marks)}</div>`:''}</div>
       ${ex.status==='resolved'?'<div class="status success">Resolved by confirmed correction.</div>':suggestionHtml}
-      ${ex.status!=='resolved'&&!corr?`
+      ${ex.status!=='resolved'&&!corr&&canSubmit?`
         <hr><label>Type/edit correction</label>
         <textarea class="typed" placeholder="Enter the correction exactly as you want it interpreted."></textarea>
         <div class="actions">
@@ -248,13 +275,24 @@ async function refreshReview(){
         </div>
         <input class="photoInput hide" type="file" accept="image/*" capture="environment">
         <input class="uploadInput hide" type="file" accept="image/*,.pdf,.docx">
-      `:''}
+      `:ex.status!=='resolved'&&!corr?'<div class="status warn">Revalidation is in progress. Refresh after processing finishes before submitting another correction.</div>':''}
       ${proposal}
     `;
 
     const invoke=async(name,body)=>{
       const r=await supabase.functions.invoke(name,{body});
-      if(r.error)throw r.error;
+      if(r.error){
+        let detail=null;
+        try{detail=await r.error.context?.json()}catch{}
+        const code=detail?.error||r.error.message;
+        const messages={
+          job_not_reviewable:`This memo is currently ${detail?.status||'being processed'}. Wait for revalidation to finish, then refresh before submitting another correction.`,
+          exception_not_active:'This review item was replaced during revalidation. Refresh to load its current version.',
+          pending_correction_exists:'This review item already has a pending correction. Review, edit, or cancel that correction first.'
+        };
+        const error=new Error(messages[code]||r.error.message);
+        error.code=code;error.detail=detail;throw error;
+      }
       return r.data;
     };
 
@@ -303,8 +341,8 @@ async function refreshReview(){
         log('Correction confirmed',data);
         const events=await supabase.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).order('created_at',{ascending:true});
         const confirmed=(events.data||[]).some(e=>e.event_type==='phase7_correction_confirmed'&&e.payload?.correction_id===corr.id);
-        if(confirmed)setStatus('Correction confirmed. A controlled revalidation pass has been dispatched automatically; refresh when processing finishes.','success');
-        await refreshReview();
+        if(confirmed)await waitForRevalidation();
+        else await refreshReview();
       }catch(e){alert(e.message);cb.disabled=false}
     };
     const rb=el.querySelector('.rejectBtn');

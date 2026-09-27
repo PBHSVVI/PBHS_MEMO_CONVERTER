@@ -11,6 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_PAGE = ROOT / "docs" / "phase7-5-review" / "index.html"
+REVIEW_LAB = ROOT / "web" / "phase7-review-lab.html"
 
 
 def _dependency_source() -> str:
@@ -170,3 +171,27 @@ def test_teacher_showback_keeps_internal_operation_in_technical_model():
     assert result["summary"] == "Rename Question 11.12.1 to Question 11.2.1."
     assert result["operation"] == "rename_question_identifier"
     assert result["target_id"] == "11.2.1"
+
+
+def test_focused_review_accepts_an_explicit_disposable_job_id():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "new URLSearchParams(location.search).get('job_id')" in html
+    assert "$('#job').value=jobId" in html
+    assert "DEFAULT_JOB_ID='a284e625-6a71-43bd-ac81-7679a29de421'" in html
+
+
+def test_review_pages_explain_revalidation_conflicts():
+    focused = REVIEW_PAGE.read_text(encoding="utf-8")
+    lab = REVIEW_LAB.read_text(encoding="utf-8")
+    expected = "Wait for revalidation to finish, then refresh before submitting another correction."
+    assert expected in focused
+    assert expected in lab
+    assert "const canSubmit=['needs_review','correction_pending'].includes(job.status)" in lab
+    assert "async function waitForRevalidation()" in lab
+
+
+def test_review_lab_routes_disposable_job_to_visual_source_review():
+    html = REVIEW_LAB.read_text(encoding="utf-8")
+    assert 'id="visualReview"' in html
+    assert "phase7-5-review/" in html
+    assert "?job_id=${encodeURIComponent(jobId)}" in html
