@@ -303,6 +303,38 @@ def test_natural_subtotal_is_deterministic():
     assert proposal["subtotal"] == 4
 
 
+@pytest.mark.parametrize("teacher_text", [
+    "Add the Question 3 subtotal [4]",
+    "Insert a subtotal of 4 for Question 3.",
+])
+def test_natural_subtotal_variants_remain_deterministic(teacher_text):
+    proposal, _, _ = phase7_5_deterministic_proposal(
+        {"category": "subtotal_sum_unexpected", "affected_id": None},
+        teacher_text,
+    )
+    assert proposal["operation"] == "set_question_subtotal"
+    assert proposal["target_id"] == "3"
+    assert proposal["subtotal"] == 4
+
+
+def test_ai_subtotal_may_name_target_for_document_level_exception():
+    proposal, display = ai_result_to_proposal(
+        _result(
+            operation="set_question_subtotal",
+            affected_id="3",
+            target_id="3",
+            subtotal=4,
+        ),
+        {"category": "subtotal_sum_unexpected", "affected_id": None},
+        _context("Insert a subtotal of 4 for Question 3."),
+        method="groq_fast_teacher_language",
+    )
+    assert proposal["affected_id"] is None
+    assert proposal["target_id"] == "3"
+    assert proposal["subtotal"] == 4
+    assert display == "Record Question 3 source subtotal as 4."
+
+
 def test_invalid_subtotal_ledger_fails_real_deterministic_validation():
     exception = {"category": "subtotal_sum_unexpected", "affected_id": None, "suggestions": []}
     structure = {

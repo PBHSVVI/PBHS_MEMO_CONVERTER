@@ -17,7 +17,7 @@ from .structure import effective_mark_total, semantic_for_code
 
 QUESTION_ID_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 QUESTION_TOKEN_RE = re.compile(
-    r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){0,2})(?![\d.])"
+    r"(?<![\d.])(\d{1,2}(?:\.\d{1,2}){0,2})(?!\d)(?!\.\d)"
 )
 WORD_NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -322,13 +322,16 @@ def ai_result_to_proposal(
         )
     affected = exception.get("affected_id")
     expected_affected = None if affected is None else str(affected)
-    if result.get("affected_id") != expected_affected:
+    target = result.get("target_id")
+    allowed_affected = {expected_affected}
+    if operation == "set_question_subtotal" and expected_affected is None:
+        allowed_affected.add(target)
+    if result.get("affected_id") not in allowed_affected:
         raise TeacherLanguageError(
             "AI_AFFECTED_ID_MISMATCH",
             "The AI proposal targets a different question from the active issue.",
         )
 
-    target = result.get("target_id")
     if target is not None:
         target = target.strip()
         if not QUESTION_ID_RE.fullmatch(target) or target not in _grounded_question_ids(context):

@@ -34,7 +34,11 @@ CORRECTED_PAREN_TOTAL_RE = re.compile(
 )
 SUBTOTAL_INSTRUCTION_RE = re.compile(
     r"(?i)\bq(?:uestion)?\s*(\d{1,2})\b.*?\b(?:sub\s*total|subtotal|total)"
-    r"\s*(?:to|=|as|is)?\s*(\d{1,3})\b"
+    r"\s*(?:of|to|=|as|is)?\s*[\[(]?\s*(\d{1,3})\b"
+)
+SUBTOTAL_FIRST_INSTRUCTION_RE = re.compile(
+    r"(?i)\b(?:sub\s*total|subtotal|total)\s*(?:of|to|=|as|is)?\s*"
+    r"[\[(]?\s*(\d{1,3})\b.*?\bq(?:uestion)?\s*(\d{1,2})\b"
 )
 MAJOR_QUESTION_INSTRUCTION_RE = re.compile(
     r"(?i)\b(?:question|q)\s*(\d{1,2})\b"
@@ -973,10 +977,16 @@ def phase7_5_deterministic_proposal(
 
     if category == "subtotal_sum_unexpected":
         match = SUBTOTAL_INSTRUCTION_RE.search(evidence_text)
-        if not match:
+        reversed_match = SUBTOTAL_FIRST_INSTRUCTION_RE.search(evidence_text)
+        if not match and reversed_match:
+            target, subtotal_text = reversed_match.group(2), reversed_match.group(1)
+        elif match:
+            target, subtotal_text = match.group(1), match.group(2)
+        else:
+            target = subtotal_text = None
+        if target is None or subtotal_text is None:
             return None, None, evidence
-        target = match.group(1)
-        subtotal = int(match.group(2))
+        subtotal = int(subtotal_text)
         evidence["target_question"] = target
         evidence["subtotal"] = subtotal
         if not 1 <= subtotal <= 150:

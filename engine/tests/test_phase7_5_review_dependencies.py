@@ -26,6 +26,18 @@ def _dependency_source() -> str:
     return match.group(1)
 
 
+def _source_focus_source() -> str:
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    match = re.search(
+        r"// BEGIN SOURCE FOCUS MODEL\s*(.*?)\s*"
+        r"// END SOURCE FOCUS MODEL",
+        html,
+        flags=re.S,
+    )
+    assert match, "source focus model is missing from the review page"
+    return match.group(1)
+
+
 def _showback_source() -> str:
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     match = re.search(
@@ -195,3 +207,26 @@ def test_review_lab_routes_disposable_job_to_visual_source_review():
     assert 'id="visualReview"' in html
     assert "phase7-5-review/" in html
     assert "?job_id=${encodeURIComponent(jobId)}" in html
+
+
+def test_strict_major_question_focus_does_not_match_child_or_mark_values():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the review focus regression")
+    program = (
+        "const textMatches=(text,token)=>String(text).includes(String(token));\n"
+        + _source_focus_source()
+        + "\nconst blocks=JSON.parse(process.argv[1]);"
+        + "\nconsole.log(JSON.stringify(blocks.map(block=>sourceBlockMatches(block,'3',true))));"
+    )
+    blocks = [
+        {"cells": ["6.3.2", "working", "(3)"], "combined": "6.3.2 working (3)"},
+        {"cells": ["3", "Question 3 subtotal", "[4]"], "combined": "3 Question 3 subtotal [4]"},
+    ]
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", program, json.dumps(blocks)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == [False, True]

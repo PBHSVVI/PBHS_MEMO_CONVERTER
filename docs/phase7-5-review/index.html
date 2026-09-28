@@ -198,7 +198,7 @@ const knownSpecs={
  'mark_arithmetic_mismatch|7.4':{title:'Check Question 7.4 mark scheme',anchors:['7.4'],what:'The printed total and the marking-point arithmetic for Question 7.4 do not agree.',need:'Provide the correct mark scheme or allocation so the item total matches the memo.'},
  'scored_major_precedes_subquestions|8':{title:'Check Question 8 numbering',anchors:['8','8.2'],what:'A scored row labelled only as Question 8 appears immediately before Question 8.2.',need:'Decide whether the scored row should be Question 8.1.'},
  'major_question_gap|11.1.1':{title:'Check missing Question 10',anchors:['9.4','11.1.1'],gap:true,what:'The numbering jumps from the end of Question 9 to Question 11 while a scored block sits in between.',need:'Decide whether that intervening scored block is Question 10.'},
- 'subtotal_sum_unexpected|NULL':{title:'Check the missing Question 3 subtotal',anchors:['3'],what:'The document-level subtotal ledger is short by 4 marks. For this RAW memo, the suspected cause is a Question 3 subtotal that was visible in the source but not captured structurally.',need:'Only correct this if the focused source evidence clearly shows the Question 3 subtotal as 4. Do not infer a correction from the document total alone.'},
+ 'subtotal_sum_unexpected|NULL':{title:'Check the missing Question 3 subtotal',anchors:['3'],strictAnchors:true,what:'The document-level subtotal ledger is short by 4 marks. For this RAW memo, the suspected cause is a Question 3 subtotal that was visible in the source but not captured structurally.',need:'Only correct this if the focused source evidence clearly shows the Question 3 subtotal as 4. Do not infer a correction from the document total alone.'},
  'item_total_mismatch|11.2.1':{title:'Check Question 11.2.1 mark scheme',anchors:['11.2.1','11.12.1'],what:'The printed total for Question 11.2.1 and the extracted marking-point total do not agree.',need:'Provide the correct four-mark scheme or other intended allocation.'}
 };
 
@@ -279,8 +279,15 @@ function flattenNormalized(normalized){
 async function ensureNormalized(){if(normalizedCache)return normalizedCache;normalizedCache=await jsonFile(`${user.id}/${jobId}/internal/normalized.json`);return normalizedCache}
 function tokenRegex(token){const t=String(token||'').trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');if(!t)return null;return new RegExp(`(^|[^0-9A-Za-z.])${t}([^0-9A-Za-z.]|$)`,'i')}
 function textMatches(text,token){const re=tokenRegex(token);return re?re.test(String(text||'').replace(/\s+/g,' ').trim()):false}
+// BEGIN SOURCE FOCUS MODEL
+function sourceBlockMatches(block,token,strict=false){
+ const cells=Array.isArray(block?.cells)?block.cells:[];
+ if(strict)return cells.some(cell=>String(cell||'').replace(/\s+/g,' ').trim()===String(token||'').trim());
+ return textMatches(block?.combined,token);
+}
+// END SOURCE FOCUS MODEL
 async function extractedContext(step){
- try{const blocks=flattenNormalized(await ensureNormalized()),anchors=step.anchors||[],hits=[];blocks.forEach((b,i)=>{if(anchors.some(a=>textMatches(b.combined,a)))hits.push(i)});let start=0,end=Math.min(blocks.length-1,5);if(hits.length){start=Math.max(0,Math.min(...hits)-2);end=Math.min(blocks.length-1,Math.max(...hits)+2)}else{const target=String(currentException?.affected_id||'');const i=blocks.findIndex(b=>textMatches(b.combined,target));if(i>=0){start=Math.max(0,i-2);end=Math.min(blocks.length-1,i+2)}}return blocks.slice(start,end+1).map(b=>`SOURCE BLOCK ${b.index}\n${b.cells.map((c,i)=>`[cell ${i+1}] ${c}`).join('\n')}`).join('\n\n')}
+ try{const blocks=flattenNormalized(await ensureNormalized()),anchors=step.anchors||[],hits=[];blocks.forEach((b,i)=>{if(anchors.some(a=>sourceBlockMatches(b,a,step.strictAnchors)))hits.push(i)});let start=0,end=Math.min(blocks.length-1,5);if(hits.length){start=Math.max(0,Math.min(...hits)-2);end=Math.min(blocks.length-1,Math.max(...hits)+2)}else{const target=String(currentException?.affected_id||'');const i=blocks.findIndex(b=>textMatches(b.combined,target));if(i>=0){start=Math.max(0,i-2);end=Math.min(blocks.length-1,i+2)}}return blocks.slice(start,end+1).map(b=>`SOURCE BLOCK ${b.index}\n${b.cells.map((c,i)=>`[cell ${i+1}] ${c}`).join('\n')}`).join('\n\n')}
  catch(e){return `Could not load normalized source context: ${e.message}`}
 }
 
@@ -297,14 +304,18 @@ async function ensureSourceLoaded(){
  else sourceKind='unknown';
  sourceLoaded=true;
 }
-function findTokenElement(root,token){
- const nodes=[...root.querySelectorAll('td,th,p,span,div')].filter(el=>textMatches(el.textContent,token)&&String(el.textContent||'').trim().length<900);
+function findTokenElement(root,token,strict=false){
+ const normal=String(token||'').replace(/\s+/g,' ').trim();
+ const nodes=[...root.querySelectorAll('td,th,p,span,div')].filter(el=>{
+  const text=String(el.textContent||'').replace(/\s+/g,' ').trim();
+  return text.length<900&&(strict?text===normal:textMatches(text,token));
+ });
  nodes.sort((a,b)=>String(a.textContent||'').length-String(b.textContent||'').length);return nodes[0]||null;
 }
-function markToken(root,token,cls='evidence-context'){const el=findTokenElement(root,token);if(el){(el.closest('tr')||el.closest('p')||el).classList.add(cls);return el}return null}
+function markToken(root,token,cls='evidence-context',strict=false){const el=findTokenElement(root,token,strict);if(el){(el.closest('tr')||el.closest('p')||el).classList.add(cls);return el}return null}
 function addArrowToElement(el,label='Review here'){if(!el)return;const target=el.closest('td')||el.closest('tr')||el.closest('p')||el;target.classList.add('discrepancy-target');const badge=document.createElement('span');badge.className='arrow-badge';badge.textContent=label;if(target.tagName==='TR'){const cell=target.querySelector('td,th');if(cell)cell.prepend(badge);else target.prepend(badge)}else target.prepend(badge)}
 function visibleCloneAround(step){
- const full=$('#sourceFullHost'),anchors=(step.anchors||[]).map(t=>({t,el:findTokenElement(full,t)})).filter(x=>x.el);
+ const full=$('#sourceFullHost'),anchors=(step.anchors||[]).map(t=>({t,el:findTokenElement(full,t,step.strictAnchors)})).filter(x=>x.el);
  if(!anchors.length)return null;
  const rowAnchors=anchors.map(x=>x.el.closest('tr')).filter(Boolean),table=rowAnchors[0]?.closest('table');
  if(table&&rowAnchors.every(r=>r.closest('table')===table)){
@@ -321,13 +332,13 @@ async function renderFocusedEvidence(){
    const made=visibleCloneAround(currentStep);
    if(!made){focus.innerHTML='<div class="status warn">Could not isolate the exact source block. Use the extracted context or Show full memo.</div>';return}
    const wrap=document.createElement('div');wrap.className='focus-docx';wrap.append(made.node);focus.append(wrap);
-   for(const a of currentStep.anchors||[])markToken(focus,a,'evidence-context');
+   for(const a of currentStep.anchors||[])markToken(focus,a,'evidence-context',currentStep.strictAnchors);
    if(currentStep.gap&&Array.isArray(made.anchorIndexes)&&made.anchorIndexes.length>=2){
       const rows=[...focus.querySelectorAll('tr')],sorted=[...made.anchorIndexes].sort((a,b)=>a-b),candidate=rows[Math.min(rows.length-1,sorted[0]+1)];
       if(candidate&&sorted[1]>sorted[0]){const cell=candidate.querySelector('td,th')||candidate;cell.classList.add('discrepancy-target');const call=document.createElement('div');call.className='gap-callout';call.textContent='The discrepancy is in this gap / unlabelled row';cell.prepend(call)}
       else{const c=document.createElement('div');c.className='gap-callout';c.textContent='Check the gap between the two yellow context markers';focus.prepend(c)}
    }else{
-      const target=String(currentException?.affected_id||'');const el=target?findTokenElement(focus,target):null;addArrowToElement(el||findTokenElement(focus,(currentStep.anchors||[])[0]),'Discrepancy / decision point');
+      const target=String(currentException?.affected_id||'');const el=target?findTokenElement(focus,target):null;addArrowToElement(el||findTokenElement(focus,(currentStep.anchors||[])[0],currentStep.strictAnchors),'Discrepancy / decision point');
    }
  }else if(sourceKind==='pdf')focus.innerHTML=`<iframe class="pdfFrame" src="${sourceObjectUrl}#page=1&zoom=page-width" title="Original memo PDF"></iframe>`;
  else if(sourceKind==='image')focus.innerHTML=`<img class="sourceImg" src="${sourceObjectUrl}" alt="Original memo evidence">`;
