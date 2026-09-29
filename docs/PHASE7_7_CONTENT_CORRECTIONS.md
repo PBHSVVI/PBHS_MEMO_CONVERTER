@@ -57,10 +57,29 @@ correction supersedes older content for the same question. When it contains a
 complete mark scheme, it also supersedes older mark-scheme and item-total decisions;
 a later mark-only correction can still compose with the corrected content.
 
-## Qualification boundary
+## Hosted acceptance
 
-Local regressions cover the structured envelope, strict target and content
-validation, atomic mark application, broader-content fail-closed behaviour,
-correction show-back, source-reference preservation, and review-page availability.
-A disposable hosted job should be used for end-to-end acceptance before this
-increment is described as hosted-accepted.
+**ACCEPTED — Structured question and memo-content correction completed hosted
+end-to-end validation successfully on 2026-09-29.**
+
+Disposable job `e0055801-f512-4573-8389-2c084eb43fe2` used commit
+`6bc1101837f2f0de3edf16a5ba5743cc7c2a4b7b` in
+[Process Memo run 36533348435](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36533348435).
+All **113 hosted tests passed** and the hosted worker completed.
+
+Teacher correction `fa894ff6-1ed2-4d62-8351-18b394e5551e` replaced the prompt and
+two memo-working lines for Question 11.2.1 and supplied an additive four-mark
+scheme (`3M` calculation and `1A` answer). The correction was confirmed, effective,
+applied under the `item_content` history domain, and recorded with zero application
+issues.
+
+The final job state was `complete / complete`, engine `phase7.5`, with zero active
+review exceptions, canonical `render_ready`, validation passed, 11 major questions
+and computed total 150. Nine confirmed corrections were effective and applied; none
+were superseded and the correction audit had zero issues. DOCX and PDF preflights
+passed, `phase6_render_complete` recorded total 150, and both output objects exist.
+
+The DOCX is 148,902 bytes with 251/251 native math elements. The PDF is 371,699
+bytes across 11 pages, with required glyphs present and fonts embedded. This hosted
+acceptance records the content-correction increment; it does not replace or alter
+the formally accepted Phase 7.5 RAW baseline.

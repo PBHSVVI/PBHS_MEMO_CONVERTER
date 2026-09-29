@@ -43,6 +43,9 @@ Every active review now also includes a structured editor for replacing an actua
 question prompt, memo answer or working, with an optional marking scheme. The page
 shows the complete content back before confirmation and includes an always-visible
 teacher guide. See [structured content corrections](docs/PHASE7_7_CONTENT_CORRECTIONS.md).
+The content-correction path completed hosted acceptance on 2026-09-29 using
+disposable job `e0055801-f512-4573-8389-2c084eb43fe2` and
+[Process Memo run 36533348435](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36533348435).
 
 ## Pilot architecture
 
