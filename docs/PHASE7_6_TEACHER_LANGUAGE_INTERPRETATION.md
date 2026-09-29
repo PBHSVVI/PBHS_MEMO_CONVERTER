@@ -1,5 +1,25 @@
 # General teacher-language interpretation
 
+## Hosted accepted baseline
+
+**ACCEPTED — Hosted teacher-language interpretation acceptance completed successfully.**
+
+Accepted on **2026-09-29** using disposable job
+`e0055801-f512-4573-8389-2c084eb43fe2`. The live fast-model case ran in
+[Reinterpret Correction run 36292433279](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36292433279),
+and the completed correction history converged in
+[Process Memo run 36533348435](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36533348435)
+at commit `6bc1101837f2f0de3edf16a5ba5743cc7c2a4b7b`. The final run passed
+**113 tests on Python 3.13.15**.
+
+The accepted evidence covers deterministic interpretation without a model call,
+one live fast-model interpretation, strict proposal validation, teacher show-back,
+explicit confirmation, fail-closed unresolved and provider/schema failures,
+edit/resubmit and rejection, effective overlay application, revalidation, and final
+rendering. The accepted Phase 7.5 RAW job
+`a284e625-6a71-43bd-ac81-7679a29de421` remained unchanged; its final database event
+and update timestamp remain **2026-09-26**.
+
 ## Baseline protection
 
 Phase 7.5 remains the formally accepted hosted RAW baseline recorded in the
@@ -134,7 +154,7 @@ records a recoverable error code. One fast call and, when justified, one strong 
 are the maximum. The existing artifact and event model holds this provenance, so no
 database migration is required.
 
-## Local qualification and limits
+## Qualification and limits
 
 Regression tests use an injected provider seam; they never call live Groq. Coverage
 includes deterministic preservation, conditional scoring, natural numbering, mark
@@ -147,16 +167,67 @@ The interpreter deliberately handles one logical correction per active exception
 Independent compound changes remain ambiguous. AI-produced `alternative_max`
 schemes that require richer branch structure than the existing mark-point operation
 can express remain for teacher clarification; the accepted deterministic conditional
-syntax continues to work. This implementation has local qualification only until a
-separate hosted provider acceptance is run.
+syntax continues to work.
 
-## Recommended hosted acceptance
+## Hosted acceptance evidence
 
-Use a disposable review case rather than the accepted RAW job. Verify one example
-at each rung: deterministic text with zero model calls, fast-model natural marking
-language, justified fast-to-strong escalation, malformed/provider-failure recovery,
-and unresolved ambiguity. For each case inspect the stored artifact and event,
-plain-language show-back, edit/cancel path, explicit confirmation, effective overlay,
-revalidation and final rendering. Confirm the configured model names, one-call caps,
-token/latency fields, private evidence handling and absence of mutation before
-confirmation.
+The following Supabase corrections and their private `reinterpretation.json`
+artifacts provide the representative hosted evidence:
+
+- `09e9e4d5-35d8-432e-aeb1-7156b55b99a6` used
+  `deterministic_teacher_mark_total` / `set_printed_marks`;
+  `0346851c-a1ab-4ba9-9ba6-e86d0bfc52cc` used
+  `deterministic_teacher_mark_scheme` / `replace_mark_points`; and
+  `c0d2ede7-eeb2-4fb4-96eb-beac4ef0ae5f` used
+  `deterministic_teacher_subtotal` / `set_question_subtotal`. Each recorded a passed
+  deterministic validation, one deterministic resolution, zero fast calls, zero
+  strong calls and an empty provider-run list. Each reinterpretation event preceded
+  confirmation, and each correction was later applied by the confirmed overlay.
+- `b2a0faeb-c9e3-435b-802a-cda13f15a839` exercised the live fast path through Groq
+  `openai/gpt-oss-20b`. It produced the closed
+  `insert_missing_major_question` proposal for Question 10, passed the deterministic
+  dry run, recorded exactly one fast call and zero strong calls, and stored 1,218
+  prompt tokens, 210 output tokens, 1,428 total tokens and 448 ms latency. Its
+  plain-language proposal was stored before the explicit confirmation event. The
+  confirmed operation appears in the final effective overlay with `applied: true`.
+- `fa46a1c4-fff5-42b6-bdc2-f78b540a1e9c`,
+  `b6f0ebaf-e7e2-4e22-b4de-efa477f3a8c5`,
+  `6020750c-1162-4f53-be0f-a6dcc0c41254` and
+  `855f1da1-3091-4a5d-a0a2-66bdba0e5d40` remained unresolved and unapplied.
+  Their artifacts retained provider or validation provenance, including
+  `AI_PROVIDER_JSON_VALIDATE_FAILED`, `AI_AFFECTED_ID_MISMATCH` and
+  `AI_TARGET_NOT_GROUNDED`. They were rejected and remained auditable; replacement
+  corrections `09e9e4d5…`, `0346851c…`, `b2a0faeb…` and `c0d2ede7…` subsequently
+  resolved the same review issues.
+
+The final disposable job state was `complete / complete` with zero active exceptions
+and zero correction application issues. Its correction overlay recorded **9
+confirmed, 9 effective and 9 applied** corrections. Canonical output was
+`render_ready`, validation passed, and the result contained **11 major questions and
+150 marks**. DOCX and PDF preflights passed, both output files exist, and the
+`phase6_render_complete` event records total 150.
+
+| Acceptance requirement | Result | Evidence |
+| --- | --- | --- |
+| Deterministic zero-model resolution | PASS | `09e9e4d5…`, `0346851c…`, `c0d2ede7…`; empty provider runs |
+| Live fast-model interpretation | PASS | `b2a0faeb…`; Groq `openai/gpt-oss-20b`; run `36292433279` |
+| Strict structured proposal | PASS | Closed schema and allowlist; stored Question 10 proposal |
+| Deterministic dry-run validation | PASS | Passed validation in deterministic and fast-path events |
+| Teacher-facing show-back | PASS | Stored display text and confirmation-ready review state |
+| No mutation before confirmation | PASS | Reinterpretation precedes confirmation; rejected rows have no `confirmed_at` or `applied_at` |
+| Explicit confirmation | PASS | Confirmed events and timestamps for every effective interpreted correction |
+| Correct overlay application | PASS | Final history has 9 effective and 9 applied, with zero issues |
+| Revalidation | PASS | `phase7_revalidation_complete`: total 150, `render_ready`, validation passed |
+| Unresolved ambiguity fail-closed | PASS | Representative rejected corrections retained no executable proposal or application |
+| Edit/resubmit | PASS | Four rejected attempts were followed by successful replacements on the same exceptions |
+| Cancel/reject | PASS | Rejected rows remain unapplied and auditable |
+| Provenance/audit storage | PASS | Reinterpretation events and private artifacts retain method, validation, model, token and latency data |
+| Accepted Phase 7.5 RAW job unchanged | PASS | Baseline job has no event or update after 2026-09-26 |
+| Strong-model path qualification | PASS (qualified) | Mocked regression coverage and one-call implementation cap |
+
+**Strong hosted escalation path not reproducibly exercised; locally qualified by mocked regression tests.**
+
+The local suite covers one justified fast-to-strong escalation, deterministic-overlay
+rejection followed by one strong call, an unresolved strong result, schema and
+provider failures, and the one-call cap. The implementation performs one fast
+attempt and at most one strong attempt; non-escalatable failures return unresolved.

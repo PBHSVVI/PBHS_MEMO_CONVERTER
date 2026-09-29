@@ -30,14 +30,37 @@ review acceptance alignment (`55792320fde6c2c86c62ca85d524a4b0849fe599`). Earlie
 patch guides and local qualification records remain historical implementation notes;
 they are not instructions to reapply patches or create corrections for this accepted job.
 
-## Current correction and content-editing increment
+## Phase 7.6 Accepted Baseline
+
+**ACCEPTED — Hosted teacher-language interpretation acceptance completed successfully.**
+
+Accepted on **2026-09-29** using disposable job
+`e0055801-f512-4573-8389-2c084eb43fe2`. Deterministic corrections completed with
+zero model calls, and correction `b2a0faeb-c9e3-435b-802a-cda13f15a839` exercised
+the live Groq `openai/gpt-oss-20b` fast path in
+[Reinterpret Correction run 36292433279](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36292433279).
+The correction history converged in
+[Process Memo run 36533348435](https://github.com/PBHSVVI/PBHS_MEMO_CONVERTER/actions/runs/36533348435):
+**113 hosted tests passed**, the job completed with **9 confirmed/effective/applied
+corrections**, zero active exceptions and zero application issues, and canonical
+output reached **150 marks across 11 major questions** with passing DOCX and PDF
+preflights.
+
+Rejected and unresolved attempts remained unapplied and auditable, including live
+provider/schema and deterministic-grounding failures; edited replacement corrections
+subsequently resolved the same review issues. **Strong hosted escalation path not
+reproducibly exercised; locally qualified by mocked regression tests.** The accepted
+Phase 7.5 RAW job `a284e625-6a71-43bd-ac81-7679a29de421` remains unchanged. See
+[general teacher-language interpretation](docs/PHASE7_6_TEACHER_LANGUAGE_INTERPRETATION.md)
+for the evidence matrix and qualification.
+
+## Accepted correction and content-editing increments
 
 The correction reinterpretation worker now accepts natural teacher instructions
 through a deterministic-first, bounded AI ladder. Fast and strong Groq models may
 interpret ambiguity into the existing operation allowlist, but the existing overlay
 performs final validation and no proposal applies without teacher confirmation.
-This increment does not alter the accepted Phase 7.5 baseline. See
-[general teacher-language interpretation](docs/PHASE7_6_TEACHER_LANGUAGE_INTERPRETATION.md).
+This increment does not alter the accepted Phase 7.5 baseline.
 
 Every active review now also includes a structured editor for replacing an actual
 question prompt, memo answer or working, with an optional marking scheme. The page
