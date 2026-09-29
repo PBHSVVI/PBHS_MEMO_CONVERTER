@@ -315,3 +315,13 @@ def test_structured_content_submission_is_confirmation_ready():
     assert "body.content_correction" in source
     assert 'operation: "replace_item_content"' in source
     assert 'exceptionStatus = "awaiting_confirmation"' in source
+
+
+def test_saved_failed_interpretation_opens_editor_without_automatic_retry():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    start = html.index("async function retrySavedInterpretation(corr)")
+    end = html.index("async function waitProposal", start)
+    function_source = html[start:end]
+    assert "SAVED INTERPRETATION NEEDS EDITING" in function_source
+    assert "showRecovery(corr" in function_source
+    assert "retry-correction-reinterpretation" not in function_source

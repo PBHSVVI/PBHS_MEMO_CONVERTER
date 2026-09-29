@@ -451,11 +451,9 @@ async function unresolvedEventFor(correctionId){
 async function retrySavedInterpretation(corr){
  const failed=await unresolvedEventFor(corr.id);
  if(!failed)return await waitProposal(corr.id,new Date(corr.created_at));
- status('The saved correction could not be interpreted previously. Retrying it with the updated Phase 7.5 interpreter…','warn');
- const startedAt=new Date();
- const rr=await invoke('retry-correction-reinterpretation',{correction_id:corr.id});
- log('RETRIED SAVED INTERPRETATION',{correction_id:corr.id,result:rr,typed_text:corr.typed_text});
- return await waitProposal(corr.id,startedAt);
+ log('SAVED INTERPRETATION NEEDS EDITING',{correction_id:corr.id,event:failed});
+ showRecovery(corr,'This saved correction was not interpreted safely and nothing was applied. Choose Edit / resubmit, then use the structured content editor when the actual question, answer, or working is wrong.');
+ return null;
 }
 async function waitProposal(correctionId,submittedAt){
  for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(20);if(ev.error)throw ev.error;const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad){const fresh=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('id',correctionId).single();if(fresh.error)throw fresh.error;showRecovery(fresh.data,'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');return null;}}
