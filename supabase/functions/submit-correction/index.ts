@@ -137,7 +137,11 @@ export default {
         exceptionStatus = "awaiting_confirmation";
       } else if (
         candidate &&
-        ["numbering_jump", "suspicious_question_identifier"].includes(exception.category) &&
+        [
+          "numbering_jump",
+          "suspicious_question_identifier",
+          "scored_major_precedes_subquestions",
+        ].includes(exception.category) &&
         selected.kind === "review_numbering"
       ) {
         proposedPatch = {

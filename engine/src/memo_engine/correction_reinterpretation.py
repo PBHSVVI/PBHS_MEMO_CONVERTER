@@ -140,6 +140,19 @@ def extract_evidence_text(
             "text_length": len(text),
         }
 
+    if kind == "suggestion":
+        text = str(correction.get("display_text") or "").strip()
+        if not text:
+            raise CorrectionReinterpretationError(
+                "CORRECTION_SUGGESTION_EMPTY",
+                "The saved correction suggestion is empty.",
+            )
+        return text, {
+            "method": "saved_suggestion",
+            "detected_kind": "text",
+            "text_length": len(text),
+        }
+
     if kind not in {"photo", "upload"}:
         raise CorrectionReinterpretationError(
             "CORRECTION_INPUT_KIND_UNSUPPORTED",

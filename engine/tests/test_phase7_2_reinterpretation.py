@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from engine.src.memo_engine.correction_reinterpretation import deterministic_proposal
+from engine.src.memo_engine.correction_reinterpretation import (
+    deterministic_proposal,
+    extract_evidence_text,
+)
 from engine.src.memo_engine.corrections import apply_confirmed_corrections
 
 
@@ -37,6 +40,35 @@ def test_ambiguous_typed_numbering_stays_unresolved():
     assert proposal is None
     assert display is None
     assert evidence["candidate_count"] == 2
+
+
+def test_saved_numbering_suggestion_can_be_retried_as_text_evidence():
+    text, extraction = extract_evidence_text(
+        None,
+        {"input_kind": "suggestion", "display_text": "8.1"},
+    )
+
+    assert text == "8.1"
+    assert extraction == {
+        "method": "saved_suggestion",
+        "detected_kind": "text",
+        "text_length": 3,
+    }
+
+    proposal, display, evidence = deterministic_proposal(
+        {"category": "scored_major_precedes_subquestions", "affected_id": "8"},
+        text,
+    )
+    assert proposal == {
+        "schema_version": "1.0",
+        "operation": "rename_question_identifier",
+        "category": "scored_major_precedes_subquestions",
+        "affected_id": "8",
+        "target_id": "8.1",
+        "reinterpretation_method": "deterministic_numbering_text",
+    }
+    assert display == "Rename scored Question 8 to Question 8.1."
+    assert evidence["candidate_question_ids"] == ["8.1"]
 
 
 def test_rename_overlay_preserves_original_source_identifier():

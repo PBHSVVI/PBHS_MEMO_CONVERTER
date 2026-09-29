@@ -230,3 +230,46 @@ def test_strict_major_question_focus_does_not_match_child_or_mark_values():
         text=True,
     )
     assert json.loads(result.stdout) == [False, True]
+
+
+def test_question_8_focus_uses_number_labels_instead_of_subtotals():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the review focus regression")
+    program = (
+        "const textMatches=(text,token)=>String(text).includes(String(token));\n"
+        + _source_focus_source()
+        + "\nconst blocks=JSON.parse(process.argv[1]);"
+        + "\nconsole.log(JSON.stringify({major:blocks.map(block=>sourceBlockMatches(block,'8',false,true)),child:blocks.map(block=>sourceBlockMatches(block,'8.2',false,true))}));"
+    )
+    blocks = [
+        {"cells": ["", "[8]"], "combined": "[8]"},
+        {"cells": ["8.\nworking", "(3)"], "combined": "8. working (3)"},
+        {"cells": ["8.2 Determine the coordinates", "(4)"], "combined": "8.2 Determine the coordinates (4)"},
+        {"cells": ["Question 10 content", "[5]"], "combined": "Question 10 content [5]"},
+    ]
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", program, json.dumps(blocks)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == {
+        "major": [False, True, False, False],
+        "child": [False, False, True, False],
+    }
+
+
+def test_question_8_review_labels_the_missing_8_1_decision_point():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "contextAnchors:['8.2']" in html
+    assert "targetAnchor:'8'" in html
+    assert "targetLabel:'This scored row should be numbered 8.1'" in html
+
+
+def test_question_8_suggestion_is_confirmation_ready_without_ai():
+    source = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(
+        encoding="utf-8"
+    )
+    assert '"scored_major_precedes_subquestions"' in source
+    assert 'operation: "rename_question_identifier"' in source
