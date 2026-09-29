@@ -30,7 +30,7 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
   <p>Review state is stored server-side. This page resumes the current live exception rather than relying on a fixed scripted queue.</p>
   <label>Email</label><input id="email" value="ivanvollenhoven@boyshigh.com">
   <label>Password</label><input id="password" type="password">
-  <label>Job ID</label><input id="job" value="a284e625-6a71-43bd-ac81-7679a29de421" readonly>
+  <label>Job ID</label><input id="job" placeholder="Paste the review job ID from the upload/review page">
   <div class="buttonRow"><button id="start" class="primary">Start / resume review</button><button id="signout" class="secondary">Sign out</button></div>
   <div id="status" class="status">Ready. Nothing is changed until you deliberately submit and then confirm a correction.</div>
 </section>
@@ -140,14 +140,23 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 const sb=createClient('https://njrqiurqljwtuqrvguhj.supabase.co','sb_publishable_03n174h7DZtYXWEpgNNb7Q_-gER1M5b',{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
 const $=s=>document.querySelector(s), statusEl=$('#status'), logEl=$('#log');
-const DEFAULT_JOB_ID='a284e625-6a71-43bd-ac81-7679a29de421';
-const requestedJobId=new URLSearchParams(location.search).get('job_id');
-const jobId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedJobId||'')?requestedJobId:DEFAULT_JOB_ID;
+// BEGIN JOB SELECTION MODEL
+const JOB_ID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function validJobId(value){const candidate=String(value||'').trim();return JOB_ID_RE.test(candidate)?candidate:''}
+function requestedReviewJob(search){return validJobId(new URLSearchParams(search).get('job_id'))}
+// END JOB SELECTION MODEL
+let jobId=requestedReviewJob(location.search);
 $('#job').value=jobId;
 let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],sourceLoaded=false,sourceKind=null,normalizedCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
 function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
+function selectJob(){
+ const selected=validJobId($('#job').value);if(!selected)throw new Error('Enter a valid review Job ID. The page no longer falls back to the completed acceptance job.');
+ if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];sourceLoaded=false;sourceKind=null;normalizedCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey=''}
+ const url=new URL(location.href);url.searchParams.set('job_id',jobId);history.replaceState(null,'',url);
+ return jobId;
+}
 async function invoke(name,body){
  const r=await sb.functions.invoke(name,{body});
  if(!r.error)return r.data;
@@ -548,10 +557,10 @@ async function finalAudit(){
   render_validation:rv,
  });
  $('#review').classList.add('hide');
- status(passed?'SUCCESS — Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.':'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',passed?'success':'warn')
+ status(passed?`Job ${jobId} is already complete with no review items. Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.`:'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',passed?'success':'warn')
 }
 
-$('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resuming…';try{const session=(await sb.auth.getSession()).data.session;if(session)user=session.user;else{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value=''}await resumeFlow()}catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'error')}finally{setBusy(false)}};
+$('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resuming…';try{selectJob();const session=(await sb.auth.getSession()).data.session;if(session)user=session.user;else{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value=''}await resumeFlow()}catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'error')}finally{setBusy(false)}};
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
 $('#submitContent').onclick=()=>submitContent().catch(e=>{log('CONTENT CORRECTION ERROR',{message:e.message});status('Content correction failed: '+e.message,'error')});
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});
@@ -567,7 +576,7 @@ $('#pause').onclick=pause;$('#pause2').onclick=pause;
 $('#signout').onclick=async()=>{await sb.auth.signOut();user=null;$('#review').classList.add('hide');status('Signed out. Job and pending correction state remain saved.');$('#start').textContent='Start / resume review'};
 $('#toggleFull').onclick=async()=>{const p=$('#fullMemoPanel');if(p.classList.contains('hide')){await ensureSourceLoaded();renderFullMemo();p.classList.remove('hide');$('#toggleFull').textContent='Hide full memo'}else{p.classList.add('hide');$('#toggleFull').textContent='Show full memo'}};
 $('#refocus').onclick=()=>{if(focusKey===currentException?.id){$('#focusViewport').scrollTop=0;$('#focusViewport').scrollLeft=0}else renderFocusedEvidence()};
-(async()=>{try{const s=(await sb.auth.getSession()).data.session;if(s){user=s.user;$('#start').textContent='Resume review';status('Saved sign-in found. The live review can be resumed from server state.','success')}}catch{}})();
+(async()=>{try{const s=(await sb.auth.getSession()).data.session;if(s){user=s.user;$('#start').textContent='Resume review';status(jobId?'Saved sign-in and review Job ID found. Resume when ready.':'Saved sign-in found. Enter the Job ID for the memo you want to review.','success')}else if(!jobId)status('Enter the Job ID for the memo you want to review. The accepted baseline is no longer selected automatically.')}catch{}})();
 </script>
 </body>
 </html>

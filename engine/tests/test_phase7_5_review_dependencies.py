@@ -185,12 +185,14 @@ def test_teacher_showback_keeps_internal_operation_in_technical_model():
     assert result["target_id"] == "11.2.1"
 
 
-def test_focused_review_accepts_an_explicit_disposable_job_id():
+def test_focused_review_requires_an_explicit_job_id_without_baseline_fallback():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "new URLSearchParams(location.search).get('job_id')" in html
+    assert "requestedReviewJob(location.search)" in html
     assert "$('#job').value=jobId" in html
-    assert "DEFAULT_JOB_ID='a284e625-6a71-43bd-ac81-7679a29de421'" in html
-
+    assert "DEFAULT_JOB_ID" not in html
+    assert 'id="job" placeholder=' in html
+    assert 'id="job" value=' not in html
+    assert "page no longer falls back to the completed acceptance job" in html
 
 def test_review_pages_explain_revalidation_conflicts():
     focused = REVIEW_PAGE.read_text(encoding="utf-8")
