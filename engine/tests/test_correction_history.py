@@ -197,3 +197,38 @@ def test_latest_total_only_override_replaces_old_total_only_override():
     ])
     assert [c["id"] for c in effective] == ["new-total"]
     assert history[0]["superseded_by"] == "new-total"
+
+
+def test_content_correction_with_marks_supersedes_older_content_and_scheme():
+    old_content = correction("old-content", 20, {
+        "operation": "replace_item_content", "category": "item_total_mismatch",
+        "affected_id": "11.1.1", "target_id": "11.1.1",
+        "question_text": "Old corrected question", "solution_lines": ["Old answer"],
+    })
+    replacement = correction("content-with-marks", 23, {
+        "operation": "replace_item_content", "category": "item_total_mismatch",
+        "affected_id": "11.1.1", "target_id": "11.1.1",
+        "question_text": "New corrected question", "solution_lines": ["New answer"],
+        "mark_points": [{"count": 2, "code": "A", "descriptor": "answer"}],
+        "expected_total": 2,
+    })
+    effective, history = effective_correction_history([
+        old_content, scheme("old-scheme", 21), replacement,
+    ])
+    assert [item["id"] for item in effective] == ["content-with-marks"]
+    by_id = {item["correction_id"]: item for item in history}
+    assert by_id["old-content"]["superseded_by"] == "content-with-marks"
+    assert by_id["old-scheme"]["superseded_by"] == "content-with-marks"
+
+
+def test_later_mark_only_change_composes_with_corrected_content():
+    content = correction("content", 21, {
+        "operation": "replace_item_content", "category": "item_total_mismatch",
+        "affected_id": "11.1.1", "target_id": "11.1.1",
+        "question_text": "Corrected question", "solution_lines": ["Corrected answer"],
+        "mark_points": [{"count": 2, "code": "A", "descriptor": "answer"}],
+        "expected_total": 2,
+    })
+    effective, history = effective_correction_history([content, scheme("later-marks", 23)])
+    assert [item["id"] for item in effective] == ["content", "later-marks"]
+    assert all(item["superseded_by"] is None for item in history)

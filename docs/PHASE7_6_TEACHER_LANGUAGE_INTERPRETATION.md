@@ -48,8 +48,11 @@ interpreter:
 - `promote_unlabeled_question`
 - `insert_missing_major_question`
 - `set_question_subtotal`
+- `replace_item_content` (structured editor only; available for every active review)
 
-Each operation is also restricted to compatible exception categories. There is no
+Teacher-language operations are restricted to compatible exception categories.
+`replace_item_content` is constructed by the validated structured editor rather
+than by the AI response contract. There is no
 generic patch, object path, database command, source mutation or multi-operation
 transaction.
 

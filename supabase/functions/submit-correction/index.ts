@@ -3,6 +3,18 @@ import { withSupabase } from "npm:@supabase/server@^1";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
+const QUESTION_ID_RE = /^\d{1,2}(?:\.\d{1,2}){0,2}$/;
+const MARK_CODES = new Set(["M", "A", "CA", "F", "S", "R"]);
+
+function markSemantic(code: string, descriptor: string): string {
+  if (code === "CA") return "consistent_accuracy";
+  if (code === "M") return "method";
+  if (code === "A") return /\b(?:answer|final)\b/i.test(descriptor) ? "answer" : "accuracy";
+  if (code === "F") return "formula";
+  if (code === "S") return "selection";
+  if (code === "R") return "reason";
+  return "other";
+}
 
 function uuid(value: unknown): string | null {
   return typeof value === "string" && UUID_RE.test(value) ? value : null;
@@ -160,8 +172,66 @@ export default {
         return Response.json({ error: "invalid_typed_text" }, { status: 400 });
       }
       displayText = typedText;
-      // Typed text is evidence, not a patch. It must be reinterpreted first.
-      exceptionStatus = "awaiting_reinterpretation";
+      const content = body.content_correction;
+      if (content && typeof content === "object") {
+        const value = content as Record<string, unknown>;
+        const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
+        const questionText = typeof value.question_text === "string" ? value.question_text.trim() : "";
+        const solutionLines = Array.isArray(value.solution_lines)
+          ? value.solution_lines.filter((line) => typeof line === "string").map((line) => String(line).trim()).filter(Boolean)
+          : [];
+        const rawPoints = Array.isArray(value.mark_points) ? value.mark_points : [];
+        const markPoints = rawPoints.map((point) => {
+          const item = point && typeof point === "object" ? point as Record<string, unknown> : {};
+          const code = typeof item.code === "string" ? item.code.toUpperCase() : "";
+          const descriptor = typeof item.descriptor === "string" ? item.descriptor.trim() : "";
+          return {
+            count: Number(item.count),
+            code,
+            descriptor,
+            semantic: markSemantic(code, descriptor),
+            source: typeof item.source === "string" ? item.source.trim() : "",
+            notation: "teacher_confirmed",
+          };
+        });
+        const invalidTarget = !QUESTION_ID_RE.test(targetId) ||
+          (typeof exception.affected_id === "string" && QUESTION_ID_RE.test(exception.affected_id) && targetId !== exception.affected_id);
+        const invalidContent = (!questionText && !solutionLines.length) || questionText.length > 2000 ||
+          solutionLines.length > 80 || solutionLines.some((line) => line.length > 1000);
+        const invalidMarks = markPoints.some((point) =>
+          !Number.isInteger(point.count) || point.count < 1 || point.count > 10 ||
+          !MARK_CODES.has(point.code) || !point.descriptor || !point.source
+        );
+        if (invalidTarget || invalidContent || invalidMarks) {
+          return Response.json({ error: "invalid_content_correction" }, { status: 400 });
+        }
+        const conditionalAccuracy = markPoints.length >= 2 && markPoints.every((point) =>
+          ["A", "CA"].includes(point.code) && /\bcorrect\b/i.test(point.descriptor)
+        );
+        const expectedTotal = conditionalAccuracy
+          ? Math.max(...markPoints.map((point) => point.count))
+          : markPoints.reduce((total, point) => total + point.count, 0);
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "replace_item_content",
+          category: exception.category,
+          affected_id: exception.affected_id,
+          target_id: targetId,
+          question_text: questionText || null,
+          solution_lines: solutionLines,
+          ...(markPoints.length ? {
+            mark_points: markPoints,
+            expected_total: expectedTotal,
+            mark_calculation_mode: conditionalAccuracy ? "conditional_accuracy" : "additive",
+          } : {}),
+          reinterpretation_method: "structured_content_editor",
+        };
+        displayText = `Replace the question or memo content for Question ${targetId}${markPoints.length ? " and use the supplied marking scheme" : ""}.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else {
+        // Ordinary typed text remains evidence and uses the interpretation ladder.
+        exceptionStatus = "awaiting_reinterpretation";
+      }
     } else {
       storagePath = typeof body.storage_path === "string" ? body.storage_path : "";
       const prefix = `${job.user_id}/${jobId}/corrections/${correctionId}/`;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 7.5 Review v4.3</title>
+<title>PBHS Memo Converter — Phase 7.5 Review v4.4</title>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
 <style>
@@ -19,10 +19,11 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 #sourceFullHost.offscreen{position:fixed;left:-12000px;top:0;width:980px;visibility:hidden;pointer-events:none}.pdfFrame{width:900px;height:1200px;border:0;background:white}.sourceImg{display:block;max-width:none}
 .explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.proposalSummary{font-weight:850;margin:8px 0}.markPointList{margin:8px 0;padding-left:22px}.markPointList li{margin:5px 0}.technicalProposal{margin-top:10px;color:#526071}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
 #sourceText{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:260px}.pendingBadge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3e8;color:#8a4c00;font-size:.82rem;font-weight:850}.sectionTitle{margin:.2rem 0 .4rem;font-size:1.05rem}
+.guide{border:1px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:10px 12px;margin:12px 0}.guide summary{cursor:pointer;font-weight:900;color:#17365d}.guide ul{padding-left:20px}.guide li{margin:6px 0}.contentEditor{border-left:5px solid var(--navy);padding-left:12px}.contentEditor textarea{min-height:82px}.contentEditor .solution{min-height:130px}.contentPreview{border:1px solid #cbe6d5;background:#fff;border-radius:9px;padding:10px;margin:8px 0}.contentPreview b{display:block;margin:8px 0 4px}.contentPreview pre{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:240px;margin:4px 0}
 </style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.3</h1><div class="sub">Focused evidence • parent discrepancy context • reviewer chooses correction method • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.4</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -65,6 +66,18 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
     <div id="explain" class="explain"></div>
     <aside id="parentContext" class="parentContext hide" aria-live="polite"></aside>
 
+    <details class="guide" open>
+      <summary>Correction guide — examples and punctuation</summary>
+      <p>Write naturally. Full stops, commas, semicolons and new lines are all acceptable. Include the question number and one clear instruction.</p>
+      <ul>
+        <li><b>Marks:</b> <code>3A calculation; 1A final answer</code> or put each mark on a new line.</li>
+        <li><b>Subtotal:</b> <code>Question 3 subtotal is 4</code>.</li>
+        <li><b>Numbering:</b> <code>Rename 11.12.1 to 11.2.1</code>.</li>
+        <li><b>Conditional marks:</b> <code>2A for 3 correct answers; 1A for 2 correct answers</code>.</li>
+      </ul>
+      <p>When the actual question or memo answer is wrong, use the structured editor below. It does not depend on punctuation or AI interpretation.</p>
+    </details>
+
     <div id="choices" class="choices">
       <h3 class="sectionTitle">Choose how to correct it</h3>
       <div id="suggestionBlock" class="choiceBlock hide"><b>Accept a supplied suggestion</b><div id="suggestionButtons"></div></div>
@@ -73,6 +86,19 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
         <div class="muted" style="margin:5px 0 8px">Plain text and LaTeX are both acceptable evidence. Nothing is assumed from this field until you submit it.</div>
         <textarea id="typedText" placeholder="Describe the correct interpretation, mark allocation, numbering, or paste LaTeX here…"></textarea>
         <button id="submitTyped" class="primary">Interpret typed correction</button>
+      </div>
+      <div class="choiceBlock contentEditor">
+        <b>Correct the actual question or memo content</b>
+        <div class="muted" style="margin:5px 0 8px">Available for every review. Enter only the parts that should replace the source content. The complete replacement is shown back before confirmation.</div>
+        <label for="contentTarget">Question number</label>
+        <input id="contentTarget" inputmode="decimal" placeholder="e.g. 11.2.1">
+        <label for="contentQuestion">Corrected question / prompt</label>
+        <textarea id="contentQuestion" placeholder="Enter the corrected question wording. Leave blank if only the memo answer is wrong."></textarea>
+        <label for="contentSolution">Corrected memo answer / working</label>
+        <textarea id="contentSolution" class="solution" placeholder="Enter the corrected answer or working. Use a new line for each logical step."></textarea>
+        <label for="contentMarking">Optional marking scheme</label>
+        <textarea id="contentMarking" placeholder="3A calculation&#10;1A final answer"></textarea>
+        <button id="submitContent" class="primary">Review content correction</button>
       </div>
       <div class="choiceBlock">
         <b>Use an image or file</b>
@@ -131,7 +157,9 @@ async function invoke(name,body){
  const messages={
   job_not_reviewable:`This memo is currently ${detail?.status||'being processed'}. Wait for revalidation to finish, then refresh before submitting another correction.`,
   exception_not_active:'This review item was replaced during revalidation. Refresh to load its current version.',
-  pending_correction_exists:'This review item already has a pending correction. Review, edit, or cancel that correction first.'
+  pending_correction_exists:'This review item already has a pending correction. Review, edit, or cancel that correction first.',
+  invalid_typed_text:'The correction is empty or too long. Keep the complete correction under 4,000 characters.',
+  invalid_content_correction:'The content correction is incomplete or targets a different question. Check the question number, replacement text, and marking lines.'
  };
  const error=new Error(messages[code]||r.error.message);
  error.code=code;error.detail=detail;throw error;
@@ -370,6 +398,7 @@ function renderExplanation(ex,step){
 }
 function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
+ $('#contentTarget').value=/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(String(ex?.affected_id||''))?String(ex.affected_id):'';$('#contentQuestion').value='';$('#contentSolution').value='';$('#contentMarking').value='';
  const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';
  if(suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
 }
@@ -382,7 +411,7 @@ function showRecovery(corr,message){
  $('#choices').classList.add('hide');
  $('#proposalPanel').classList.add('hide');
  $('#recoveryPanel').classList.remove('hide');
- $('#recoveryMessage').textContent=message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Add one specific question number, mark total, or marking instruction, then try again.';
+ $('#recoveryMessage').textContent=message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.';
  status('Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
 }
 async function rejectAndReopen(prefill=''){
@@ -420,7 +449,7 @@ async function retrySavedInterpretation(corr){
  return await waitProposal(corr.id,startedAt);
 }
 async function waitProposal(correctionId,submittedAt){
- for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(20);if(ev.error)throw ev.error;const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad){const fresh=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('id',correctionId).single();if(fresh.error)throw fresh.error;showRecovery(fresh.data,'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Add one specific question number, mark total, or marking instruction, then try again.');return null;}}
+ for(let i=0;i<120;i++){await sleep(1500);const c=await sb.from('corrections').select('id,exception_id,input_kind,display_text,proposed_patch,confirmation_status,created_at').eq('id',correctionId).single();if(c.error)throw c.error;if(c.data.proposed_patch)return c.data;const ev=await sb.from('job_events').select('event_type,payload,created_at').eq('job_id',jobId).eq('event_type','phase7_correction_reinterpretation_unresolved').order('created_at',{ascending:false}).limit(20);if(ev.error)throw ev.error;const bad=(ev.data||[]).find(e=>e.payload?.correction_id===correctionId&&new Date(e.created_at)>=submittedAt);if(bad){const fresh=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at,updated_at').eq('id',correctionId).single();if(fresh.error)throw fresh.error;showRecovery(fresh.data,'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');return null;}}
  throw new Error('Timed out waiting for the correction interpretation.')
 }
 // BEGIN TEACHER SHOWBACK MODEL
@@ -432,6 +461,8 @@ function teacherShowBackModel(corr){
   target_id:p.target_id==null?null:String(p.target_id),
   expected_total:p.expected_total==null?null:Number(p.expected_total),
   printed_marks:p.printed_marks==null?null:Number(p.printed_marks),
+  question_text:p.question_text==null?null:String(p.question_text),
+  solution_lines:Array.isArray(p.solution_lines)?p.solution_lines.map(line=>String(line)):[],
   mark_points:points.map(point=>({count:Number(point?.count||0),code:String(point?.code||''),descriptor:String(point?.descriptor||'')})),
  };
 }
@@ -439,7 +470,8 @@ function teacherShowBackModel(corr){
 function showProposal(corr){
  currentCorrection=corr;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');
  const model=teacherShowBackModel(corr),pointList=model.mark_points.length?`<ul class="markPointList">${model.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'';
- $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${pointList}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` → ${esc(model.target_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}</details>`;
+ const content=(model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList;
+ $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` → ${esc(model.target_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}</details>`;
  status('Show-back ready. Confirm only if this matches what you intended.','success')
 }
 async function submitAndInterpret(body){
@@ -453,9 +485,24 @@ async function submitAndInterpret(body){
  }finally{setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
 async function submitTyped(){const t=$('#typedText').value.trim();if(!t){status('Type the correction or LaTeX first.','warn');return}await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:t})}
+function parseStructuredMarking(text){
+ const fragments=String(text||'').trim().split(/\n|;|\|/).map(value=>value.trim()).filter(Boolean),points=[];
+ for(const fragment of fragments){const match=fragment.match(/^(\d{1,2})\s*(CA|M|A|F|S|R)\b\s*(.+)$/i);if(!match)throw new Error(`Marking line not understood: "${fragment}". Use one entry such as 3A calculation.`);const count=Number(match[1]),code=match[2].toUpperCase(),descriptor=match[3].trim();if(count<1||count>10||!descriptor)throw new Error(`Invalid marking line: "${fragment}".`);points.push({count,code,descriptor,source:`${count}${code} ${descriptor}`})}
+ return points;
+}
+function contentCorrectionEnvelope(target,questionText,solutionLines,markingText){return `[[PBHS_CONTENT_CORRECTION_V1]]\nTARGET: ${target}\nQUESTION:\n${questionText}\nANSWER:\n${solutionLines.join('\n')}\nMARKING:\n${markingText}\n[[END_PBHS_CONTENT_CORRECTION_V1]]`}
+async function submitContent(){
+ const target=$('#contentTarget').value.trim(),questionText=$('#contentQuestion').value.trim(),solutionLines=$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),markingText=$('#contentMarking').value.trim();
+ if(!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(target)){status('Enter one valid question number, for example 11.2.1.','warn');return}
+ if(!questionText&&!solutionLines.length){status('Enter corrected question wording, corrected memo working, or both.','warn');return}
+ let markPoints=[];try{markPoints=parseStructuredMarking(markingText)}catch(e){status(e.message,'warn');return}
+ const typedText=contentCorrectionEnvelope(target,questionText,solutionLines,markingText);
+ if(typedText.length>4000){status('The complete content correction is too long. Keep it under 4,000 characters.','warn');return}
+ await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,content_correction:{target_id:target,question_text:questionText,solution_lines:solutionLines,mark_points:markPoints}})
+}
 function safeName(name){return String(name||'evidence.bin').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-120)||'evidence.bin'}
 async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status('Choose a file first.','warn');return}setBusy(true);try{const cid=crypto.randomUUID(),path=`${user.id}/${jobId}/corrections/${cid}/${safeName(f.name)}`;status('Uploading correction evidence…');const up=await sb.storage.from('memo-files').upload(path,f,{upsert:false,contentType:f.type||undefined});if(up.error)throw up.error;await submitAndInterpret({job_id:jobId,exception_id:currentException.id,correction_id:cid,input_kind:kind,storage_path:path})}finally{setBusy(false)}}
-function setBusy(v){for(const id of ['submitTyped','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
+function setBusy(v){for(const id of ['submitTyped','submitContent','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
 
 async function waitStable(){for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4)log(`Worker poll ${i+1}`,j);if(j.status==='complete')return j;if(j.status==='needs_review'&&j.stage==='phase7_review'&&j.engine_version==='phase7.5')return j;if(j.status==='correction_pending')return j;if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`)}throw new Error('Timed out waiting for Phase 7.5 revalidation.')}
 async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
@@ -506,6 +553,7 @@ async function finalAudit(){
 
 $('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resuming…';try{const session=(await sb.auth.getSession()).data.session;if(session)user=session.user;else{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value=''}await resumeFlow()}catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'error')}finally{setBusy(false)}};
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
+$('#submitContent').onclick=()=>submitContent().catch(e=>{log('CONTENT CORRECTION ERROR',{message:e.message});status('Content correction failed: '+e.message,'error')});
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});
 $('#submitFile').onclick=()=>{const f=$('#fileInput').files?.[0],kind=f?.type?.startsWith('image/')?'photo':'upload';submitFileFrom($('#fileInput'),kind).catch(e=>{log('FILE ERROR',{message:e.message});status('File correction failed: '+e.message,'error')})};
 

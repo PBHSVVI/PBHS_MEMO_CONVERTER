@@ -390,3 +390,97 @@ def test_conditional_accuracy_overlay_replaces_bad_additive_total():
     assert applied["mark_calculation_mode"] == "conditional_accuracy"
     assert structure["questions"][0]["computed_shorthand_marks"] == 2
     assert structure["questions"][0]["mark_calculation_mode"] == "conditional_accuracy"
+
+
+def test_structured_content_correction_replaces_question_working_and_marks():
+    normalised = _normalised_rows([
+        ["11.2.1", "wrong working", "old marks", "(4)"],
+    ])
+    structure = {
+        "questions": [_q("11.2.1", 0, printed=4, computed=0, points=[])],
+        "exceptions": [{
+            "level": "red", "category": "item_total_mismatch",
+            "affected_id": "11.2.1", "message": "0 vs 4", "suggestions": [],
+        }],
+        "subtotals": [],
+        "summary": {},
+    }
+    teacher_text = """[[PBHS_CONTENT_CORRECTION_V1]]
+TARGET: 11.2.1
+QUESTION:
+Show that the number of possibilities is 2 786 918 400.
+ANSWER:
+4! × 24 × (10 × 9 × 8 × 7) × 2! × 6!
+= 2 786 918 400
+MARKING:
+3A calculation
+1A answer
+[[END_PBHS_CONTENT_CORRECTION_V1]]"""
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.2.1"},
+        teacher_text,
+    )
+    assert proposal["operation"] == "replace_item_content"
+    assert proposal["expected_total"] == 4
+    assert evidence["structured_content_correction"] is True
+    assert "Question 11.2.1" in display
+
+    applied, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-content",
+        category="item_total_mismatch",
+        affected_id="11.2.1",
+        operation="replace_item_content",
+        patch=proposal,
+    )
+    assert handled is True
+    assert issue is None
+    assert applied["solution_line_count"] == 2
+    question = structure["questions"][0]
+    assert question["content_override"]["question_text"].startswith("Show that")
+    assert question["computed_shorthand_marks"] == 4
+    assert question["teacher_marking_text"] == "3A calculation\n1A answer"
+    assert structure["exceptions"] == []
+
+
+def test_structured_content_correction_fails_closed_on_wrong_target():
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.2.1"},
+        """[[PBHS_CONTENT_CORRECTION_V1]]
+TARGET: invalid
+QUESTION:
+Correct text
+ANSWER:
+Correct working
+MARKING:
+
+[[END_PBHS_CONTENT_CORRECTION_V1]]""",
+    )
+    assert proposal is None
+    assert display is None
+    assert evidence["structured_content_correction"] is True
+
+
+def test_broader_content_intent_never_collapses_to_marks_only():
+    proposal, display, evidence = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.2.1"},
+        (
+            "The question and the answer box are incorrect. "
+            "The value in the question should be 2786918400. "
+            "The answer box should read 4! x 24. "
+            "Marking is awarded: 3A for calculation and 1A for answer."
+        ),
+    )
+    assert proposal is None
+    assert display is None
+    assert evidence["content_correction_requires_structured_editor"] is True
+
+
+def test_mark_scheme_accepts_and_as_separator_without_special_syntax():
+    proposal, _, _ = phase7_5_deterministic_proposal(
+        {"category": "item_total_mismatch", "affected_id": "11.2.1"},
+        "3A for calculation and 1A for answer",
+    )
+    assert proposal["operation"] == "replace_mark_points"
+    assert proposal["expected_total"] == 4
+    assert len(proposal["mark_points"]) == 2

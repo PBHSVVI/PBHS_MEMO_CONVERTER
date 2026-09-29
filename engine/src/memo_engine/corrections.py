@@ -51,7 +51,11 @@ def effective_correction_history(
         patch = patch if isinstance(patch, dict) else {}
         operation = patch.get("operation")
         category = patch.get("category")
-        target = str(patch.get("affected_id") or "").strip()
+        target = str(
+            patch.get("target_id")
+            if operation == "replace_item_content"
+            else patch.get("affected_id") or ""
+        ).strip()
         correction_id = str(correction.get("id") or "")
         domain = None
         if QUESTION_ID_RE.fullmatch(target) and correction_id:
@@ -62,6 +66,8 @@ def effective_correction_history(
                 domain = "mark_scheme"
             elif operation == "set_item_total_override" and category == "item_total_mismatch":
                 domain = "item_total"
+            elif operation == "replace_item_content":
+                domain = "item_content"
         successor = newer.get((target, domain)) if domain else None
         history.append({
             "correction_id": correction_id,
@@ -79,6 +85,12 @@ def effective_correction_history(
             newer[(target, domain)] = correction_id
             if domain == "mark_scheme":
                 # Preserve a still-newer total override as the direct successor.
+                newer.setdefault((target, "item_total"), correction_id)
+            elif domain == "item_content" and patch.get("mark_points"):
+                # A content correction may include a complete replacement mark
+                # scheme. Retire an older scheme while allowing a later,
+                # mark-only correction to compose with the corrected content.
+                newer.setdefault((target, "mark_scheme"), correction_id)
                 newer.setdefault((target, "item_total"), correction_id)
     return list(reversed(effective)), list(reversed(history))
 
@@ -122,6 +134,7 @@ def attach_correction_audit(
 
 
 SUPPORTED_CORRECTION_OPERATIONS = frozenset({
+    "replace_item_content",
     "replace_mark_points",
     "set_item_total_override",
     "set_printed_marks",
@@ -132,6 +145,9 @@ SUPPORTED_CORRECTION_OPERATIONS = frozenset({
 })
 
 CORRECTION_OPERATION_CATEGORIES = {
+    # Content repair is available for every active review category. Its target
+    # and payload are still validated deterministically during application.
+    "replace_item_content": frozenset({"*"}),
     "replace_mark_points": frozenset({
         "mark_arithmetic_mismatch",
         "item_total_mismatch",
@@ -152,7 +168,8 @@ CORRECTION_OPERATION_CATEGORIES = {
 
 def correction_operation_supported(category: str, operation: str) -> bool:
     """Return whether the bounded operation is valid for the active exception."""
-    return category in CORRECTION_OPERATION_CATEGORIES.get(operation, frozenset())
+    categories = CORRECTION_OPERATION_CATEGORIES.get(operation, frozenset())
+    return "*" in categories or category in categories
 
 
 def _issue(category: str, affected_id: str | None, message: str, level: str = "red") -> dict[str, Any]:

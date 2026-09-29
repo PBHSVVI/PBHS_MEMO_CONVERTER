@@ -273,3 +273,43 @@ def test_question_8_suggestion_is_confirmation_ready_without_ai():
     )
     assert '"scored_major_precedes_subquestions"' in source
     assert 'operation: "rename_question_identifier"' in source
+
+
+def test_teacher_showback_exposes_complete_content_replacement():
+    result = _showback({
+        "display_text": "Replace the question or memo content for Question 11.2.1.",
+        "proposed_patch": {
+            "operation": "replace_item_content",
+            "target_id": "11.2.1",
+            "question_text": "Show that the number is 2 786 918 400.",
+            "solution_lines": ["4 factorial times 24", "= 2 786 918 400"],
+            "expected_total": 4,
+            "mark_points": [
+                {"count": 3, "code": "A", "descriptor": "calculation"},
+                {"count": 1, "code": "A", "descriptor": "answer"},
+            ],
+        },
+    })
+    assert result["question_text"].startswith("Show that")
+    assert result["solution_lines"] == ["4 factorial times 24", "= 2 786 918 400"]
+    assert result["expected_total"] == 4
+
+
+def test_every_review_exposes_content_editor_and_guide():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert 'id="contentTarget"' in html
+    assert 'id="contentQuestion"' in html
+    assert 'id="contentSolution"' in html
+    assert 'id="contentMarking"' in html
+    assert 'id="submitContent"' in html
+    assert "Correction guide — examples and punctuation" in html
+    assert "It does not depend on punctuation or AI interpretation" in html
+
+
+def test_structured_content_submission_is_confirmation_ready():
+    source = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "body.content_correction" in source
+    assert 'operation: "replace_item_content"' in source
+    assert 'exceptionStatus = "awaiting_confirmation"' in source

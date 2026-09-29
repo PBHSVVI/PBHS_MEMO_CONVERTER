@@ -694,6 +694,42 @@ def _source_ref(segment: dict[str, Any]) -> list[dict[str, Any]]:
     return [ref] if isinstance(ref, dict) else []
 
 
+def _content_segments(
+    qdata: dict[str, Any],
+    source_segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return teacher-confirmed item content while retaining source provenance."""
+    override = qdata.get("content_override")
+    if not isinstance(override, dict):
+        return source_segments
+    lines: list[str] = []
+    question_text = str(override.get("question_text") or "").strip()
+    if question_text:
+        lines.append(question_text)
+    raw_solution = override.get("solution_lines")
+    if isinstance(raw_solution, list):
+        lines.extend(str(line).strip() for line in raw_solution if str(line).strip())
+    if not lines:
+        return source_segments
+    source_ref = next(
+        (segment.get("source_ref") for segment in source_segments if isinstance(segment.get("source_ref"), dict)),
+        None,
+    )
+    return [
+        {
+            "text": line,
+            "source_ref": source_ref,
+            "teacher_correction_id": override.get("correction_id"),
+        }
+        for line in lines
+    ]
+
+
+def _marking_text(qdata: dict[str, Any], record: dict[str, Any]) -> str:
+    teacher_text = qdata.get("teacher_marking_text")
+    return str(teacher_text) if teacher_text is not None else str(record.get("marking_text", ""))
+
+
 def _blocks_from_segments(
     qid: str,
     alternative_label: str,
@@ -1233,7 +1269,7 @@ def _build_item_tree(
         alternatives: list[dict[str, Any]] = []
 
         if qdata is not None:
-            segments = segments_by_qid.get(qid, [])
+            segments = _content_segments(qdata, segments_by_qid.get(qid, []))
             if child_paths:
                 context_blocks = _blocks_from_segments(qid, "context", segments, issues)
             else:
@@ -1246,7 +1282,7 @@ def _build_item_tree(
                 mark_branches = _marking_points_for_alternatives(
                     qid,
                     qdata,
-                    record.get("marking_text", ""),
+                    _marking_text(qdata, record),
                     alt_blocks,
                     semantic_lookup,
                     issues,
@@ -1927,14 +1963,16 @@ def build_canonical_memo(
         major_qid = str(major)
         if major_qid in qmap and not items:
             qdata = qmap[major_qid]
-            source_branches = _split_alternative_segments(segments_by_qid.get(major_qid, []))
+            source_branches = _split_alternative_segments(
+                _content_segments(qdata, segments_by_qid.get(major_qid, []))
+            )
             alt_blocks = [
                 _blocks_from_segments(major_qid, "primary" if idx == 0 else f"or{idx}", branch, issues)
                 for idx, branch in enumerate(source_branches)
             ]
             record = record_by_block.get(int(qdata.get("source_block_index", -1)), {})
             mark_branches = _marking_points_for_alternatives(
-                major_qid, qdata, record.get("marking_text", ""), alt_blocks, sem_lookup, issues
+                major_qid, qdata, _marking_text(qdata, record), alt_blocks, sem_lookup, issues
             )
             alternatives = []
             for idx, blocks in enumerate(alt_blocks):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -53,6 +54,88 @@ PHASE7_5_REINTERPRET_CATEGORIES = {
     "major_question_gap",
     "scored_major_precedes_subquestions",
 }
+
+CONTENT_CORRECTION_START = "[[PBHS_CONTENT_CORRECTION_V1]]"
+CONTENT_CORRECTION_END = "[[END_PBHS_CONTENT_CORRECTION_V1]]"
+CONTENT_INTENT_RE = re.compile(
+    r"(?is)\b(?:question|prompt|answer\s*box|memo\s*(?:answer|working)|solution)\b"
+    r".{0,80}\b(?:incorrect|wrong|replace|should\s+(?:be|read|say)|needs?\s+(?:changing|correction))\b"
+    r"|\b(?:incorrect|wrong|replace)\b.{0,80}\b(?:question|prompt|answer\s*box|memo|solution)\b"
+)
+
+
+def _structured_content_proposal(
+    exception: dict[str, Any], evidence_text: str
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
+    """Parse the review page's explicit, versioned content-correction envelope."""
+    evidence: dict[str, Any] = {"structured_content_correction": False}
+    text = evidence_text.strip()
+    if not text.startswith(CONTENT_CORRECTION_START):
+        return None, None, evidence
+    evidence["structured_content_correction"] = True
+    if not text.endswith(CONTENT_CORRECTION_END):
+        return None, None, evidence
+
+    body = text[len(CONTENT_CORRECTION_START):-len(CONTENT_CORRECTION_END)].strip()
+    match = re.fullmatch(
+        r"TARGET:\s*(?P<target>[^\n]+)\n"
+        r"QUESTION:\n(?P<question>.*?)\n"
+        r"ANSWER:\n(?P<answer>.*?)\n"
+        r"MARKING:\n(?P<marking>.*)",
+        body,
+        flags=re.S,
+    )
+    if not match:
+        return None, None, evidence
+    target = match.group("target").strip()
+    question_text = match.group("question").strip()
+    solution_lines = [line.strip() for line in match.group("answer").splitlines() if line.strip()]
+    marking_text = match.group("marking").strip()
+    evidence.update({
+        "target_id": target,
+        "has_question_text": bool(question_text),
+        "solution_line_count": len(solution_lines),
+        "has_marking_text": bool(marking_text),
+    })
+    affected = str(exception.get("affected_id") or "").strip()
+    if (
+        not QUESTION_ID_RE.fullmatch(target)
+        or (QUESTION_ID_RE.fullmatch(affected) and target != affected)
+        or (not question_text and not solution_lines)
+    ):
+        return None, None, evidence
+
+    patch: dict[str, Any] = {
+        "schema_version": "1.0",
+        "operation": "replace_item_content",
+        "category": str(exception.get("category") or ""),
+        "affected_id": exception.get("affected_id"),
+        "target_id": target,
+        "question_text": question_text or None,
+        "solution_lines": solution_lines,
+        "reinterpretation_method": "deterministic_structured_content_correction",
+    }
+    if marking_text:
+        normalized_marking = re.sub(
+            r"\s+(?:and|,|;)\s+(?=\d+\s*(?:CA|M|A|F|S|R)\b)",
+            "\n",
+            marking_text,
+            flags=re.I,
+        )
+        points = parse_mark_points(normalized_marking)
+        total, calc_mode = effective_mark_total(points, normalized_marking)
+        if not points or total <= 0:
+            return None, None, evidence
+        patch.update({
+            "mark_points": points,
+            "expected_total": total,
+            "mark_calculation_mode": calc_mode,
+        })
+        evidence["parsed_mark_total"] = total
+    display = f"Replace the question or memo content for Question {target}"
+    if patch.get("mark_points"):
+        display += f" and use the supplied {patch['expected_total']}-mark scheme"
+    return patch, display + ".", evidence
 
 
 def _issue(
@@ -524,6 +607,109 @@ def _apply_replace_mark_points(
     }, None
 
 
+def _apply_replace_item_content(
+    structure: dict[str, Any],
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str | None,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    target_id = str(patch.get("target_id") or affected_id or "").strip()
+    active_id = str(affected_id or "").strip()
+    if (
+        not QUESTION_ID_RE.fullmatch(target_id)
+        or (QUESTION_ID_RE.fullmatch(active_id) and target_id != active_id)
+    ):
+        return None, _issue(
+            "correction_target_invalid", affected_id,
+            f"Confirmed correction {correction_id} does not identify one valid question.",
+        )
+    question = _question(structure, target_id)
+    if question is None:
+        return None, _issue(
+            "correction_evidence_unresolved", target_id,
+            f"Confirmed correction {correction_id} could not resolve Question {target_id}.",
+        )
+
+    raw_question = patch.get("question_text")
+    question_text = str(raw_question or "").strip()
+    raw_lines = patch.get("solution_lines")
+    if not isinstance(raw_lines, list) or any(not isinstance(line, str) for line in raw_lines):
+        return None, _issue(
+            "correction_content_invalid", target_id,
+            f"Confirmed correction {correction_id} contains invalid memo working.",
+        )
+    solution_lines = [line.strip() for line in raw_lines if line.strip()]
+    if not question_text and not solution_lines:
+        return None, _issue(
+            "correction_content_invalid", target_id,
+            f"Confirmed correction {correction_id} contains no replacement content.",
+        )
+    if len(question_text) > 2000 or len(solution_lines) > 80 or any(len(line) > 1000 for line in solution_lines):
+        return None, _issue(
+            "correction_content_invalid", target_id,
+            f"Confirmed correction {correction_id} exceeds the bounded content limits.",
+        )
+
+    points = patch.get("mark_points")
+    mark_total = None
+    calc_mode = None
+    normalized_points: list[dict[str, Any]] = []
+    if points is not None:
+        mark_patch = dict(patch)
+        # Reuse the strict mark-point validator on a temporary structure so the
+        # content mutation remains atomic if the marking scheme is invalid.
+        trial = copy.deepcopy(structure)
+        applied_marks, mark_issue = _apply_replace_mark_points(
+            trial,
+            correction_id=correction_id,
+            category=category,
+            affected_id=target_id,
+            patch=mark_patch,
+        )
+        if mark_issue:
+            return None, mark_issue
+        trial_question = _question(trial, target_id)
+        normalized_points = list((trial_question or {}).get("mark_points") or [])
+        mark_total = (applied_marks or {}).get("mark_total")
+        calc_mode = (applied_marks or {}).get("mark_calculation_mode")
+
+    question["content_override"] = {
+        "correction_id": correction_id,
+        "question_text": question_text or None,
+        "solution_lines": solution_lines,
+    }
+    if points is not None:
+        question["mark_points"] = normalized_points
+        question["computed_shorthand_marks"] = mark_total
+        question["mark_calculation_mode"] = calc_mode
+        question["teacher_marking_text"] = "\n".join(
+            str(point.get("source") or "").strip()
+            for point in normalized_points
+            if str(point.get("source") or "").strip()
+        )
+    question["correction_overlay"] = {
+        "correction_id": correction_id,
+        "operation": "replace_item_content",
+    }
+    _remove_exception(structure, category, affected_id)
+    if points is not None:
+        for related in ("mark_arithmetic_mismatch", "item_total_mismatch", "correction_mark_total_invalid"):
+            _remove_exception(structure, related, target_id)
+    return {
+        "correction_id": correction_id,
+        "operation": "replace_item_content",
+        "category": category,
+        "affected_id": affected_id,
+        "target_id": target_id,
+        "question_text_replaced": bool(question_text),
+        "solution_line_count": len(solution_lines),
+        "mark_total": mark_total,
+        "source_block_index": question.get("source_block_index"),
+    }, None
+
+
 def _apply_insert_missing_major_question(
     structure: dict[str, Any],
     normalized: dict[str, Any],
@@ -797,6 +983,16 @@ def apply_phase7_5_patch(
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
     affected = str(affected_id or "").strip()
 
+    if operation == "replace_item_content":
+        applied, issue = _apply_replace_item_content(
+            structure,
+            correction_id=correction_id,
+            category=category,
+            affected_id=affected_id,
+            patch=patch,
+        )
+        return applied, issue, True
+
     if category == "multiple_printed_allocations" and operation == "set_printed_marks":
         applied, issue = _apply_set_printed_marks(
             structure,
@@ -878,7 +1074,19 @@ def phase7_5_deterministic_proposal(
         "phase7_5_category": category,
         "phase7_5_handled": handled,
     }
+    content_proposal, content_display, content_evidence = _structured_content_proposal(
+        exception, evidence_text
+    )
+    if content_evidence.get("structured_content_correction"):
+        evidence.update(content_evidence)
+        return content_proposal, content_display, evidence
     if not handled:
+        return None, None, evidence
+
+    # Never collapse a broader question/solution correction into a marks-only
+    # patch. The structured editor can represent the complete teacher intent.
+    if CONTENT_INTENT_RE.search(evidence_text):
+        evidence["content_correction_requires_structured_editor"] = True
         return None, None, evidence
 
     if category == "multiple_printed_allocations":
@@ -946,6 +1154,12 @@ def phase7_5_deterministic_proposal(
                     )
 
         normalised = re.sub(r"\s*[;|]\s*", "\n", evidence_text.strip())
+        normalised = re.sub(
+            r"\s+(?:and|,)\s+(?=\d+\s*(?:CA|M|A|F|S|R)\b)",
+            "\n",
+            normalised,
+            flags=re.I,
+        )
         points = parse_mark_points(normalised)
         total, calc_mode = effective_mark_total(points, normalised)
         evidence["parsed_mark_points"] = points

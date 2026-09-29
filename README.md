@@ -30,7 +30,7 @@ review acceptance alignment (`55792320fde6c2c86c62ca85d524a4b0849fe599`). Earlie
 patch guides and local qualification records remain historical implementation notes;
 they are not instructions to reapply patches or create corrections for this accepted job.
 
-## Current correction-language increment
+## Current correction and content-editing increment
 
 The correction reinterpretation worker now accepts natural teacher instructions
 through a deterministic-first, bounded AI ladder. Fast and strong Groq models may
@@ -38,6 +38,11 @@ interpret ambiguity into the existing operation allowlist, but the existing over
 performs final validation and no proposal applies without teacher confirmation.
 This increment does not alter the accepted Phase 7.5 baseline. See
 [general teacher-language interpretation](docs/PHASE7_6_TEACHER_LANGUAGE_INTERPRETATION.md).
+
+Every active review now also includes a structured editor for replacing an actual
+question prompt, memo answer or working, with an optional marking scheme. The page
+shows the complete content back before confirmation and includes an always-visible
+teacher guide. See [structured content corrections](docs/PHASE7_7_CONTENT_CORRECTIONS.md).
 
 ## Pilot architecture
 
