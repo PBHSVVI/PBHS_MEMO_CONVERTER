@@ -1,0 +1,3 @@
+# Minified vendor bundles contain semantically meaningful whitespace in raw
+# JavaScript template literals. Source files retain Git's normal whitespace checks.
+docs/teacher-app/assets/*.js whitespace=-blank-at-eol

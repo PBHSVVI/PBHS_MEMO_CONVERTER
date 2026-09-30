@@ -51,13 +51,15 @@ export default {
       return Response.json({ error: "job_not_found" }, { status: 404 });
     }
 
-    if (visibleJob.status !== "queued") {
+    const dispatchableStatuses = ["queued", "failed_retryable"];
+    if (!dispatchableStatuses.includes(visibleJob.status)) {
       return Response.json(
         { error: "job_not_queueable", status: visibleJob.status },
         { status: 409 },
       );
     }
 
+    const claimedFromStatus = visibleJob.status;
     const now = new Date().toISOString();
 
     const { data: claimedJob, error: claimError } = await ctx.supabaseAdmin
@@ -72,7 +74,7 @@ export default {
         error_message: null,
       })
       .eq("id", jobId)
-      .eq("status", "queued")
+      .eq("status", claimedFromStatus)
       .select("id,user_id")
       .maybeSingle();
 
@@ -109,8 +111,10 @@ export default {
       await ctx.supabaseAdmin
         .from("jobs")
         .update({
-          status: "queued",
-          stage: "dispatch_retry",
+          status: claimedFromStatus,
+          stage: claimedFromStatus === "queued"
+            ? "dispatch_retry"
+            : "dispatch_retry_failed",
           dispatched_at: null,
           error_code: "GITHUB_DISPATCH_FAILED",
           error_message: `GitHub workflow dispatch returned HTTP ${dispatch.status}`,

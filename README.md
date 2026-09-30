@@ -72,6 +72,15 @@ disposable job `e0055801-f512-4573-8389-2c084eb43fe2` and
 
 ## Pilot architecture
 
+### Phase 8.0 teacher application
+
+**LOCALLY QUALIFIED — hosted teacher-pilot acceptance pending.** The first React +
+Vite teacher vertical slice now supports sign-in, recent conversions, private memo
+upload, durable progress, job-specific handoff to the accepted review page, private
+DOCX/PDF download, and bounded retry. The existing memo engine and Phase 7 review
+semantics remain frozen. See
+[Phase 8.0 Teacher Pilot Application](docs/PHASE8_0_TEACHER_PILOT_APP.md).
+
 - **Frontend:** static web application (target: GitHub Pages)
 - **Identity / database / storage / lightweight API:** Supabase
 - **Heavy compute:** GitHub Actions
