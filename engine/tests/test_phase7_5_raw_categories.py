@@ -5,6 +5,7 @@ from engine.src.memo_engine.phase7_5 import (
     enrich_structure_phase7_5,
     phase7_5_deterministic_proposal,
 )
+from engine.src.memo_engine.structure import extract_structure, parse_mark_points
 
 
 def _cell(text: str) -> dict[str, str]:
@@ -232,7 +233,7 @@ def test_insert_missing_question_10_requires_unique_scored_unlabelled_block():
     assert not any(e["category"] == "major_question_gap" for e in structure["exceptions"])
 
 
-def test_q3_subtotal_overlay_only_passes_when_observed_ledger_reaches_150():
+def test_q3_subtotal_overlay_passes_when_ledger_reaches_source_total():
     # Existing observed ledger is 146 because Q3 [4] is absent.
     values = [23, 26, 14, 8, 13, 20, 13, 8, 5, 16]
     structure = {
@@ -245,7 +246,7 @@ def test_q3_subtotal_overlay_only_passes_when_observed_ledger_reaches_150():
             "level": "amber", "category": "subtotal_sum_unexpected",
             "affected_id": None, "message": "146", "suggestions": [],
         }],
-        "summary": {},
+        "summary": {"observed_document_total": 150},
     }
     normalised = _normalised_rows([[str(i), "", "", ""] for i in range(1, 12)])
     proposal = phase7_5_deterministic_proposal(
@@ -484,3 +485,187 @@ def test_mark_scheme_accepts_and_as_separator_without_special_syntax():
     assert proposal["operation"] == "replace_mark_points"
     assert proposal["expected_total"] == 4
     assert len(proposal["mark_points"]) == 2
+
+
+def _allocation(question_id: str, total: int, text: str) -> dict:
+    from engine.src.memo_engine.structure import effective_mark_total
+
+    points = parse_mark_points(text)
+    computed, mode = effective_mark_total(points, text)
+    assert computed == total
+    return {
+        "question_id": question_id,
+        "printed_marks": total,
+        "marking_text": text,
+        "mark_points": points,
+        "mark_calculation_mode": mode,
+    }
+
+
+def _grouped_allocation_fixture(*, split_source: bool = False) -> tuple[dict, dict, list[dict]]:
+    ids = ["4.1", "4.2", "4.3", "4.4", "4.5"]
+    structure = {
+        "questions": [
+            _q(qid, 1 if split_source and qid == "4.5" else 0)
+            for qid in ids
+        ],
+        "subtotals": [],
+        "exceptions": [{
+            "level": "amber",
+            "category": "question_allocation_pairing_ambiguous",
+            "affected_id": ",".join(ids),
+            "message": "shared source row",
+            "suggestions": [],
+        }],
+        "summary": {},
+    }
+    normalised = _normalised_rows([["4.1 4.2 4.3 4.4 4.5", "shared", "marks", ""]])
+    allocations = [
+        _allocation("4.1", 2, "1M method\n1A answer"),
+        _allocation("4.2", 3, "1M setup\n2A answer"),
+        _allocation("4.3", 2, "1M method\n1A answer\nOR\n2A alternative answer"),
+        _allocation("4.4", 4, "2M method\n2A answer"),
+        _allocation("4.5", 3, "1M setup\n2A result"),
+    ]
+    return structure, normalised, allocations
+
+
+def test_grouped_allocation_pairing_applies_five_questions_atomically():
+    structure, normalised, allocations = _grouped_allocation_fixture()
+    affected = "4.1,4.2,4.3,4.4,4.5"
+    applied, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-grouped",
+        category="question_allocation_pairing_ambiguous",
+        affected_id=affected,
+        operation="resolve_question_allocation_pairing",
+        patch={"allocations": allocations},
+    )
+    assert handled is True
+    assert issue is None
+    assert applied["target_ids"] == affected.split(",")
+    assert sum(q["printed_marks"] for q in structure["questions"]) == 14
+    assert next(q for q in structure["questions"] if q["question_id"] == "4.3")["mark_calculation_mode"] == "alternative_max"
+    assert structure["exceptions"] == []
+
+
+def test_grouped_allocation_pairing_is_atomic_when_one_child_is_invalid():
+    from copy import deepcopy
+
+    structure, normalised, allocations = _grouped_allocation_fixture()
+    before = deepcopy(structure)
+    allocations[2]["printed_marks"] = 3
+    applied, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-grouped-invalid",
+        category="question_allocation_pairing_ambiguous",
+        affected_id="4.1,4.2,4.3,4.4,4.5",
+        operation="resolve_question_allocation_pairing",
+        patch={"allocations": allocations},
+    )
+    assert handled is True
+    assert applied is None
+    assert issue["category"] == "correction_mark_total_invalid"
+    assert structure == before
+
+
+def test_grouped_allocation_pairing_requires_exact_target_set():
+    from copy import deepcopy
+
+    for altered in ("missing", "duplicate", "extra"):
+        structure, normalised, allocations = _grouped_allocation_fixture()
+        before = deepcopy(structure)
+        if altered == "missing":
+            allocations = allocations[:-1]
+        elif altered == "duplicate":
+            allocations[1]["question_id"] = "4.1"
+        else:
+            allocations.append(_allocation("4.6", 1, "1A answer"))
+        applied, issue, handled = apply_phase7_5_patch(
+            structure, normalised,
+            correction_id=f"corr-{altered}",
+            category="question_allocation_pairing_ambiguous",
+            affected_id="4.1,4.2,4.3,4.4,4.5",
+            operation="resolve_question_allocation_pairing",
+            patch={"allocations": allocations},
+        )
+        assert handled is True
+        assert applied is None
+        assert issue["category"] == "correction_allocation_set_invalid"
+        assert structure == before
+
+
+def test_grouped_allocation_pairing_requires_one_shared_source_row():
+    from copy import deepcopy
+
+    structure, normalised, allocations = _grouped_allocation_fixture(split_source=True)
+    before = deepcopy(structure)
+    applied, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-source",
+        category="question_allocation_pairing_ambiguous",
+        affected_id="4.1,4.2,4.3,4.4,4.5",
+        operation="resolve_question_allocation_pairing",
+        patch={"allocations": allocations},
+    )
+    assert handled is True
+    assert applied is None
+    assert issue["category"] == "correction_source_relationship_invalid"
+    assert structure == before
+
+
+def test_content_replacement_cannot_clear_grouped_allocation_exception():
+    structure, normalised, _ = _grouped_allocation_fixture()
+    applied, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-content",
+        category="question_allocation_pairing_ambiguous",
+        affected_id="4.1,4.2,4.3,4.4,4.5",
+        operation="replace_item_content",
+        patch={"target_id": "4.1", "question_text": "replacement"},
+    )
+    assert handled is True
+    assert applied is None
+    assert issue["category"] == "correction_operation_invalid"
+    assert len(structure["exceptions"]) == 1
+
+
+def test_source_defined_document_totals_are_not_forced_to_one_benchmark():
+    for total in (40, 75, 100, 150):
+        structure = extract_structure(_normalised_rows([[f"TOTAL {total}"]]))
+        assert structure["summary"]["observed_document_total"] == total
+        assert not any(item["category"] == "subtotal_sum_unexpected" for item in structure["exceptions"])
+
+
+def test_missing_source_total_is_not_fabricated():
+    structure = extract_structure(_normalised_rows([["QUESTION 1", "working", "1A answer", "(1)"]]))
+    assert structure["summary"]["observed_document_total"] is None
+
+
+def test_subtotal_corrections_can_reconcile_sequentially_to_source_total():
+    structure = {
+        "questions": [_q("1", 0), _q("2", 1), _q("3", 2)],
+        "subtotals": [{"question": 1, "value": 70, "block_index": 0}],
+        "exceptions": [{
+            "level": "amber", "category": "subtotal_sum_unexpected",
+            "affected_id": None, "message": "70 vs 100", "suggestions": [],
+        }],
+        "summary": {"observed_document_total": 100},
+    }
+    normalised = _normalised_rows([["1"], ["2"], ["3"], ["TOTAL 100"]])
+    first, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-q2", category="subtotal_sum_unexpected",
+        affected_id=None, operation="set_question_subtotal",
+        patch={"target_id": "2", "subtotal": 10},
+    )
+    assert handled and issue is None and structure["summary"]["subtotal_sum"] == 80
+    assert any(item["category"] == "subtotal_sum_unexpected" for item in structure["exceptions"])
+    second, issue, handled = apply_phase7_5_patch(
+        structure, normalised,
+        correction_id="corr-q3", category="subtotal_sum_unexpected",
+        affected_id=None, operation="set_question_subtotal",
+        patch={"target_id": "3", "subtotal": 20},
+    )
+    assert handled and issue is None and structure["summary"]["subtotal_sum"] == 100
+    assert not any(item["category"] == "subtotal_sum_unexpected" for item in structure["exceptions"])

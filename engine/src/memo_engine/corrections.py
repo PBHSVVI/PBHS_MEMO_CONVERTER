@@ -24,8 +24,9 @@ def effective_correction_history(
 
     A complete marking replacement retires older schemes and item-total overrides
     on the exact same target. A total-only override retires only earlier total
-    overrides: it still needs the current scheme to validate against. Source
-    allocation, numbering and subtotal operations compose independently.
+    overrides: it still needs the current scheme to validate against. Repeated
+    grouped allocation decisions supersede as one atomic domain; numbering and
+    subtotal operations compose independently.
     """
     def order(entry: tuple[int, dict[str, Any]]) -> tuple[Any, ...]:
         index, correction = entry
@@ -58,7 +59,10 @@ def effective_correction_history(
         ).strip()
         correction_id = str(correction.get("id") or "")
         domain = None
-        if QUESTION_ID_RE.fullmatch(target) and correction_id:
+        if correction_id and (
+            QUESTION_ID_RE.fullmatch(target)
+            or operation == "resolve_question_allocation_pairing"
+        ):
             if operation == "replace_mark_points" and category in {
                 "mark_arithmetic_mismatch", "item_total_mismatch",
                 "correction_mark_total_invalid",
@@ -68,6 +72,11 @@ def effective_correction_history(
                 domain = "item_total"
             elif operation == "replace_item_content":
                 domain = "item_content"
+            elif (
+                operation == "resolve_question_allocation_pairing"
+                and category == "question_allocation_pairing_ambiguous"
+            ):
+                domain = "allocation_pairing"
         successor = newer.get((target, domain)) if domain else None
         history.append({
             "correction_id": correction_id,
@@ -142,12 +151,16 @@ SUPPORTED_CORRECTION_OPERATIONS = frozenset({
     "promote_unlabeled_question",
     "insert_missing_major_question",
     "set_question_subtotal",
+    "resolve_question_allocation_pairing",
 })
 
 CORRECTION_OPERATION_CATEGORIES = {
     # Content repair is available for every active review category. Its target
     # and payload are still validated deterministically during application.
     "replace_item_content": frozenset({"*"}),
+    "resolve_question_allocation_pairing": frozenset({
+        "question_allocation_pairing_ambiguous"
+    }),
     "replace_mark_points": frozenset({
         "mark_arithmetic_mismatch",
         "item_total_mismatch",
@@ -168,6 +181,8 @@ CORRECTION_OPERATION_CATEGORIES = {
 
 def correction_operation_supported(category: str, operation: str) -> bool:
     """Return whether the bounded operation is valid for the active exception."""
+    if operation == "replace_item_content" and category == "question_allocation_pairing_ambiguous":
+        return False
     categories = CORRECTION_OPERATION_CATEGORIES.get(operation, frozenset())
     return "*" in categories or category in categories
 

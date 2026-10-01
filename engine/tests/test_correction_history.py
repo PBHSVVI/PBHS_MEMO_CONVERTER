@@ -232,3 +232,18 @@ def test_later_mark_only_change_composes_with_corrected_content():
     effective, history = effective_correction_history([content, scheme("later-marks", 23)])
     assert [item["id"] for item in effective] == ["content", "later-marks"]
     assert all(item["superseded_by"] is None for item in history)
+
+
+def test_grouped_allocation_corrections_supersede_as_one_atomic_domain():
+    patch = {
+        "operation": "resolve_question_allocation_pairing",
+        "category": "question_allocation_pairing_ambiguous",
+        "affected_id": "4.1,4.2,4.3,4.4,4.5",
+        "allocations": [],
+    }
+    old = correction("old-allocation", 20, patch)
+    new = correction("new-allocation", 21, patch)
+    effective, history = effective_correction_history([old, new])
+    assert [item["id"] for item in effective] == ["new-allocation"]
+    assert history[0]["domain"] == "allocation_pairing"
+    assert history[0]["superseded_by"] == "new-allocation"

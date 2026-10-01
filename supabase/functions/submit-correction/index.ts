@@ -26,6 +26,71 @@ function candidateText(value: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+function compositeQuestionIds(value: unknown): string[] | null {
+  if (typeof value !== "string") return null;
+  const ids = value.split(",").map((item) => item.trim());
+  if (ids.length < 2 || ids.length > 20 || ids.some((id) => !QUESTION_ID_RE.test(id))) return null;
+  return new Set(ids).size === ids.length ? ids : null;
+}
+
+type ParsedMarking = {
+  points: Array<Record<string, unknown>>;
+  total: number;
+  mode: "additive" | "conditional_accuracy" | "alternative_max";
+  normalizedText: string;
+};
+
+function parseMarkingScheme(value: unknown): ParsedMarking | null {
+  if (typeof value !== "string" || !value.trim() || value.length > 4000) return null;
+  const fragments = value.replace(/\r/g, "").split(/\n|;|\|/).map((part) => part.trim()).filter(Boolean);
+  if (!fragments.length) return null;
+  const branches: Array<Array<Record<string, unknown>>> = [[]];
+  const normalizedFragments: string[] = [];
+  for (const fragment of fragments) {
+    if (/^OR$/i.test(fragment)) {
+      if (!branches.at(-1)?.length) return null;
+      branches.push([]);
+      normalizedFragments.push("OR");
+      continue;
+    }
+    const match = fragment.match(/^(\d{1,2})\s*(CA|M|A|F|S|R)\b\s*(.+)$/i);
+    if (!match) return null;
+    const count = Number(match[1]);
+    const code = match[2].toUpperCase();
+    const descriptor = match[3].trim();
+    if (!Number.isInteger(count) || count < 1 || count > 10 || !descriptor || descriptor.length > 500) return null;
+    normalizedFragments.push(`${count}${code} ${descriptor}`);
+    branches.at(-1)?.push({
+      count, code, descriptor,
+      semantic: markSemantic(code, descriptor),
+      source: `${count}${code} ${descriptor}`,
+      notation: "teacher_confirmed",
+    });
+  }
+  if (branches.some((branch) => !branch.length)) return null;
+  const branchTotals = branches.map((branch) => {
+    const conditional = branch.length >= 2 && branch.every((point) =>
+      ["A", "CA"].includes(String(point.code)) && /\bcorrect\b/i.test(String(point.descriptor))
+    );
+    return {
+      total: conditional
+        ? Math.max(...branch.map((point) => Number(point.count)))
+        : branch.reduce((sum, point) => sum + Number(point.count), 0),
+      conditional,
+    };
+  });
+  const points = branches.flat();
+  if (points.length > 100) return null;
+  const normalizedText = normalizedFragments.join("\n");
+  if (branches.length > 1) return { points, total: Math.max(...branchTotals.map((item) => item.total)), mode: "alternative_max", normalizedText };
+  return {
+    points,
+    total: branchTotals[0].total,
+    mode: branchTotals[0].conditional ? "conditional_accuracy" : "additive",
+    normalizedText,
+  };
+}
+
 async function dispatchReinterpretation(
   ctx: any,
   correctionId: string,
@@ -172,8 +237,53 @@ export default {
         return Response.json({ error: "invalid_typed_text" }, { status: 400 });
       }
       displayText = typedText;
+      const allocationResolution = body.allocation_resolution;
       const content = body.content_correction;
-      if (content && typeof content === "object") {
+      if (allocationResolution && typeof allocationResolution === "object") {
+        if (exception.category !== "question_allocation_pairing_ambiguous") {
+          return Response.json({ error: "allocation_resolution_category_mismatch" }, { status: 400 });
+        }
+        const targets = compositeQuestionIds(exception.affected_id);
+        const value = allocationResolution as Record<string, unknown>;
+        const allocations = Array.isArray(value.allocations) ? value.allocations : [];
+        const suppliedIds = allocations.map((entry) => {
+          const item = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+          return typeof item.question_id === "string" ? item.question_id.trim() : "";
+        });
+        if (!targets || suppliedIds.length !== targets.length || suppliedIds.some((id, index) => id !== targets[index]) || new Set(suppliedIds).size !== targets.length) {
+          return Response.json({ error: "invalid_allocation_target_set" }, { status: 400 });
+        }
+        const validated = [];
+        for (let index = 0; index < allocations.length; index += 1) {
+          const item = allocations[index] as Record<string, unknown>;
+          const printedMarks = Number(item.printed_marks);
+          const markingText = typeof item.marking_text === "string" ? item.marking_text.trim() : "";
+          const parsed = parseMarkingScheme(markingText);
+          if (!Number.isInteger(printedMarks) || printedMarks < 1 || printedMarks > 999 || !parsed || parsed.total !== printedMarks) {
+            return Response.json({ error: "invalid_allocation_marking", question_id: targets[index] }, { status: 400 });
+          }
+          validated.push({
+            question_id: targets[index],
+            printed_marks: printedMarks,
+            marking_text: parsed.normalizedText,
+            mark_points: parsed.points,
+            mark_calculation_mode: parsed.mode,
+          });
+        }
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "resolve_question_allocation_pairing",
+          category: exception.category,
+          affected_id: exception.affected_id,
+          allocations: validated,
+          reinterpretation_method: "structured_allocation_editor",
+        };
+        displayText = `Allocate the shared source row across ${targets.length} questions: ${validated.map((item) => `${item.question_id} = ${item.printed_marks}`).join(", ")}.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (content && typeof content === "object") {
+        if (exception.category === "question_allocation_pairing_ambiguous") {
+          return Response.json({ error: "grouped_allocation_requires_structured_editor" }, { status: 400 });
+        }
         const value = content as Record<string, unknown>;
         const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
         const questionText = typeof value.question_text === "string" ? value.question_text.trim() : "";
@@ -229,6 +339,9 @@ export default {
         displayText = `Replace the question or memo content for Question ${targetId}${markPoints.length ? " and use the supplied marking scheme" : ""}.`;
         exceptionStatus = "awaiting_confirmation";
       } else {
+        if (exception.category === "question_allocation_pairing_ambiguous") {
+          return Response.json({ error: "grouped_allocation_requires_structured_editor" }, { status: 400 });
+        }
         // Ordinary typed text remains evidence and uses the interpretation ladder.
         exceptionStatus = "awaiting_reinterpretation";
       }

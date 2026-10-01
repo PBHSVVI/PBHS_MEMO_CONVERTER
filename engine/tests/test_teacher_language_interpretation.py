@@ -142,6 +142,7 @@ def test_response_schema_is_closed_and_operation_allowlisted():
         "promote_unlabeled_question",
         "insert_missing_major_question",
         "set_question_subtotal",
+        "resolve_question_allocation_pairing",
     }
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == AI_RESPONSE_KEYS
@@ -336,7 +337,7 @@ def test_ai_subtotal_may_name_target_for_document_level_exception():
     assert display == "Record Question 3 source subtotal as 4."
 
 
-def test_invalid_subtotal_ledger_fails_real_deterministic_validation():
+def test_subtotal_correction_does_not_require_a_benchmark_ledger_total():
     exception = {"category": "subtotal_sum_unexpected", "affected_id": None, "suggestions": []}
     structure = {
         "job_id": "job",
@@ -355,8 +356,11 @@ def test_invalid_subtotal_ledger_fails_real_deterministic_validation():
         _context("Question 3 total is 4"),
         provider=provider,
     )
-    assert proposal is None
-    assert audit["tier0"]["deterministic_validation"]["passed"] is False
+    assert proposal["operation"] == "set_question_subtotal"
+    assert proposal["target_id"] == "3"
+    assert proposal["subtotal"] == 4
+    assert audit["deterministic_validation"]["passed"] is True
+    assert provider.calls == []
 
 
 def test_unlabelled_row_natural_language_remains_deterministic():
@@ -555,3 +559,27 @@ def test_strong_unresolved_returns_review_without_proposal():
     assert display is None
     assert audit["strong_model_escalation_count"] == 1
     assert audit["unresolved_count"] == 1
+
+
+
+def test_grouped_allocation_free_text_never_calls_ai():
+    exception = {
+        "category": "question_allocation_pairing_ambiguous",
+        "affected_id": "4.1,4.2,4.3,4.4,4.5",
+        "suggestions": [],
+    }
+    provider = FakeProvider(_result(status="resolved", operation="resolve_question_allocation_pairing"))
+    proposal, display, audit = interpret_evidence_ladder(
+        exception,
+        "Please split these marks between the five questions",
+        {"questions": [], "subtotals": [], "exceptions": [deepcopy(exception)], "summary": {}},
+        _normalized([["4.1 4.2 4.3 4.4 4.5", "shared row"]]),
+        _context("Please split these marks between the five questions"),
+        provider=provider,
+    )
+    assert proposal is None
+    assert display is None
+    assert audit["failure_code"] == "GROUPED_ALLOCATION_REQUIRES_STRUCTURED_EDITOR"
+    assert audit["fast_model_interpretation_count"] == 0
+    assert audit["strong_model_escalation_count"] == 0
+    assert provider.calls == []

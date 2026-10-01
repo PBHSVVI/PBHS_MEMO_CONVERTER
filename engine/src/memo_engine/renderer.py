@@ -832,7 +832,7 @@ def preflight_docx(path: str | Path, canonical: dict[str, Any]) -> dict[str, Any
         issues.append("REPLACEMENT_CHARACTER")
     if "w:pgSz" not in xml or "w:pgMar" not in xml:
         issues.append("PAGE_SETTINGS_MISSING")
-    if canonical.get("totals", {}).get("computed") == 150 and "TOTAL:" not in xml:
+    if canonical.get("totals", {}).get("computed") is not None and "TOTAL:" not in xml:
         issues.append("TOTAL_ROW_MISSING")
     if "✓" not in xml:
         issues.append("CHECK_MARK_MISSING")

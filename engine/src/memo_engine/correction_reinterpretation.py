@@ -15,7 +15,7 @@ from .ai_router import ProviderError, _post_json
 from .corrections import apply_confirmed_corrections
 from .ingestion import IngestionError, ingest_bytes
 from .normalization import NormalizationError, normalize_source
-from .phase7_5 import phase7_5_deterministic_proposal
+from .phase7_5 import GROUPED_ALLOCATION_CATEGORY, phase7_5_deterministic_proposal
 from .structure import flatten_units
 from .teacher_language import interpret_teacher_language
 
@@ -514,6 +514,17 @@ def interpret_evidence_ladder(
         exception, evidence_text
     )
     validator = deterministic_proposal_validator(structure, normalized)
+    if str(exception.get("category") or "") == GROUPED_ALLOCATION_CATEGORY:
+        return None, None, {
+            **tier0,
+            "status": "unsupported",
+            "failure_code": "GROUPED_ALLOCATION_REQUIRES_STRUCTURED_EDITOR",
+            "deterministic_resolution_count": 0,
+            "fast_model_interpretation_count": 0,
+            "strong_model_escalation_count": 0,
+            "unresolved_count": 1,
+            "runs": [],
+        }
     if proposal is not None:
         valid, reason = validator(proposal)
         tier0["deterministic_validation"] = {"passed": valid, "message": reason}

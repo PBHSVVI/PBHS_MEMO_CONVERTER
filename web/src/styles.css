@@ -183,7 +183,9 @@ p { line-height: 1.55; }
   text-align: center;
   cursor: pointer;
 }
-.drop-zone:hover { border-color: var(--navy-2); background: #edf5ff; }
+.drop-zone:hover, .drop-zone.drag-active { border-color: var(--navy-2); background: #e2efff; box-shadow: 0 0 0 3px rgba(30, 91, 148, .14); }
+.drop-zone.drag-active { border-style: solid; }
+.drop-zone.disabled { cursor: not-allowed; opacity: .65; }
 .drop-zone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .drop-zone span:not(.upload-icon) { color: var(--ink-muted); font-size: .9rem; }
 .upload-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; color: white; background: var(--navy); font-size: 1.5rem; }

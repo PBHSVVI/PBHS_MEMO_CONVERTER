@@ -80,6 +80,11 @@ upload, durable progress, job-specific handoff to the accepted review page, priv
 DOCX/PDF download, and bounded retry. The existing memo engine and Phase 7 review
 semantics remain frozen. See
 [Phase 8.0 Teacher Pilot Application](docs/PHASE8_0_TEACHER_PILOT_APP.md).
+The 2026-10-01 teacher-pilot hardening increment adds real single-file drag-and-drop,
+uses each memo's explicit source total instead of a fixed 150-mark runtime rule, and
+adds an atomic grouped editor for ambiguous question/allocation pairings. Generic
+free text and single-item content edits cannot clear that grouped exception. Hosted
+acceptance for Phase 8.0 remains pending.
 
 - **Frontend:** static web application (target: GitHub Pages)
 - **Identity / database / storage / lightweight API:** Supabase

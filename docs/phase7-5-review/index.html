@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 7.5 Review v4.4</title>
+<title>PBHS Memo Converter — Phase 7.5 Review v4.5</title>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
 <style>
@@ -20,10 +20,10 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 .explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.proposalSummary{font-weight:850;margin:8px 0}.markPointList{margin:8px 0;padding-left:22px}.markPointList li{margin:5px 0}.technicalProposal{margin-top:10px;color:#526071}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
 #sourceText{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:260px}.pendingBadge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3e8;color:#8a4c00;font-size:.82rem;font-weight:850}.sectionTitle{margin:.2rem 0 .4rem;font-size:1.05rem}
 .guide{border:1px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:10px 12px;margin:12px 0}.guide summary{cursor:pointer;font-weight:900;color:#17365d}.guide ul{padding-left:20px}.guide li{margin:6px 0}.contentEditor{border-left:5px solid var(--navy);padding-left:12px}.contentEditor textarea{min-height:82px}.contentEditor .solution{min-height:130px}.contentPreview{border:1px solid #cbe6d5;background:#fff;border-radius:9px;padding:10px;margin:8px 0}.contentPreview b{display:block;margin:8px 0 4px}.contentPreview pre{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:240px;margin:4px 0}
-</style>
+.allocationEditor{border:2px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:12px}.allocationRows{display:grid;gap:10px;margin:10px 0}.allocationRow{background:#fff;border:1px solid #cbd8e8;border-radius:9px;padding:10px}.allocationRowHead{display:grid;grid-template-columns:minmax(120px,.35fr) minmax(140px,.65fr);gap:10px;align-items:end}.allocationRow textarea{min-height:90px}.allocationQuestion{font-size:1.05rem;font-weight:900;padding:10px 0}@media(max-width:600px){.allocationRowHead{grid-template-columns:1fr}}</style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.4</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.5</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -80,14 +80,20 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 
     <div id="choices" class="choices">
       <h3 class="sectionTitle">Choose how to correct it</h3>
+      <div id="allocationEditor" class="choiceBlock allocationEditor hide">
+        <b>Allocate this shared source row</b>
+        <div class="muted" style="margin:5px 0 8px">Complete every listed question together. Enter its total and marking scheme. Put <code>OR</code> on its own line between alternative methods; alternatives use the larger branch total.</div>
+        <div id="allocationRows" class="allocationRows"></div>
+        <button id="submitAllocations" class="primary">Review all corrections</button>
+      </div>
       <div id="suggestionBlock" class="choiceBlock hide"><b>Accept a supplied suggestion</b><div id="suggestionButtons"></div></div>
-      <div class="choiceBlock">
+      <div id="typedCorrectionBlock" class="choiceBlock">
         <b>Type the correction / mark scheme / LaTeX</b>
         <div class="muted" style="margin:5px 0 8px">Plain text and LaTeX are both acceptable evidence. Nothing is assumed from this field until you submit it.</div>
         <textarea id="typedText" placeholder="Describe the correct interpretation, mark allocation, numbering, or paste LaTeX here…"></textarea>
         <button id="submitTyped" class="primary">Interpret typed correction</button>
       </div>
-      <div class="choiceBlock contentEditor">
+      <div id="contentCorrectionBlock" class="choiceBlock contentEditor">
         <b>Correct the actual question or memo content</b>
         <div class="muted" style="margin:5px 0 8px">Available for every review. Enter only the parts that should replace the source content. The complete replacement is shown back before confirmation.</div>
         <label for="contentTarget">Question number</label>
@@ -100,7 +106,7 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
         <textarea id="contentMarking" placeholder="3A calculation&#10;1A final answer"></textarea>
         <button id="submitContent" class="primary">Review content correction</button>
       </div>
-      <div class="choiceBlock">
+      <div id="fileCorrectionBlock" class="choiceBlock">
         <b>Use an image or file</b>
         <div class="muted" style="margin:5px 0 8px">Upload a screenshot, photo, annotated image, PDF or document. On a phone, the photo control can open the camera.</div>
         <div class="fileRow"><div><label style="margin:0 0 5px">Take / choose photo</label><input id="photoInput" type="file" accept="image/*" capture="environment"></div><button id="submitPhoto" class="secondary">Use photo</button></div>
@@ -168,7 +174,10 @@ async function invoke(name,body){
   exception_not_active:'This review item was replaced during revalidation. Refresh to load its current version.',
   pending_correction_exists:'This review item already has a pending correction. Review, edit, or cancel that correction first.',
   invalid_typed_text:'The correction is empty or too long. Keep the complete correction under 4,000 characters.',
-  invalid_content_correction:'The content correction is incomplete or targets a different question. Check the question number, replacement text, and marking lines.'
+  invalid_content_correction:'The content correction is incomplete or targets a different question. Check the question number, replacement text, and marking lines.',
+  grouped_allocation_requires_structured_editor:'This linked allocation must be completed in the grouped editor so every question is validated together.',
+  invalid_allocation_target_set:'The grouped question list changed. Refresh the page and reopen this review item.',
+  invalid_allocation_marking:`The total and marking scheme do not agree${detail?.question_id?` for Question ${detail.question_id}`:''}. Check each line and any OR branch.`
  };
  const error=new Error(messages[code]||r.error.message);
  error.code=code;error.detail=detail;throw error;
@@ -242,6 +251,7 @@ const knownSpecs={
 function genericExplain(ex){
  const a=String(ex.affected_id||'');
  switch(ex.category){
+  case 'question_allocation_pairing_ambiguous': return {title:'Allocate a shared source row',what:ex.message||'Several question numbers and allocations share one source row and cannot be paired safely.',need:'Use the grouped editor to assign a total and complete marking scheme to every listed question in one atomic correction.'};
   case 'item_total_mismatch': return {title:`Check Question ${a}`,what:ex.message||'The printed item total and extracted marking points do not agree.',need:'Inspect the highlighted item and tell the system the correct mark allocation or marking scheme. If the printed total is correct, explain how the marking points should add to it.'};
   case 'question_total_mismatch': return {title:`Check Question ${a} subtotal`,what:ex.message||'The question subtotal and item totals do not agree.',need:'This is usually a consequence of an unresolved item inside the same question. It should only be corrected directly if no more specific item-level cause remains.'};
   case 'document_total_mismatch': return {title:'Check document total',what:ex.message||'The document total does not agree with the sum of questions.',need:'Treat this as a diagnostic signal. Correct a specific question or subtotal only when the source evidence identifies it.'};
@@ -253,8 +263,8 @@ function genericExplain(ex){
 }
 function specFor(ex){
  const key=`${ex.category}|${ex.affected_id===null?'NULL':String(ex.affected_id)}`;
- const base=knownSpecs[key]||genericExplain(ex);
- return {...base,anchors:base.anchors||[String(ex.affected_id||'')].filter(Boolean),gap:!!base.gap};
+ const base=knownSpecs[key]||genericExplain(ex),groupedAnchors=ex.category==='question_allocation_pairing_ambiguous'?compositeQuestionIds(ex.affected_id):[];
+ return {...base,anchors:base.anchors||(groupedAnchors.length?groupedAnchors:[String(ex.affected_id||'')].filter(Boolean)),gap:!!base.gap};
 }
 
 async function currentJob(){const r=await sb.from('jobs').select('id,user_id,status,stage,engine_version,error_code,error_message,attempt_count,source_path,source_filename,source_mime,updated_at').eq('id',jobId).single();if(r.error)throw r.error;currentJobData=r.data;return r.data}
@@ -405,11 +415,15 @@ function renderExplanation(ex,step){
   return `<div class="parentDiscrepancy"><div class="reviewEyebrow">Larger discrepancy this may resolve</div><div class="parentQuestion">Question ${esc(parent.parent_id)} subtotal does not currently balance.</div>${totals}<p class="parentRelationship"><b>Likely cause:</b> Question ${esc(parent.child_id)} — the item being reviewed now.</p><p class="parentContextNote">Correcting this item may resolve Question ${esc(parent.parent_id)} automatically. The parent subtotal will only become a separate review step if it is still unresolved after revalidation.</p></div>`
  }).join('')}`;
 }
+function compositeQuestionIds(value){const ids=String(value||'').split(',').map(id=>id.trim()).filter(Boolean);return ids.length>=2&&ids.length<=20&&new Set(ids).size===ids.length&&ids.every(id=>/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(id))?ids:[]}
 function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
  $('#contentTarget').value=/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(String(ex?.affected_id||''))?String(ex.affected_id):'';$('#contentQuestion').value='';$('#contentSolution').value='';$('#contentMarking').value='';
+ const grouped=ex.category==='question_allocation_pairing_ambiguous',ids=grouped?compositeQuestionIds(ex.affected_id):[];
+ $('#allocationEditor').classList.toggle('hide',!grouped);for(const id of ['typedCorrectionBlock','contentCorrectionBlock','fileCorrectionBlock'])$('#'+id).classList.toggle('hide',grouped);
+ const rows=$('#allocationRows');rows.innerHTML='';if(grouped){for(const id of ids){const row=document.createElement('div');row.className='allocationRow';row.dataset.questionId=id;row.innerHTML=`<div class="allocationRowHead"><div class="allocationQuestion">Question ${esc(id)}</div><div><label>Question total</label><input class="allocationTotal" type="number" min="1" max="999" step="1" inputmode="numeric" aria-label="Question ${esc(id)} total"></div></div><label>Marking scheme</label><textarea class="allocationMarking" aria-label="Question ${esc(id)} marking scheme" placeholder="1M method&#10;1A answer&#10;OR&#10;2A alternative answer"></textarea>`;rows.append(row)}}
  const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';
- if(suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
+ if(!grouped&&suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
 }
 async function showException(ex){
  currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;status('Review the focused source evidence, then choose how to correct the item shown.','success');await showEvidence();
@@ -417,11 +431,14 @@ async function showException(ex){
 
 function showRecovery(corr,message){
  currentCorrection=corr;
+ const grouped=currentException?.category==='question_allocation_pairing_ambiguous';
  $('#choices').classList.add('hide');
  $('#proposalPanel').classList.add('hide');
  $('#recoveryPanel').classList.remove('hide');
- $('#recoveryMessage').textContent=message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.';
- status('Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
+ $('#retryInterpretation').classList.toggle('hide',grouped);
+ $('#editResubmit').textContent=grouped?'Cancel and open grouped editor':'Edit / resubmit correction';
+ $('#recoveryMessage').textContent=grouped?'This saved free-text attempt cannot resolve a linked allocation safely. Nothing was applied. Cancel it and complete every listed question in the grouped editor.':(message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');
+ status(grouped?'Your earlier attempt is saved but cannot be applied. Cancel it to open the grouped editor.':'Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
 }
 async function rejectAndReopen(prefill=''){
  if(!currentCorrection)return;
@@ -463,6 +480,7 @@ async function waitProposal(correctionId,submittedAt){
 function teacherShowBackModel(corr){
  const p=corr?.proposed_patch||{},points=Array.isArray(p.mark_points)?p.mark_points:[];
  return {
+  allocations:Array.isArray(p.allocations)?p.allocations.map(item=>({question_id:String(item?.question_id||''),printed_marks:Number(item?.printed_marks||0),mark_calculation_mode:String(item?.mark_calculation_mode||''),mark_points:Array.isArray(item?.mark_points)?item.mark_points.map(point=>({count:Number(point?.count||0),code:String(point?.code||''),descriptor:String(point?.descriptor||'')})):[]})):[],
   summary:String(corr?.display_text||'A structured correction is ready.'),
   operation:String(p.operation||''),
   target_id:p.target_id==null?null:String(p.target_id),
@@ -477,7 +495,8 @@ function teacherShowBackModel(corr){
 function showProposal(corr){
  currentCorrection=corr;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');
  const model=teacherShowBackModel(corr),pointList=model.mark_points.length?`<ul class="markPointList">${model.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'';
- const content=(model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList;
+ const allocationContent=model.allocations.length?`<div class="contentPreview"><b>Complete grouped allocation</b>${model.allocations.map(item=>`<div class="allocationRow"><b>Question ${esc(item.question_id)} — ${esc(item.printed_marks)} marks</b><ul class="markPointList">${item.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul><span class="muted">${esc(item.mark_calculation_mode)}</span></div>`).join('')}</div>`:'';
+ const content=allocationContent||((model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList);
  $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` → ${esc(model.target_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}</details>`;
  status('Show-back ready. Confirm only if this matches what you intended.','success')
 }
@@ -492,24 +511,31 @@ async function submitAndInterpret(body){
  }finally{setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
 async function submitTyped(){const t=$('#typedText').value.trim();if(!t){status('Type the correction or LaTeX first.','warn');return}await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:t})}
-function parseStructuredMarking(text){
- const fragments=String(text||'').trim().split(/\n|;|\|/).map(value=>value.trim()).filter(Boolean),points=[];
- for(const fragment of fragments){const match=fragment.match(/^(\d{1,2})\s*(CA|M|A|F|S|R)\b\s*(.+)$/i);if(!match)throw new Error(`Marking line not understood: "${fragment}". Use one entry such as 3A calculation.`);const count=Number(match[1]),code=match[2].toUpperCase(),descriptor=match[3].trim();if(count<1||count>10||!descriptor)throw new Error(`Invalid marking line: "${fragment}".`);points.push({count,code,descriptor,source:`${count}${code} ${descriptor}`})}
- return points;
+function parseStructuredMarking(text,{allowOr=false}={}){
+ const fragments=String(text||'').trim().split(/\n|;|\|/).map(value=>value.trim()).filter(Boolean),branches=[[]];if(!fragments.length)throw new Error('Enter at least one marking line.');
+ for(const fragment of fragments){if(/^OR$/i.test(fragment)){if(!allowOr||!branches.at(-1).length)throw new Error('Put OR between two complete marking methods.');branches.push([]);continue}const match=fragment.match(/^(\d{1,2})\s*(CA|M|A|F|S|R)\b\s*(.+)$/i);if(!match)throw new Error(`Marking line not understood: "${fragment}". Use one entry such as 3A calculation.`);const count=Number(match[1]),code=match[2].toUpperCase(),descriptor=match[3].trim();if(count<1||count>10||!descriptor)throw new Error(`Invalid marking line: "${fragment}".`);branches.at(-1).push({count,code,descriptor,source:`${count}${code} ${descriptor}`})}
+ if(branches.some(branch=>!branch.length))throw new Error('Each OR branch needs a complete marking method.');const branchTotals=branches.map(branch=>{const conditional=branch.length>=2&&branch.every(point=>['A','CA'].includes(point.code)&&/\bcorrect\b/i.test(point.descriptor));return {total:conditional?Math.max(...branch.map(point=>point.count)):branch.reduce((sum,point)=>sum+point.count,0),conditional}});return {points:branches.flat(),total:branches.length>1?Math.max(...branchTotals.map(item=>item.total)):branchTotals[0].total,mode:branches.length>1?'alternative_max':(branchTotals[0].conditional?'conditional_accuracy':'additive')};
+}
+async function submitAllocations(){
+ const rows=[...document.querySelectorAll('#allocationRows .allocationRow')],allocations=[];if(!rows.length){status('The grouped question list is invalid. Refresh and reopen this review item.','warn');return}
+ try{for(const row of rows){const questionId=row.dataset.questionId,total=Number(row.querySelector('.allocationTotal').value),markingText=row.querySelector('.allocationMarking').value.trim(),parsed=parseStructuredMarking(markingText,{allowOr:true});if(!Number.isInteger(total)||total<1||total>999)throw new Error(`Enter a whole-number total from 1 to 999 for Question ${questionId}.`);if(parsed.total!==total)throw new Error(`Question ${questionId}: the marking scheme totals ${parsed.total}, but the entered total is ${total}.`);allocations.push({question_id:questionId,printed_marks:total,marking_text:markingText})}}
+ catch(e){status(e.message,'warn');return}
+ const typedText=`[[PBHS_ALLOCATION_PAIRING_V1]]\n${allocations.map(item=>`${item.question_id}: ${item.printed_marks}\n${item.marking_text}`).join('\n---\n')}\n[[END_PBHS_ALLOCATION_PAIRING_V1]]`;if(typedText.length>4000){status('The complete grouped correction is too long. Keep it under 4,000 characters.','warn');return}
+ await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,allocation_resolution:{allocations}})
 }
 function contentCorrectionEnvelope(target,questionText,solutionLines,markingText){return `[[PBHS_CONTENT_CORRECTION_V1]]\nTARGET: ${target}\nQUESTION:\n${questionText}\nANSWER:\n${solutionLines.join('\n')}\nMARKING:\n${markingText}\n[[END_PBHS_CONTENT_CORRECTION_V1]]`}
 async function submitContent(){
  const target=$('#contentTarget').value.trim(),questionText=$('#contentQuestion').value.trim(),solutionLines=$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),markingText=$('#contentMarking').value.trim();
  if(!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(target)){status('Enter one valid question number, for example 11.2.1.','warn');return}
  if(!questionText&&!solutionLines.length){status('Enter corrected question wording, corrected memo working, or both.','warn');return}
- let markPoints=[];try{markPoints=parseStructuredMarking(markingText)}catch(e){status(e.message,'warn');return}
+ let markPoints=[];try{markPoints=markingText?parseStructuredMarking(markingText).points:[]}catch(e){status(e.message,'warn');return}
  const typedText=contentCorrectionEnvelope(target,questionText,solutionLines,markingText);
  if(typedText.length>4000){status('The complete content correction is too long. Keep it under 4,000 characters.','warn');return}
  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,content_correction:{target_id:target,question_text:questionText,solution_lines:solutionLines,mark_points:markPoints}})
 }
 function safeName(name){return String(name||'evidence.bin').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-120)||'evidence.bin'}
 async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status('Choose a file first.','warn');return}setBusy(true);try{const cid=crypto.randomUUID(),path=`${user.id}/${jobId}/corrections/${cid}/${safeName(f.name)}`;status('Uploading correction evidence…');const up=await sb.storage.from('memo-files').upload(path,f,{upsert:false,contentType:f.type||undefined});if(up.error)throw up.error;await submitAndInterpret({job_id:jobId,exception_id:currentException.id,correction_id:cid,input_kind:kind,storage_path:path})}finally{setBusy(false)}}
-function setBusy(v){for(const id of ['submitTyped','submitContent','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
+function setBusy(v){for(const id of ['submitTyped','submitContent','submitAllocations','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
 
 async function waitStable(){for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4)log(`Worker poll ${i+1}`,j);if(j.status==='complete')return j;if(j.status==='needs_review'&&j.stage==='phase7_review'&&j.engine_version==='phase7.5')return j;if(j.status==='correction_pending')return j;if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`)}throw new Error('Timed out waiting for Phase 7.5 revalidation.')}
 async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
@@ -529,14 +555,13 @@ async function finalAudit(){
   engine_phase7_5:j.engine_version==='phase7.5',
   no_open_review:active.length===0,
   canonical_render_ready:canonical.status==='render_ready',
-  total_150:Number(canonical?.totals?.computed)===150,
-  eleven_questions:(canonical.questions||[]).length===11,
-  confirmed_corrections:correctionAudit.checks.correction_audit_present&&correctionAudit.counts.confirmed>=9,
+  source_defined_total:Number.isInteger(Number(canonical?.totals?.observed))&&Number(canonical?.totals?.observed)>=1&&Number(canonical?.totals?.observed)<=999&&Number(canonical?.totals?.computed)===Number(canonical?.totals?.observed)&&Number(canonical?.totals?.expected)===Number(canonical?.totals?.observed)&&canonical?.totals?.status==='match',
+  questions_present:Array.isArray(canonical.questions)&&canonical.questions.length>0,
   ...correctionAudit.checks,
   render_validation_passed:rv.passed===true,
   docx_preflight:rv?.docx?.preflight?.passed===true,
   pdf_preflight:rv?.pdf?.preflight?.passed===true,
-  render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===150),
+  render_event:events.some(e=>e.event_type==='phase6_render_complete'&&Number(e.payload?.computed_total)===Number(canonical?.totals?.computed)),
  };
  const passed=Object.values(checks).every(Boolean);
  const databaseCorrectionDiagnostic={
@@ -555,10 +580,11 @@ async function finalAudit(){
   render_validation:rv,
  });
  $('#review').classList.add('hide');
- status(passed?`Job ${jobId} is already complete with no review items. Phase 7.5 reached 150 marks and completed deterministic DOCX/PDF rendering end-to-end.`:'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',passed?'success':'warn')
+ status(passed?`Job ${jobId} is complete with no review items. The ${Number(canonical?.totals?.computed)}-mark memo completed deterministic DOCX/PDF rendering end-to-end.`:'The job completed but one or more Phase 7.5 acceptance checks failed. See technical log.',passed?'success':'warn')
 }
 
 $('#start').onclick=async()=>{setBusy(true);logEl.textContent='Starting / resuming…';try{selectJob();const session=(await sb.auth.getSession()).data.session;if(session)user=session.user;else{const a=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#password').value});if(a.error)throw a.error;user=a.data.user;$('#password').value=''}await resumeFlow()}catch(e){log('START/RESUME ERROR',{message:e.message});status('Review stopped: '+e.message,'error')}finally{setBusy(false)}};
+$('#submitAllocations').onclick=()=>submitAllocations().catch(e=>{log('GROUPED ALLOCATION ERROR',{message:e.message});status('Grouped allocation failed: '+e.message,'error')});
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
 $('#submitContent').onclick=()=>submitContent().catch(e=>{log('CONTENT CORRECTION ERROR',{message:e.message});status('Content correction failed: '+e.message,'error')});
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});

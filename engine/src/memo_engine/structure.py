@@ -10,6 +10,7 @@ JAMMED_QUESTION_RE = re.compile(
     r"(?m)^[ \t]*(\d{1,2}\.\d{1,2}\.\d{1,2})(?=[A-Za-z])"
 )
 SUBTOTAL_RE = re.compile(r"\[(\d{1,3})\]")
+DOCUMENT_TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
 PAREN_NUMBER_RE = re.compile(r"\((\d{1,2})\)")
 MARK_TOKEN_RE = re.compile(r"(?i)^\s*(\d+)\s*(.*)$")
 CODE_RE = re.compile(r"(?i)^(CA|M|A|F|S|R)\b")
@@ -42,6 +43,19 @@ def find_question_ids(text: str) -> list[str]:
 
 def qtuple(qid: str) -> tuple[int, ...]:
     return tuple(int(p) for p in qid.split("."))
+
+
+def observed_document_total(normalized: dict[str, Any]) -> int | None:
+    """Return the last explicit source TOTAL without inventing a default."""
+    text = "\n".join(
+        " | ".join(str(cell) for cell in block.get("cells", []))
+        for block in flatten_units(normalized)
+    )
+    values = [
+        int(value) for value in DOCUMENT_TOTAL_RE.findall(text)
+        if 1 <= int(value) <= 999
+    ]
+    return values[-1] if values else None
 
 
 def semantic_for_code(code: str | None, descriptor: str) -> str:
@@ -595,13 +609,17 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
                     existing_exception_ids.add(key)
 
     subtotal_sum = sum(x["value"] for x in subtotals)
-    if subtotals and subtotal_sum != 150:
+    observed_total = observed_document_total(normalized)
+    if subtotals and observed_total is not None and subtotal_sum != observed_total:
         add_exception(
             exceptions,
             level="amber",
             category="subtotal_sum_unexpected",
             affected_id=None,
-            message=f"Detected question subtotals sum to {subtotal_sum}, not 150.",
+            message=(
+                f"Detected question subtotals sum to {subtotal_sum}, but the source "
+                f"TOTAL is {observed_total}."
+            ),
         )
 
     for qid in detected_qids:
@@ -637,6 +655,7 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
             "unique_question_count": len(set(detected_qids)),
             "subtotal_count": len(subtotals),
             "subtotal_sum": subtotal_sum,
+            "observed_document_total": observed_total,
             "amber_count": amber,
             "red_count": red,
             "review_required": bool(exceptions),

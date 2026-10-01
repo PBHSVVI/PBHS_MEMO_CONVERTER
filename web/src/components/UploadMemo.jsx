@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createAndDispatchJob } from "../lib/memoService";
 import { validateMemoFile } from "../lib/jobContracts";
 
@@ -11,17 +11,59 @@ const STEP_COPY = {
 
 export function UploadMemo({ client, user, onBack, onCreated }) {
   const [file, setFile] = useState(null);
+  const [dragActive, setDragActive] = useState(false);
   const [state, setState] = useState({ busy: false, message: "", error: "" });
+  const dragDepth = useRef(0);
 
-  function choose(event) {
-    const selected = event.target.files?.[0] || null;
-    setFile(selected);
+  function acceptFile(selected) {
     const validation = validateMemoFile(selected);
+    setFile(validation.ok ? selected : null);
     setState({
       busy: false,
       message: validation.ok ? `${selected.name} • ${(selected.size / 1024 / 1024).toFixed(1)} MB` : "",
       error: validation.ok ? "" : validation.message,
     });
+  }
+
+  function choose(event) {
+    acceptFile(event.target.files?.[0] || null);
+  }
+
+  function dragEnter(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.busy) return;
+    dragDepth.current += 1;
+    setDragActive(true);
+  }
+
+  function dragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = state.busy ? "none" : "copy";
+  }
+
+  function dragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.busy) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (!dragDepth.current) setDragActive(false);
+  }
+
+  function drop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepth.current = 0;
+    setDragActive(false);
+    if (state.busy) return;
+    const dropped = Array.from(event.dataTransfer?.files || []);
+    if (dropped.length !== 1) {
+      setFile(null);
+      setState({ busy: false, message: "", error: "Drop exactly one memo file at a time." });
+      return;
+    }
+    acceptFile(dropped[0]);
   }
 
   async function submit(event) {
@@ -31,6 +73,7 @@ export function UploadMemo({ client, user, onBack, onCreated }) {
       setState({ busy: false, message: "", error: validation.message });
       return;
     }
+    setDragActive(false);
     setState({ busy: true, message: "Preparing upload…", error: "" });
     try {
       const job = await createAndDispatchJob({
@@ -53,9 +96,16 @@ export function UploadMemo({ client, user, onBack, onCreated }) {
         <h1>Upload your memo</h1>
         <p className="lede">Choose the source memo you want converted. The original stays unchanged.</p>
         <form onSubmit={submit}>
-          <label className="drop-zone">
+          <label
+            className={`drop-zone${dragActive ? " drag-active" : ""}${state.busy ? " disabled" : ""}`}
+            onDragEnter={dragEnter}
+            onDragOver={dragOver}
+            onDragLeave={dragLeave}
+            onDrop={drop}
+            aria-disabled={state.busy}
+          >
             <span className="upload-icon" aria-hidden="true">↑</span>
-            <strong>{file ? "Choose a different file" : "Choose a memo file"}</strong>
+            <strong>{dragActive ? "Drop one memo here" : file ? "Choose a different file" : "Choose or drop a memo file"}</strong>
             <span>PDF, Word DOCX, PNG, or JPEG • maximum 50 MB</span>
             <input
               type="file"

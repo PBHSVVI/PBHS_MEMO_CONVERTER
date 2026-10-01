@@ -11,6 +11,7 @@ from .structure import (
     parse_mark_points,
     printed_allocations,
     qtuple,
+    semantic_for_code,
 )
 
 QUESTION_ID_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
@@ -55,6 +56,10 @@ PHASE7_5_REINTERPRET_CATEGORIES = {
     "scored_major_precedes_subquestions",
 }
 
+MAX_ASSESSMENT_TOTAL = 999
+MARK_CODES = {"M", "A", "CA", "F", "S", "R"}
+GROUPED_ALLOCATION_CATEGORY = "question_allocation_pairing_ambiguous"
+
 CONTENT_CORRECTION_START = "[[PBHS_CONTENT_CORRECTION_V1]]"
 CONTENT_CORRECTION_END = "[[END_PBHS_CONTENT_CORRECTION_V1]]"
 CONTENT_INTENT_RE = re.compile(
@@ -73,6 +78,8 @@ def _structured_content_proposal(
     if not text.startswith(CONTENT_CORRECTION_START):
         return None, None, evidence
     evidence["structured_content_correction"] = True
+    if str(exception.get("category") or "") == GROUPED_ALLOCATION_CATEGORY:
+        return None, None, evidence
     if not text.endswith(CONTENT_CORRECTION_END):
         return None, None, evidence
 
@@ -615,6 +622,12 @@ def _apply_replace_item_content(
     affected_id: str | None,
     patch: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if category == GROUPED_ALLOCATION_CATEGORY:
+        return None, _issue(
+            "correction_operation_invalid",
+            affected_id,
+            "A grouped allocation exception must be resolved for every listed question together.",
+        )
     target_id = str(patch.get("target_id") or affected_id or "").strip()
     active_id = str(affected_id or "").strip()
     if (
@@ -707,6 +720,180 @@ def _apply_replace_item_content(
         "solution_line_count": len(solution_lines),
         "mark_total": mark_total,
         "source_block_index": question.get("source_block_index"),
+    }, None
+
+
+def _composite_question_ids(value: str | None) -> list[str] | None:
+    parts = [part.strip() for part in str(value or "").split(",")]
+    if not 2 <= len(parts) <= 20:
+        return None
+    if any(not QUESTION_ID_RE.fullmatch(part) for part in parts):
+        return None
+    if len(set(parts)) != len(parts):
+        return None
+    return parts
+
+
+def _apply_resolve_question_allocation_pairing(
+    structure: dict[str, Any],
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str | None,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    targets = _composite_question_ids(affected_id)
+    if targets is None or not _exception_exists(structure, category, affected_id):
+        return None, _issue(
+            "correction_target_invalid", affected_id,
+            f"Confirmed correction {correction_id} does not identify one active grouped allocation exception.",
+        )
+
+    raw_allocations = patch.get("allocations")
+    if not isinstance(raw_allocations, list) or len(raw_allocations) != len(targets):
+        return None, _issue(
+            "correction_allocation_set_invalid", affected_id,
+            f"Confirmed correction {correction_id} must allocate every grouped question exactly once.",
+        )
+    allocation_ids = [
+        str(item.get("question_id") or "").strip() if isinstance(item, dict) else ""
+        for item in raw_allocations
+    ]
+    if allocation_ids != targets or len(set(allocation_ids)) != len(targets):
+        return None, _issue(
+            "correction_allocation_set_invalid", affected_id,
+            f"Confirmed correction {correction_id} has missing, duplicate, reordered, or extra question allocations.",
+        )
+
+    questions: dict[str, dict[str, Any]] = {}
+    for target in targets:
+        matches = [
+            question for question in structure.get("questions", [])
+            if str(question.get("question_id") or "") == target
+        ]
+        if len(matches) != 1 or matches[0].get("context_only"):
+            return None, _issue(
+                "correction_evidence_unresolved", target,
+                f"Confirmed correction {correction_id} could not resolve one existing leaf Question {target}.",
+            )
+        questions[target] = matches[0]
+
+    source_rows: set[int] = set()
+    try:
+        source_rows = {
+            int(question.get("source_block_index", -1))
+            for question in questions.values()
+        }
+    except (TypeError, ValueError):
+        source_rows = set()
+    if len(source_rows) != 1 or next(iter(source_rows)) < 0:
+        return None, _issue(
+            "correction_source_relationship_invalid", affected_id,
+            f"Confirmed correction {correction_id} does not preserve one shared source row.",
+        )
+
+    validated: list[dict[str, Any]] = []
+    for item in raw_allocations:
+        target = str(item.get("question_id"))
+        try:
+            printed_marks = int(item.get("printed_marks"))
+        except Exception:
+            printed_marks = 0
+        marking_text = str(item.get("marking_text") or "").strip()
+        raw_points = item.get("mark_points")
+        if not 1 <= printed_marks <= MAX_ASSESSMENT_TOTAL or not marking_text or len(marking_text) > 4000:
+            return None, _issue(
+                "correction_mark_total_invalid", target,
+                f"Confirmed correction {correction_id} has an invalid total for Question {target}.",
+            )
+        if not isinstance(raw_points, list) or not raw_points or len(raw_points) > 100:
+            return None, _issue(
+                "correction_mark_scheme_invalid", target,
+                f"Confirmed correction {correction_id} has no bounded mark scheme for Question {target}.",
+            )
+
+        points: list[dict[str, Any]] = []
+        for raw_point in raw_points:
+            if not isinstance(raw_point, dict):
+                return None, _issue("correction_mark_scheme_invalid", target, f"Confirmed correction {correction_id} contains an invalid mark point.")
+            try:
+                count = int(raw_point.get("count"))
+            except Exception:
+                count = 0
+            code = str(raw_point.get("code") or "").upper()
+            descriptor = str(raw_point.get("descriptor") or "").strip()
+            if not 1 <= count <= 10 or code not in MARK_CODES or not descriptor or len(descriptor) > 500:
+                return None, _issue(
+                    "correction_mark_scheme_invalid", target,
+                    f"Confirmed correction {correction_id} contains an invalid mark point for Question {target}.",
+                )
+            points.append({
+                "count": count,
+                "code": code,
+                "descriptor": descriptor,
+                "semantic": semantic_for_code(code, descriptor),
+                "source": f"{count}{code} {descriptor}",
+                "notation": "teacher_confirmed",
+            })
+
+        parsed = parse_mark_points(marking_text)
+        signature = lambda values: [
+            (int(point.get("count") or 0), str(point.get("code") or "").upper(), str(point.get("descriptor") or "").strip())
+            for point in values
+        ]
+        if signature(parsed) != signature(points):
+            return None, _issue(
+                "correction_mark_scheme_invalid", target,
+                f"Confirmed correction {correction_id} has inconsistent marking text for Question {target}.",
+            )
+        computed, calculation_mode = effective_mark_total(points, marking_text)
+        supplied_mode = str(item.get("mark_calculation_mode") or "")
+        if computed != printed_marks or supplied_mode != calculation_mode:
+            return None, _issue(
+                "correction_mark_total_invalid", target,
+                f"Confirmed correction {correction_id} does not reconcile the marking scheme and total for Question {target}.",
+            )
+        validated.append({
+            "question_id": target,
+            "printed_marks": printed_marks,
+            "mark_points": points,
+            "marking_text": marking_text,
+            "mark_calculation_mode": calculation_mode,
+        })
+
+    # Commit only after every child has passed validation.
+    trial = copy.deepcopy(structure)
+    for allocation in validated:
+        question = _question(trial, allocation["question_id"])
+        assert question is not None
+        question["printed_marks"] = allocation["printed_marks"]
+        question["computed_shorthand_marks"] = allocation["printed_marks"]
+        question["mark_points"] = allocation["mark_points"]
+        question["teacher_marking_text"] = allocation["marking_text"]
+        question["mark_calculation_mode"] = allocation["mark_calculation_mode"]
+        question["correction_overlay"] = {
+            "correction_id": correction_id,
+            "operation": "resolve_question_allocation_pairing",
+        }
+    _remove_exception(trial, category, affected_id)
+    _refresh_summary(trial)
+    structure.clear()
+    structure.update(trial)
+    return {
+        "correction_id": correction_id,
+        "operation": "resolve_question_allocation_pairing",
+        "category": category,
+        "affected_id": affected_id,
+        "target_ids": targets,
+        "source_block_index": next(iter(source_rows)),
+        "allocations": [
+            {
+                "question_id": item["question_id"],
+                "printed_marks": item["printed_marks"],
+                "mark_calculation_mode": item["mark_calculation_mode"],
+            }
+            for item in validated
+        ],
     }, None
 
 
@@ -897,7 +1084,7 @@ def _apply_set_question_subtotal(
         value = int(patch.get("subtotal"))
     except Exception:
         value = 0
-    if not 1 <= value <= 150:
+    if not 1 <= value <= MAX_ASSESSMENT_TOTAL:
         return None, _issue(
             "correction_mark_total_invalid",
             target_id,
@@ -930,15 +1117,6 @@ def _apply_set_question_subtotal(
     )
     existing_sum = sum(int(item.get("value") or 0) for item in existing)
     new_sum = current_sum - existing_sum + value
-    if new_sum != 150:
-        return None, _issue(
-            "correction_subtotal_ledger_invalid",
-            target_id,
-            (
-                f"Confirmed correction {correction_id} would make the observed "
-                f"question-subtotal ledger {new_sum}, not 150."
-            ),
-        )
 
     if existing:
         structure["subtotals"] = [
@@ -958,7 +1136,16 @@ def _apply_set_question_subtotal(
     structure["subtotals"].sort(
         key=lambda item: int(item.get("block_index", 10**9))
     )
-    _remove_exception(structure, category, None)
+    observed_total = (structure.get("summary") or {}).get("observed_document_total")
+    if observed_total is None or new_sum == int(observed_total):
+        _remove_exception(structure, category, None)
+    else:
+        for exception in structure.get("exceptions", []):
+            if exception.get("category") == category and exception.get("affected_id") is None:
+                exception["message"] = (
+                    f"Detected question subtotals sum to {new_sum}, but the source "
+                    f"TOTAL is {int(observed_total)}."
+                )
     _refresh_summary(structure)
     return {
         "correction_id": correction_id,
@@ -982,6 +1169,19 @@ def apply_phase7_5_patch(
     patch: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
     affected = str(affected_id or "").strip()
+
+    if (
+        category == GROUPED_ALLOCATION_CATEGORY
+        and operation == "resolve_question_allocation_pairing"
+    ):
+        applied, issue = _apply_resolve_question_allocation_pairing(
+            structure,
+            correction_id=correction_id,
+            category=category,
+            affected_id=affected_id,
+            patch=patch,
+        )
+        return applied, issue, True
 
     if operation == "replace_item_content":
         applied, issue = _apply_replace_item_content(
@@ -1203,7 +1403,7 @@ def phase7_5_deterministic_proposal(
         subtotal = int(subtotal_text)
         evidence["target_question"] = target
         evidence["subtotal"] = subtotal
-        if not 1 <= subtotal <= 150:
+        if not 1 <= subtotal <= MAX_ASSESSMENT_TOTAL:
             return None, None, evidence
         proposal = {
             "schema_version": "1.0",

@@ -325,3 +325,22 @@ def test_saved_failed_interpretation_opens_editor_without_automatic_retry():
     assert "SAVED INTERPRETATION NEEDS EDITING" in function_source
     assert "showRecovery(corr" in function_source
     assert "retry-correction-reinterpretation" not in function_source
+
+
+def test_grouped_allocation_review_uses_atomic_structured_editor():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    edge = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
+    assert 'id="allocationEditor"' in html
+    assert 'id="submitAllocations"' in html
+    assert "Review all corrections" in html
+    assert "resolve_question_allocation_pairing" in edge
+    assert "invalid_allocation_target_set" in edge
+    assert "grouped_allocation_requires_structured_editor" in edge
+
+
+def test_review_acceptance_uses_source_defined_total():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "source_defined_total" in html
+    assert "total_150" not in html
+    assert "eleven_questions" not in html
+    assert "computed_total)===Number(canonical?.totals?.computed)" in html

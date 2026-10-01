@@ -2023,7 +2023,10 @@ def build_canonical_memo(
         })
 
     all_text = _all_normalized_text(normalized)
-    totals_found = [int(value) for value in TOTAL_RE.findall(all_text)]
+    totals_found = [
+        int(value) for value in TOTAL_RE.findall(all_text)
+        if 1 <= int(value) <= 999
+    ]
     observed_final = totals_found[-1] if totals_found else None
     computed_final = sum(int(q["subtotal"]["computed"] or 0) for q in questions)
     expected_final = observed_final

@@ -97,8 +97,8 @@ JSON object requested by the schema. Choose only an allowed operation supplied i
 the context and only when it matches the active exception.
 
 Never solve missing mathematics. Never invent a question number, mark total, mark
-point, missing major question, or neighbouring correction. Never change totals to
-force 150 and never use hidden GOLD answers. Do not combine independent operations.
+point, missing major question, or neighbouring correction. Never force a benchmark-
+specific document total and never use hidden GOLD answers. Do not combine independent operations.
 If evidence is insufficient or multiple operations remain plausible, return
 ambiguous. If the requested action is outside the allowed operations, return
 unsupported. Keep reason and evidence entries concise; do not provide chain-of-thought.
@@ -448,7 +448,8 @@ def interpret_teacher_language(
         "suggestions": exception.get("suggestions") or [],
         "allowed_operations": sorted(
             operation for operation, categories in CORRECTION_OPERATION_CATEGORIES.items()
-            if str(exception.get("category") or "") in categories
+            if operation != "resolve_question_allocation_pairing"
+            and str(exception.get("category") or "") in categories
         ),
     }
     audit: dict[str, Any] = {

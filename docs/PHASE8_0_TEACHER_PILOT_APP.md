@@ -4,10 +4,11 @@
 
 **LOCALLY QUALIFIED — hosted teacher-pilot acceptance pending.**
 
-Phase 7 is frozen. This increment adds a teacher-facing shell around the accepted
-conversion and review system. It does not change the memo engine, correction
-operations, interpretation ladder, correction history, canonical validation,
-renderer, or review semantics.
+The accepted Phase 7 baseline remains frozen. Phase 8.0 adds a teacher-facing
+shell around that conversion and review system. A later teacher-pilot defect
+increment makes three bounded corrections described below: real drag-and-drop,
+source-defined document totals, and one purpose-specific atomic allocation-pairing
+operation. Those changes do not revise the historical Phase 7 acceptance record.
 
 Production project scope is restricted to Supabase project
 `njrqiurqljwtuqrvguhj`.
@@ -181,12 +182,57 @@ credential.
 - Raw stack traces and server secrets are never shown.
 - A bounded error code is available only in optional technical details.
 
+## Teacher-pilot defect hardening - 2026-10-01
+
+The first live teacher pilot exposed three bounded gaps. This increment addresses
+them without changing the immutable source or manually editing live database rows.
+
+### Upload drag-and-drop
+
+The upload target now accepts one dropped PDF, DOCX, PNG or JPEG through the same
+validation path as the file picker. Drag events prevent browser navigation, show an
+active drop state, reject zero or multiple files, and remain disabled while upload
+or dispatch is busy. Click-to-choose remains available and accessible.
+
+### Source-defined assessment totals
+
+Runtime validation no longer assumes that every assessment is worth 150 marks.
+The last explicit source `TOTAL` is the observed document total; the canonical
+computed total remains the sum of question subtotals, and the expected total is the
+observed source total. Supported totals are bounded to 1-999. Missing source totals
+remain missing and are never fabricated. A subtotal correction may be applied
+sequentially; the document-level discrepancy remains active until the subtotal
+ledger matches the observed source total.
+
+The historical 150-mark RAW and teacher-language acceptance records remain
+unchanged because they describe those specific benchmark memos.
+
+### Atomic grouped allocation pairing
+
+`question_allocation_pairing_ambiguous` now uses the dedicated
+`resolve_question_allocation_pairing` operation. The review page displays every
+question ID from the composite exception and requires a total and marking scheme
+for each one. Teachers may use new lines or semicolons between mark entries and put
+`OR` between alternative methods. The complete allocation is shown back before the
+existing explicit confirmation step.
+
+The Edge Function validates the exact ordered target set, bounded totals, mark
+points, valid mark codes, reconciled totals, and maximum scoring across `OR`
+branches. The engine repeats those payload checks and also requires one existing
+leaf question per target and one shared source row. Validation completes for every
+child before any structure is changed.
+Missing, duplicate, reordered, extra, cross-row, or arithmetically inconsistent
+input fails as a whole. Generic free text, AI interpretation, and single-item
+content replacement cannot clear this grouped exception.
+
+This increment does not mutate live job or correction records. Existing pending attempts must be cancelled or rejected through the review UI before a replacement can be submitted.
+
 ## Explicit non-goals
 
 Phase 8.0 does not include BUZA integration, billing, admin analytics, organisation
 management, subscriptions, multi-school tenancy, notification systems, retention
-management, a new AI provider, a new correction operation, engine changes, renderer
-changes, or a React rewrite of the accepted review application.
+management, a new AI provider, broad correction redesign, or a React rewrite of the
+accepted review application.
 
 ## Local qualification
 
@@ -202,7 +248,11 @@ Automated frontend tests cover:
 - private output path construction;
 - reliance on RLS rather than frontend ownership trust;
 - allowed browser environment variables and absence of server secrets; and
-- the bounded server retry-state contract.
+- the bounded server retry-state contract;
+- valid, invalid, multiple-file and busy-state drag-and-drop behavior;
+- source-defined totals at 40, 75, 100 and 150 marks without a fabricated fallback;
+- sequential subtotal reconciliation against the observed source total; and
+- atomic grouped allocation validation, `OR` scoring and composite safety.
 
 The production Vite build is generated in `docs/teacher-app/`. The complete Phase 7
 Python suite remains regression protection.
