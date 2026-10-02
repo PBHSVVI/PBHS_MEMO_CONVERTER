@@ -26,6 +26,15 @@ def deterministic_semantic(point: dict[str, Any]) -> tuple[str | None, str | Non
     desc = _norm(point.get("descriptor"))
     existing = point.get("semantic")
 
+    # A semantic decision becomes authoritative only after the teacher has
+    # reviewed the conflict and confirmed the resulting correction.  Raw or
+    # newly typed shorthand still follows the ordinary deterministic + AI
+    # cross-check below.
+    if point.get("notation") == "teacher_semantic_confirmed":
+        allowed = ALLOWED_BY_CODE.get(code)
+        if existing and allowed is not None and existing in allowed:
+            return str(existing), "teacher_confirmed_semantic"
+
     if code == "M":
         return "method", "shorthand_M"
     if code == "CA":
@@ -416,8 +425,15 @@ def interpret_semantics(
                 )
                 suggestions = [{
                     "candidate_id": cid,
+                    "question_id": candidate["question_id"],
+                    "mark_index": candidate["mark_index"],
+                    "count": candidate["count"],
+                    "source_shorthand": candidate["source_shorthand"],
+                    "descriptor": candidate["descriptor"],
                     "semantic_type": chosen["semantic_type"],
                     "confidence_score": chosen["confidence_score"],
+                    "conflict_reason": issue,
+                    "resolution_method": chosen["resolution_method"],
                 }]
 
             exceptions.append({

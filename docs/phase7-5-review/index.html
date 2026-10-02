@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 7.5 Review v4.5</title>
+<title>PBHS Memo Converter — Phase 7.5 Review v4.6</title>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
 <style>
@@ -17,13 +17,13 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 #focusViewport{min-height:260px;max-height:560px;overflow:auto;position:relative;background:#cfd7e2;padding:16px}#focusRender{background:#fff;border-radius:6px;padding:10px;min-width:680px;box-shadow:0 2px 12px #0002}.focus-docx table{border-collapse:collapse}.focus-docx td,.focus-docx th{position:relative}.evidence-context{outline:4px solid #f0b000!important;outline-offset:2px!important;background:#fff4c4!important}.discrepancy-target{outline:4px solid #dc2626!important;outline-offset:2px!important}.arrow-badge{display:inline-flex;align-items:center;gap:6px;margin:4px 0 8px;padding:6px 9px;background:#dc2626;color:white;border-radius:999px;font-weight:900;font-size:.83rem;box-shadow:0 2px 8px #0002}.arrow-badge::before{content:'➜';font-size:1.3rem;line-height:1}.gap-callout{border:2px solid #dc2626;background:#fff1f0;color:#8f1515;padding:8px 10px;border-radius:9px;margin:6px 0;font-weight:850}.gap-callout::before{content:'➜ ';font-size:1.15rem}.focus-note{padding:10px 12px;background:#fff;border-top:1px solid var(--line);font-size:.9rem}
 #fullMemoPanel{margin-top:12px}.fullViewport{height:580px;overflow:auto;background:#cfd7e2;padding:16px}.docx-wrapper{background:#cfd7e2!important;padding:0!important}.docx-wrapper>section.docx{box-shadow:0 2px 10px #0002;margin:0 auto 18px!important}
 #sourceFullHost.offscreen{position:fixed;left:-12000px;top:0;width:980px;visibility:hidden;pointer-events:none}.pdfFrame{width:900px;height:1200px;border:0;background:white}.sourceImg{display:block;max-width:none}
-.explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.proposalSummary{font-weight:850;margin:8px 0}.markPointList{margin:8px 0;padding-left:22px}.markPointList li{margin:5px 0}.technicalProposal{margin-top:10px;color:#526071}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
+.explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.proposalSummary{font-weight:850;margin:8px 0}.markPointList{margin:8px 0;padding-left:22px}.markPointList li{margin:5px 0}.technicalProposal{margin-top:10px;color:#526071}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.semanticConflict{border-left:5px solid var(--amber);background:#fffaf0;border-radius:9px;padding:12px;margin-top:8px}.semanticCompare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}.semanticOption{background:#fff;border:1px solid #ead8a5;border-radius:8px;padding:10px}.semanticOption span{display:block;color:#526071;font-size:.8rem;font-weight:800;text-transform:uppercase;margin-bottom:5px}.semanticOption strong{display:block}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals,.semanticCompare{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
 #sourceText{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:260px}.pendingBadge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3e8;color:#8a4c00;font-size:.82rem;font-weight:850}.sectionTitle{margin:.2rem 0 .4rem;font-size:1.05rem}
 .guide{border:1px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:10px 12px;margin:12px 0}.guide summary{cursor:pointer;font-weight:900;color:#17365d}.guide ul{padding-left:20px}.guide li{margin:6px 0}.contentEditor{border-left:5px solid var(--navy);padding-left:12px}.contentEditor textarea{min-height:82px}.contentEditor .solution{min-height:130px}.contentPreview{border:1px solid #cbe6d5;background:#fff;border-radius:9px;padding:10px;margin:8px 0}.contentPreview b{display:block;margin:8px 0 4px}.contentPreview pre{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:240px;margin:4px 0}
 .allocationEditor{border:2px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:12px}.allocationRows{display:grid;gap:10px;margin:10px 0}.allocationRow{background:#fff;border:1px solid #cbd8e8;border-radius:9px;padding:10px}.allocationRowHead{display:grid;grid-template-columns:minmax(120px,.35fr) minmax(140px,.65fr);gap:10px;align-items:end}.allocationRow textarea{min-height:90px}.allocationQuestion{font-size:1.05rem;font-weight:900;padding:10px 0}@media(max-width:600px){.allocationRowHead{grid-template-columns:1fr}}</style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.5</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.6</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -86,7 +86,7 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
         <div id="allocationRows" class="allocationRows"></div>
         <button id="submitAllocations" class="primary">Review all corrections</button>
       </div>
-      <div id="suggestionBlock" class="choiceBlock hide"><b>Accept a supplied suggestion</b><div id="suggestionButtons"></div></div>
+      <div id="suggestionBlock" class="choiceBlock hide"><b id="suggestionHeading">Choose an interpretation</b><div id="suggestionButtons"></div></div>
       <div id="typedCorrectionBlock" class="choiceBlock">
         <b>Type the correction / mark scheme / LaTeX</b>
         <div class="muted" style="margin:5px 0 8px">Plain text and LaTeX are both acceptable evidence. Nothing is assumed from this field until you submit it.</div>
@@ -153,13 +153,13 @@ function requestedReviewJob(search){return validJobId(new URLSearchParams(search
 // END JOB SELECTION MODEL
 let jobId=requestedReviewJob(location.search);
 $('#job').value=jobId;
-let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],sourceLoaded=false,sourceKind=null,normalizedCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
+let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
 function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
 function selectJob(){
  const selected=validJobId($('#job').value);if(!selected)throw new Error('Enter a valid review Job ID. The page no longer falls back to the completed acceptance job.');
- if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];sourceLoaded=false;sourceKind=null;normalizedCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey=''}
+ if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey=''}
  const url=new URL(location.href);url.searchParams.set('job_id',jobId);history.replaceState(null,'',url);
  return jobId;
 }
@@ -186,6 +186,24 @@ async function jsonFile(path){const r=await sb.storage.from('memo-files').downlo
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function humanCategory(c){return String(c||'review issue').replaceAll('_',' ')}
 function candidateText(s){if(!s||typeof s!=='object')return null;return typeof s.candidate==='string'?s.candidate:(typeof s.label==='string'?s.label:null)}
+
+// BEGIN SEMANTIC CONFLICT MODEL
+const semanticLabels={method:'Method',accuracy:'Accuracy',answer:'Answer',consistent_accuracy:'Consistent accuracy',formula:'Formula',factorisation:'Factorisation',statement:'Statement',substitution:'Substitution',simplification:'Simplification',reason:'Reason'};
+const semanticCodes={method:'M',accuracy:'A',answer:'A',consistent_accuracy:'CA',formula:'F',factorisation:'F',statement:'S',substitution:'S',simplification:'S',reason:'R'};
+function ordinal(n){const m=n%100;return `${n}${m>=11&&m<=13?'th':n%10===1?'st':n%10===2?'nd':n%10===3?'rd':'th'}`}
+function enteredSemantic(code,descriptor,existing){if(code==='CA')return 'consistent_accuracy';if(code==='M')return 'method';if(code==='R')return 'reason';if(code==='A')return /\b(?:answer|final)\b/i.test(descriptor)?'answer':'accuracy';if(code==='F')return /factor/i.test(descriptor)?'factorisation':'formula';return semanticLabels[existing]?existing:'other'}
+function semanticConflictModel(ex,s,structure){
+ if(!s||typeof s!=='object')return null;
+ const candidateId=String(s.candidate_id||''),questionId=String(ex?.affected_id||s.question_id||''),match=candidateId.match(/__m(\d+)$/),markIndex=Number.isInteger(Number(s.mark_index))?Number(s.mark_index):(match?Number(match[1])-1:-1);
+ if(!candidateId||!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(questionId)||markIndex<0||candidateId!==`${questionId.replaceAll('.','_')}__m${markIndex+1}`)return null;
+ const question=(Array.isArray(structure?.questions)?structure.questions:[]).find(item=>String(item?.question_id||'')===questionId),points=Array.isArray(question?.mark_points)?question.mark_points:[],source=points[markIndex]||s;
+ const count=Number(source?.count),sourceCode=String(source?.code||source?.source_shorthand||'').toUpperCase(),descriptor=String(source?.descriptor||'').trim(),suggestedSemantic=String(s.semantic_type||''),suggestedCode=semanticCodes[suggestedSemantic],sourceSemantic=enteredSemantic(sourceCode,descriptor,String(source?.semantic||''));
+ if(!Number.isInteger(count)||count<1||!sourceCode||!descriptor||!suggestedCode||!semanticLabels[sourceSemantic])return null;
+ const position=points.length&&markIndex===points.length-1?'final marking point':`${ordinal(markIndex+1)} marking point`;
+ return {question_id:questionId,candidate_id:candidateId,mark_index:markIndex,position,count,descriptor,entered_code:sourceCode,entered_semantic:sourceSemantic,entered_label:semanticLabels[sourceSemantic]||humanCategory(sourceSemantic),suggested_code:suggestedCode,suggested_semantic:suggestedSemantic,suggested_label:semanticLabels[suggestedSemantic]||humanCategory(suggestedSemantic),confidence_score:s.confidence_score??null,provider:s.resolution_method||s.provider||null,conflict_reason:s.conflict_reason||null};
+}
+function semanticConflictPresentation(model){return {title:`Question ${model.question_id} — ${model.position}`,entered:`${model.count}${model.entered_code} — ${model.descriptor}`,suggested:`${model.count}${model.suggested_code} — ${model.descriptor}`,suggested_choice:`Use ${model.suggested_code} — ${model.suggested_label}`,entered_choice:`Keep ${model.entered_code} — ${model.entered_label}`}}
+// END SEMANTIC CONFLICT MODEL
 
 // BEGIN CORRECTION AUDIT EVALUATOR
 function evaluateCorrectionAudit(canonical){
@@ -251,6 +269,7 @@ const knownSpecs={
 function genericExplain(ex){
  const a=String(ex.affected_id||'');
  switch(ex.category){
+  case 'ambiguous_mark_semantics': return {title:`Confirm the marking code for Question ${a}`,what:'The entered shorthand code and the automated meaning check disagree.',need:'Compare the two plain-language choices below. Neither choice is applied until you select it and confirm the complete show-back.'};
   case 'question_allocation_pairing_ambiguous': return {title:'Allocate a shared source row',what:ex.message||'Several question numbers and allocations share one source row and cannot be paired safely.',need:'Use the grouped editor to assign a total and complete marking scheme to every listed question in one atomic correction.'};
   case 'item_total_mismatch': return {title:`Check Question ${a}`,what:ex.message||'The printed item total and extracted marking points do not agree.',need:'Inspect the highlighted item and tell the system the correct mark allocation or marking scheme. If the printed total is correct, explain how the marking points should add to it.'};
   case 'question_total_mismatch': return {title:`Check Question ${a} subtotal`,what:ex.message||'The question subtotal and item totals do not agree.',need:'This is usually a consequence of an unresolved item inside the same question. It should only be corrected directly if no more specific item-level cause remains.'};
@@ -324,6 +343,7 @@ function flattenNormalized(normalized){
  return blocks;
 }
 async function ensureNormalized(){if(normalizedCache)return normalizedCache;normalizedCache=await jsonFile(`${user.id}/${jobId}/internal/normalized.json`);return normalizedCache}
+async function ensureStructure(){if(structureCache)return structureCache;structureCache=await jsonFile(`${user.id}/${jobId}/internal/structure.json`);return structureCache}
 function tokenRegex(token){const t=String(token||'').trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');if(!t)return null;return new RegExp(`(^|[^0-9A-Za-z.])${t}([^0-9A-Za-z.]|$)`,'i')}
 function textMatches(text,token){const re=tokenRegex(token);return re?re.test(String(text||'').replace(/\s+/g,' ').trim()):false}
 // BEGIN SOURCE FOCUS MODEL
@@ -416,29 +436,34 @@ function renderExplanation(ex,step){
  }).join('')}`;
 }
 function compositeQuestionIds(value){const ids=String(value||'').split(',').map(id=>id.trim()).filter(Boolean);return ids.length>=2&&ids.length<=20&&new Set(ids).size===ids.length&&ids.every(id=>/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(id))?ids:[]}
-function renderChoices(ex){
+async function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
  $('#contentTarget').value=/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(String(ex?.affected_id||''))?String(ex.affected_id):'';$('#contentQuestion').value='';$('#contentSolution').value='';$('#contentMarking').value='';
  const grouped=ex.category==='question_allocation_pairing_ambiguous',ids=grouped?compositeQuestionIds(ex.affected_id):[];
  $('#allocationEditor').classList.toggle('hide',!grouped);for(const id of ['typedCorrectionBlock','contentCorrectionBlock','fileCorrectionBlock'])$('#'+id).classList.toggle('hide',grouped);
  const rows=$('#allocationRows');rows.innerHTML='';if(grouped){for(const id of ids){const row=document.createElement('div');row.className='allocationRow';row.dataset.questionId=id;row.innerHTML=`<div class="allocationRowHead"><div class="allocationQuestion">Question ${esc(id)}</div><div><label>Question total</label><input class="allocationTotal" type="number" min="1" max="999" step="1" inputmode="numeric" aria-label="Question ${esc(id)} total"></div></div><label>Marking scheme</label><textarea class="allocationMarking" aria-label="Question ${esc(id)} marking scheme" placeholder="1M method&#10;1A answer&#10;OR&#10;2A alternative answer"></textarea>`;rows.append(row)}}
- const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';
- if(!grouped&&suggestions.length){$('#suggestionBlock').classList.remove('hide');suggestions.forEach((s,i)=>{const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Accept suggestion: ${candidateText(s)||JSON.stringify(s)}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}else $('#suggestionBlock').classList.add('hide');
+ const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';let rendered=0;
+ if(!grouped&&ex.category==='ambiguous_mark_semantics'&&suggestions.length){
+  let structure=null;try{structure=await ensureStructure()}catch(e){log('SEMANTIC CONFLICT SOURCE WARNING',{message:e.message})}
+  suggestions.forEach((s,i)=>{const model=semanticConflictModel(ex,s,structure);if(!model)return;rendered+=1;const view=semanticConflictPresentation(model),card=document.createElement('div');card.className='semanticConflict';card.innerHTML=`<div class="reviewEyebrow">${esc(view.title)}</div><p>The marking code and automated meaning do not agree. Please confirm which marking code is intended.</p><div class="semanticCompare"><div class="semanticOption"><span>You entered</span><strong>${esc(view.entered)}</strong><div>${esc(model.entered_label)}</div></div><div class="semanticOption"><span>The automated check suggests</span><strong>${esc(view.suggested)}</strong><div>${esc(model.suggested_label)}</div></div></div><button class="suggestionBtn semanticSuggested">${esc(view.suggested_choice)}</button><button class="secondary suggestionBtn semanticEntered">${esc(view.entered_choice)}</button><details class="technicalProposal"><summary>Technical details</summary><div>Candidate: <code>${esc(model.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.suggested_semantic)}</code></div>${model.confidence_score==null?'':`<div>Confidence: <code>${esc(model.confidence_score)}</code></div>`}${model.provider?`<div>Provider path: <code>${esc(model.provider)}</code></div>`:''}${model.conflict_reason?`<div>Validation: <code>${esc(model.conflict_reason)}</code></div>`:''}</details>`;card.querySelector('.semanticSuggested').onclick=()=>submitSemanticChoice(i,model,'suggested');card.querySelector('.semanticEntered').onclick=()=>submitSemanticChoice(i,model,'entered');$sb.append(card)})
+ }else if(!grouped){suggestions.forEach((s,i)=>{const label=candidateText(s);if(!label)return;rendered+=1;const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Use ${label}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}
+ $('#suggestionBlock').classList.toggle('hide',rendered===0);$('#suggestionHeading').textContent=ex.category==='ambiguous_mark_semantics'?'Resolve the marking-code conflict':'Choose a supplied interpretation';
 }
 async function showException(ex){
- currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;status('Review the focused source evidence, then choose how to correct the item shown.','success');await showEvidence();
+ currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);await renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;status('Review the focused source evidence, then choose how to correct the item shown.','success');await showEvidence();
 }
 
 function showRecovery(corr,message){
  currentCorrection=corr;
  const grouped=currentException?.category==='question_allocation_pairing_ambiguous';
+ const semantic=currentException?.category==='ambiguous_mark_semantics';
  $('#choices').classList.add('hide');
  $('#proposalPanel').classList.add('hide');
  $('#recoveryPanel').classList.remove('hide');
- $('#retryInterpretation').classList.toggle('hide',grouped);
- $('#editResubmit').textContent=grouped?'Cancel and open grouped editor':'Edit / resubmit correction';
- $('#recoveryMessage').textContent=grouped?'This saved free-text attempt cannot resolve a linked allocation safely. Nothing was applied. Cancel it and complete every listed question in the grouped editor.':(message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');
- status(grouped?'Your earlier attempt is saved but cannot be applied. Cancel it to open the grouped editor.':'Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
+ $('#retryInterpretation').classList.toggle('hide',grouped||semantic);
+ $('#editResubmit').textContent=grouped?'Cancel and open grouped editor':semantic?'Cancel and reopen conflict choices':'Edit / resubmit correction';
+ $('#recoveryMessage').textContent=grouped?'This saved free-text attempt cannot resolve a linked allocation safely. Nothing was applied. Cancel it and complete every listed question in the grouped editor.':semantic?'This older suggestion attempt does not contain an explicit marking-code choice. Nothing was applied. Cancel it, then choose the intended code in teacher language.':(message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');
+ status(grouped?'Your earlier attempt is saved but cannot be applied. Cancel it to open the grouped editor.':semantic?'Your earlier attempt is saved but cannot be applied. Cancel it to reopen the two marking-code choices.':'Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
 }
 async function rejectAndReopen(prefill=''){
  if(!currentCorrection)return;
@@ -488,16 +513,19 @@ function teacherShowBackModel(corr){
   printed_marks:p.printed_marks==null?null:Number(p.printed_marks),
   question_text:p.question_text==null?null:String(p.question_text),
   solution_lines:Array.isArray(p.solution_lines)?p.solution_lines.map(line=>String(line)):[],
-  mark_points:points.map(point=>({count:Number(point?.count||0),code:String(point?.code||''),descriptor:String(point?.descriptor||'')})),
- };
+   mark_points:points.map(point=>({count:Number(point?.count||0),code:String(point?.code||''),descriptor:String(point?.descriptor||'')})),
+   semantic_choice:p.operation==='resolve_mark_semantic_conflict'?{question_id:String(p.affected_id||''),candidate_id:String(p.candidate_id||''),mark_index:Number(p.mark_index),count:Number(p.source_count),descriptor:String(p.source_descriptor||''),selected_code:String(p.selected_code||''),selected_semantic:String(p.selected_semantic_type||''),suggested_semantic:String(p.suggested_semantic_type||''),confidence_score:p.confidence_score??null,provider:p.resolution_method||null,teacher_choice:String(p.teacher_choice||'')}:null,
+  };
 }
 // END TEACHER SHOWBACK MODEL
 function showProposal(corr){
  currentCorrection=corr;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');
  const model=teacherShowBackModel(corr),pointList=model.mark_points.length?`<ul class="markPointList">${model.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'';
+ const semanticContent=model.semantic_choice?`<div class="contentPreview"><b>Confirmed marking-code interpretation</b><ul class="markPointList"><li><b>${esc(model.semantic_choice.count)}${esc(model.semantic_choice.selected_code)}</b> — ${esc(model.semantic_choice.descriptor)}</li></ul><div>${esc(semanticLabels[model.semantic_choice.selected_semantic]||humanCategory(model.semantic_choice.selected_semantic))}</div></div>`:'';
  const allocationContent=model.allocations.length?`<div class="contentPreview"><b>Complete grouped allocation</b>${model.allocations.map(item=>`<div class="allocationRow"><b>Question ${esc(item.question_id)} — ${esc(item.printed_marks)} marks</b><ul class="markPointList">${item.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul><span class="muted">${esc(item.mark_calculation_mode)}</span></div>`).join('')}</div>`:'';
- const content=allocationContent||((model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList);
- $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` → ${esc(model.target_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}</details>`;
+ const content=semanticContent||allocationContent||((model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList);
+ const semanticTechnical=model.semantic_choice?`<div>Candidate: <code>${esc(model.semantic_choice.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.semantic_choice.selected_semantic)}</code></div>${model.semantic_choice.confidence_score==null?'':`<div>Automated confidence: <code>${esc(model.semantic_choice.confidence_score)}</code></div>`}${model.semantic_choice.provider?`<div>Provider path: <code>${esc(model.semantic_choice.provider)}</code></div>`:''}`:'';
+ $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` → ${esc(model.target_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}${semanticTechnical}</details>`;
  status('Show-back ready. Confirm only if this matches what you intended.','success')
 }
 async function submitAndInterpret(body){
@@ -510,6 +538,7 @@ async function submitAndInterpret(body){
   const submittedAt=new Date();const result=await invoke('submit-correction',body);const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
  }finally{setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
+async function submitSemanticChoice(index,model,choice){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index,semantic_resolution:{candidate_id:model.candidate_id,choice}})}
 async function submitTyped(){const t=$('#typedText').value.trim();if(!t){status('Type the correction or LaTeX first.','warn');return}await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:t})}
 function parseStructuredMarking(text,{allowOr=false}={}){
  const fragments=String(text||'').trim().split(/\n|;|\|/).map(value=>value.trim()).filter(Boolean),branches=[[]];if(!fragments.length)throw new Error('Enter at least one marking line.');
@@ -538,7 +567,7 @@ async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status
 function setBusy(v){for(const id of ['submitTyped','submitContent','submitAllocations','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
 
 async function waitStable(){for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4)log(`Worker poll ${i+1}`,j);if(j.status==='complete')return j;if(j.status==='needs_review'&&j.stage==='phase7_review'&&j.engine_version==='phase7.5')return j;if(j.status==='correction_pending')return j;if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`)}throw new Error('Timed out waiting for Phase 7.5 revalidation.')}
-async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
+async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch&&ex.category==='ambiguous_mark_semantics'){showRecovery(corr);return true}if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
 async function resumeFlow(){
  const j=await currentJob();log('RESUME STATE',j);if(j.status==='complete'){await finalAudit();return}if(await resumePending())return;
  if(['processing','dispatched','correction_confirmed'].includes(j.status)){status('Processing is running. Waiting for the next stable review state…');await waitStable();if(await resumePending())return}

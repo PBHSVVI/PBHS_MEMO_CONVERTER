@@ -53,7 +53,9 @@ def effective_correction_history(
         operation = patch.get("operation")
         category = patch.get("category")
         target = str(
-            patch.get("target_id")
+            patch.get("candidate_id")
+            if operation == "resolve_mark_semantic_conflict"
+            else patch.get("target_id")
             if operation == "replace_item_content"
             else patch.get("affected_id") or ""
         ).strip()
@@ -62,6 +64,7 @@ def effective_correction_history(
         if correction_id and (
             QUESTION_ID_RE.fullmatch(target)
             or operation == "resolve_question_allocation_pairing"
+            or operation == "resolve_mark_semantic_conflict"
         ):
             if operation == "replace_mark_points" and category in {
                 "mark_arithmetic_mismatch", "item_total_mismatch",
@@ -72,6 +75,11 @@ def effective_correction_history(
                 domain = "item_total"
             elif operation == "replace_item_content":
                 domain = "item_content"
+            elif (
+                operation == "resolve_mark_semantic_conflict"
+                and category == "ambiguous_mark_semantics"
+            ):
+                domain = "mark_semantic"
             elif (
                 operation == "resolve_question_allocation_pairing"
                 and category == "question_allocation_pairing_ambiguous"

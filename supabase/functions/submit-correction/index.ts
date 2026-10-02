@@ -5,6 +5,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
 const QUESTION_ID_RE = /^\d{1,2}(?:\.\d{1,2}){0,2}$/;
 const MARK_CODES = new Set(["M", "A", "CA", "F", "S", "R"]);
+const SEMANTIC_TO_CODE: Record<string, string> = {
+  method: "M", accuracy: "A", answer: "A", consistent_accuracy: "CA",
+  formula: "F", factorisation: "F", statement: "S", substitution: "S",
+  simplification: "S", reason: "R",
+};
+const SEMANTIC_LABELS: Record<string, string> = {
+  method: "Method", accuracy: "Accuracy", answer: "Answer",
+  consistent_accuracy: "Consistent accuracy", formula: "Formula",
+  factorisation: "Factorisation", statement: "Statement",
+  substitution: "Substitution", simplification: "Simplification", reason: "Reason",
+};
+const ALLOWED_SEMANTICS_BY_CODE: Record<string, Set<string>> = {
+  M: new Set(["method"]), A: new Set(["accuracy", "answer"]),
+  CA: new Set(["consistent_accuracy"]), F: new Set(["formula", "factorisation"]),
+  S: new Set(["statement", "substitution", "simplification"]), R: new Set(["reason"]),
+};
 
 function markSemantic(code: string, descriptor: string): string {
   if (code === "CA") return "consistent_accuracy";
@@ -24,6 +40,24 @@ function candidateText(value: unknown): string | null {
   const obj = value as Record<string, unknown>;
   const v = obj.candidate;
   return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function ordinal(value: number): string {
+  const mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${value}th`;
+  return `${value}${value % 10 === 1 ? "st" : value % 10 === 2 ? "nd" : value % 10 === 3 ? "rd" : "th"}`;
+}
+
+async function loadStructure(ctx: any, userId: string, jobId: string): Promise<Record<string, unknown> | null> {
+  const path = `${userId}/${jobId}/internal/structure.json`;
+  const { data, error } = await ctx.supabaseAdmin.storage.from("memo-files").download(path);
+  if (error || !data) return null;
+  try {
+    const parsed = JSON.parse(await data.text());
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
 
 function compositeQuestionIds(value: unknown): string[] | null {
@@ -198,7 +232,66 @@ export default {
       const candidate = candidateText(selected);
       displayText = candidate ?? "Suggested interpretation selected.";
 
-      if (
+      const semanticResolution = body.semantic_resolution;
+      if (semanticResolution && typeof semanticResolution === "object") {
+        if (exception.category !== "ambiguous_mark_semantics") {
+          return Response.json({ error: "semantic_resolution_category_mismatch" }, { status: 400 });
+        }
+        const value = semanticResolution as Record<string, unknown>;
+        const choice = value.choice;
+        const candidateId = typeof selected.candidate_id === "string" ? selected.candidate_id : "";
+        if (!candidateId || value.candidate_id !== candidateId || !["suggested", "entered"].includes(String(choice))) {
+          return Response.json({ error: "invalid_semantic_resolution" }, { status: 400 });
+        }
+        const questionId = String(exception.affected_id ?? "");
+        const match = candidateId.match(/__m(\d+)$/);
+        const markIndex = Number(selected.mark_index ?? (match ? Number(match[1]) - 1 : -1));
+        if (!QUESTION_ID_RE.test(questionId) || !Number.isInteger(markIndex) || markIndex < 0 || candidateId !== `${questionId.replaceAll(".", "_")}__m${markIndex + 1}`) {
+          return Response.json({ error: "invalid_semantic_candidate" }, { status: 400 });
+        }
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const question = questions.find((item) => item && typeof item === "object" && String((item as Record<string, unknown>).question_id ?? "") === questionId) as Record<string, unknown> | undefined;
+        const points = Array.isArray(question?.mark_points) ? question.mark_points : [];
+        const point = points[markIndex] && typeof points[markIndex] === "object" ? points[markIndex] as Record<string, unknown> : null;
+        const sourceCount = Number(point?.count);
+        const sourceCode = typeof point?.code === "string" ? point.code.toUpperCase() : "";
+        const sourceDescriptor = typeof point?.descriptor === "string" ? point.descriptor.trim() : "";
+        const suggestedSemantic = typeof selected.semantic_type === "string" ? selected.semantic_type : "";
+        const suggestedCode = SEMANTIC_TO_CODE[suggestedSemantic];
+        const enteredSemantic = markSemantic(sourceCode, sourceDescriptor);
+        if (!point || !Number.isInteger(sourceCount) || sourceCount < 1 || !MARK_CODES.has(sourceCode) || !sourceDescriptor || !suggestedCode) {
+          return Response.json({ error: "semantic_source_unavailable" }, { status: 409 });
+        }
+        const useSuggestion = choice === "suggested";
+        const selectedCode = useSuggestion ? suggestedCode : sourceCode;
+        const selectedSemantic = useSuggestion ? suggestedSemantic : enteredSemantic;
+        if (!ALLOWED_SEMANTICS_BY_CODE[selectedCode]?.has(selectedSemantic)) {
+          return Response.json({ error: "invalid_semantic_choice" }, { status: 400 });
+        }
+        const selectedLabel = SEMANTIC_LABELS[selectedSemantic] ?? selectedSemantic.replaceAll("_", " ");
+        const position = markIndex === points.length - 1 ? "final marking point" : `${ordinal(markIndex + 1)} marking point`;
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "resolve_mark_semantic_conflict",
+          category: exception.category,
+          affected_id: questionId,
+          candidate_id: candidateId,
+          mark_index: markIndex,
+          source_count: sourceCount,
+          source_code: sourceCode,
+          source_descriptor: sourceDescriptor,
+          selected_code: selectedCode,
+          selected_semantic_type: selectedSemantic,
+          suggested_semantic_type: suggestedSemantic,
+          confidence_score: selected.confidence_score ?? null,
+          resolution_method: selected.resolution_method ?? null,
+          teacher_choice: choice,
+          reinterpretation_method: "structured_semantic_conflict_choice",
+        };
+        displayText = `Question ${questionId} — ${position}: use ${sourceCount}${selectedCode} — ${sourceDescriptor} (${selectedLabel}).`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (
         candidate &&
         exception.category === "unlabeled_mark_bearing_question" &&
         selected.kind === "review_numbering"

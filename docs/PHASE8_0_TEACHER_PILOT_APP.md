@@ -225,6 +225,23 @@ Missing, duplicate, reordered, extra, cross-row, or arithmetically inconsistent
 input fails as a whole. Generic free text, AI interpretation, and single-item
 content replacement cannot clear this grouped exception.
 
+### Teacher-facing semantic conflicts
+
+The semantic cross-check remains fail-closed. A manually entered shorthand code is
+evidence rather than an automatic override: for example, an `A` marking point that
+the semantic check reads as consistent accuracy still raises
+`shorthand_semantic_conflict` for teacher review. High model confidence does not
+choose either interpretation.
+
+Review version 4.6 resolves the internal candidate ID to the actual question and
+marking-point position. It presents the entered code and the automated interpretation
+in teacher language, followed by explicit choices such as `Use CA — Consistent
+accuracy` and `Keep A — Accuracy`. Candidate IDs, semantic enums, confidence and
+provider routing appear only inside collapsed Technical details. The selected choice
+is converted to a bounded `resolve_mark_semantic_conflict` patch, shown back in full,
+and applied only after the existing confirmation step. A legacy pending raw-suggestion
+attempt must be cancelled in the UI before these explicit choices are opened.
+
 This increment does not mutate live job or correction records. Existing pending attempts must be cancelled or rejected through the review UI before a replacement can be submitted.
 
 ## Explicit non-goals

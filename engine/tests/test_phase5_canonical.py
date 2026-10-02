@@ -70,10 +70,12 @@ class Phase5CacheTests(unittest.TestCase):
                 {
                     "candidate_id": "1_1__m1", "question_id": "1.1", "mark_index": 0,
                     "count": 1, "source_shorthand": "M", "descriptor": "method",
+                    "resolution_method": "deterministic",
                 },
                 {
                     "candidate_id": "1_1__m2", "question_id": "1.1", "mark_index": 1,
                     "count": 1, "source_shorthand": "A", "descriptor": "answer",
+                    "resolution_method": "deterministic",
                 },
             ],
             "ai_results": [],
@@ -92,6 +94,28 @@ class Phase5CacheTests(unittest.TestCase):
             "ai_results": [],
         }
         self.assertFalse(_cached_semantic_matches(self.structure, cached))
+
+    def test_teacher_confirmed_semantic_decision_rejects_older_ai_cache(self) -> None:
+        structure = {
+            "questions": [{
+                "question_id": "4.2.2",
+                "mark_points": [{
+                    "count": 1, "code": "A", "descriptor": "Correct c-value",
+                    "notation": "teacher_semantic_confirmed", "semantic": "accuracy",
+                }],
+                "source_preview": "Question 4.2.2",
+            }],
+        }
+        cached = {
+            "phase": "phase4_semantics",
+            "deterministic_results": [],
+            "ai_results": [{
+                "candidate_id": "4_2_2__m1", "question_id": "4.2.2", "mark_index": 0,
+                "count": 1, "source_shorthand": "A", "descriptor": "Correct c-value",
+                "semantic_type": "consistent_accuracy", "resolution_method": "groq:model",
+            }],
+        }
+        self.assertFalse(_cached_semantic_matches(structure, cached))
 
 
 class Phase5ValidationTests(unittest.TestCase):

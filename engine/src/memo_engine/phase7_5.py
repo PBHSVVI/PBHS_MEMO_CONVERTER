@@ -614,6 +614,97 @@ def _apply_replace_mark_points(
     }, None
 
 
+def _apply_resolve_mark_semantic_conflict(
+    structure: dict[str, Any],
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    question = _question(structure, affected_id)
+    # Semantic exceptions are produced after the correction overlay stage and
+    # therefore are not present in the freshly extracted structure.  The Edge
+    # Function binds the correction to the active database exception; replay
+    # validates the exact question and source point below.
+    if question is None:
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} could not resolve the active semantic conflict for Question {affected_id}.",
+        )
+
+    try:
+        mark_index = int(patch.get("mark_index"))
+        source_count = int(patch.get("source_count"))
+    except (TypeError, ValueError):
+        mark_index = -1
+        source_count = 0
+    candidate_id = str(patch.get("candidate_id") or "")
+    expected_candidate = f"{affected_id.replace('.', '_')}__m{mark_index + 1}"
+    points = question.get("mark_points") or []
+    if (
+        mark_index < 0
+        or mark_index >= len(points)
+        or candidate_id != expected_candidate
+    ):
+        return None, _issue(
+            "correction_semantic_target_invalid", affected_id,
+            f"Confirmed correction {correction_id} does not identify one current marking point.",
+        )
+
+    point = points[mark_index]
+    source_code = str(patch.get("source_code") or "").upper()
+    source_descriptor = str(patch.get("source_descriptor") or "").strip()
+    if (
+        int(point.get("count") or 0) != source_count
+        or str(point.get("code") or "").upper() != source_code
+        or str(point.get("descriptor") or "").strip() != source_descriptor
+    ):
+        return None, _issue(
+            "correction_semantic_source_changed", affected_id,
+            f"Confirmed correction {correction_id} no longer matches the source marking point.",
+        )
+
+    selected_code = str(patch.get("selected_code") or "").upper()
+    selected_semantic = str(patch.get("selected_semantic_type") or "")
+    allowed_by_code = {
+        "M": {"method"},
+        "CA": {"consistent_accuracy"},
+        "R": {"reason"},
+        "A": {"accuracy", "answer"},
+        "F": {"formula", "factorisation"},
+        "S": {"statement", "substitution", "simplification"},
+    }
+    if selected_semantic not in allowed_by_code.get(selected_code, set()):
+        return None, _issue(
+            "correction_semantic_choice_invalid", affected_id,
+            f"Confirmed correction {correction_id} contains an incompatible marking code and meaning.",
+        )
+
+    point["code"] = selected_code
+    point["semantic"] = selected_semantic
+    point["source"] = f"{source_count}{selected_code} {source_descriptor}".strip()
+    point["notation"] = "teacher_semantic_confirmed"
+    question["correction_overlay"] = {
+        "correction_id": correction_id,
+        "operation": "resolve_mark_semantic_conflict",
+        "candidate_id": candidate_id,
+    }
+    _remove_exception(structure, category, affected_id)
+    return {
+        "correction_id": correction_id,
+        "operation": "resolve_mark_semantic_conflict",
+        "category": category,
+        "affected_id": affected_id,
+        "target_id": affected_id,
+        "candidate_id": candidate_id,
+        "mark_index": mark_index,
+        "selected_code": selected_code,
+        "selected_semantic_type": selected_semantic,
+        "source_block_index": question.get("source_block_index"),
+    }, None
+
+
 def _apply_replace_item_content(
     structure: dict[str, Any],
     *,
@@ -1189,6 +1280,19 @@ def apply_phase7_5_patch(
             correction_id=correction_id,
             category=category,
             affected_id=affected_id,
+            patch=patch,
+        )
+        return applied, issue, True
+
+    if (
+        category == "ambiguous_mark_semantics"
+        and operation == "resolve_mark_semantic_conflict"
+    ):
+        applied, issue = _apply_resolve_mark_semantic_conflict(
+            structure,
+            correction_id=correction_id,
+            category=category,
+            affected_id=affected,
             patch=patch,
         )
         return applied, issue, True

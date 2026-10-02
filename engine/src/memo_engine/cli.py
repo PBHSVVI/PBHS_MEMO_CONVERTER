@@ -73,6 +73,7 @@ def _semantic_signature(structure: dict[str, Any]) -> dict[str, tuple[Any, ...]]
             int(item.get("count") or 0),
             item.get("source_shorthand"),
             str(item.get("descriptor") or ""),
+            item.get("resolution_method") == "deterministic",
         )
     return result
 
@@ -94,6 +95,7 @@ def _cached_semantic_matches(
                 int(item.get("count") or 0),
                 item.get("source_shorthand"),
                 str(item.get("descriptor") or ""),
+                item.get("resolution_method") == "deterministic",
             )
         except Exception:
             return False
