@@ -86,7 +86,7 @@ adds an atomic grouped editor for ambiguous question/allocation pairings. Generi
 free text and single-item content edits cannot clear that grouped exception. Hosted
 acceptance for Phase 8.0 remains pending.
 
-Review version 4.6 keeps semantic shorthand conflicts fail-closed while presenting
+Review version 4.7 keeps semantic shorthand conflicts fail-closed while presenting
 the actual marking point and explicit teacher-language choices. Internal candidate
 IDs, semantic enums, confidence and provider routing are confined to Technical
 details; the chosen interpretation still requires confirmation and an auditable

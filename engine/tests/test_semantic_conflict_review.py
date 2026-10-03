@@ -81,6 +81,42 @@ def test_candidate_id_resolves_to_teacher_facing_mark_point_and_explicit_choices
     assert result["model"]["candidate_id"] == "4_2_2__m4"
 
 
+def test_other_semantic_keeps_actual_mark_point_and_offers_bounded_code_choices():
+    exception = {
+        "category": "ambiguous_mark_semantics",
+        "affected_id": "7.2",
+        "suggestions": [{
+            "candidate_id": "7_2__m6",
+            "mark_index": 5,
+            "semantic_type": "other",
+            "confidence_score": 0.60,
+        }],
+    }
+    structure = {"questions": [{
+        "question_id": "7.2",
+        "mark_points": [
+            {"count": 1, "code": "M", "descriptor": f"step {index}"}
+            for index in range(1, 6)
+        ] + [{"count": 1, "code": "A", "descriptor": "change sign"}],
+    }]}
+    program = (
+        "const humanCategory=value=>String(value||'').replaceAll('_',' ');\n"
+        + _section("SEMANTIC CONFLICT MODEL")
+        + "\nconst ex=JSON.parse(process.argv[1]);const structure=JSON.parse(process.argv[2]);"
+        + "\nconst model=semanticConflictModel(ex,ex.suggestions[0],structure);"
+        + "\nconsole.log(JSON.stringify({model,presentation:semanticConflictPresentation(model),options:semanticCodeOptions(model)}));"
+    )
+
+    result = _run_node(program, exception, structure)
+
+    assert result["presentation"]["title"] == "Question 7.2 — final marking point"
+    assert result["presentation"]["entered"] == "1A — change sign"
+    assert result["presentation"]["suggested"] is None
+    assert result["presentation"]["suggested_choice"] is None
+    assert [item["code"] for item in result["options"]] == ["M", "A", "CA", "F", "S", "R"]
+    assert result["options"][1]["action"] == "Keep current code A — Accuracy"
+
+
 def test_suggestion_controls_never_render_raw_json():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     start = html.index("async function renderChoices(ex)")
@@ -90,6 +126,9 @@ def test_suggestion_controls_never_render_raw_json():
     assert "Use ${label}" in source
     assert "semanticConflictPresentation" in source
     assert "Accept supplied suggestion" not in html
+    assert "automatic check could not confidently identify the intended marking code" in source
+    assert "semanticCodeOptions(model)" in source
+    assert "Compare the two plain-language choices below" not in html
 
 
 def test_technical_identifiers_remain_under_technical_details():
@@ -147,3 +186,43 @@ def test_submit_endpoint_builds_confirmation_ready_auditable_semantic_patch():
     assert 'reinterpretation_method: "structured_semantic_conflict_choice"' in source
     assert 'exceptionStatus = "awaiting_confirmation"' in source
     assert "ALLOWED_SEMANTICS_BY_CODE[selectedCode]?.has(selectedSemantic)" in source
+    assert '!["suggested", "entered", "code"].includes(String(choice))' in source
+    assert 'choice === "code" && (suggestedCode || !MARK_CODES.has(explicitCode))' in source
+    assert "DEFAULT_SEMANTIC_BY_CODE[selectedCode]" in source
+
+
+def test_semantic_review_disables_generic_free_text_and_keeps_technical_values_collapsed():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "grouped||semantic" in html
+    assert '<summary>Technical details</summary>' in html
+    assert 'semantic_resolution:{candidate_id:model.candidate_id,choice' in html
+
+
+def test_existing_a_to_f_conflict_remains_an_explicit_two_choice_review():
+    exception = {
+        "category": "ambiguous_mark_semantics",
+        "affected_id": "6.1",
+        "suggestions": [{"candidate_id": "6_1__m1", "semantic_type": "formula"}],
+    }
+    structure = {"questions": [{
+        "question_id": "6.1",
+        "mark_points": [{"count": 1, "code": "A", "descriptor": "state the formula"}],
+    }]}
+    program = (
+        "const humanCategory=value=>String(value||'').replaceAll('_',' ');\n"
+        + _section("SEMANTIC CONFLICT MODEL")
+        + "\nconst ex=JSON.parse(process.argv[1]);const model=semanticConflictModel(ex,ex.suggestions[0],JSON.parse(process.argv[2]));"
+        + "\nconsole.log(JSON.stringify(semanticConflictPresentation(model)));"
+    )
+    result = _run_node(program, exception, structure)
+    assert result["suggested_choice"] == "Use F — Formula"
+    assert result["entered_choice"] == "Keep A — Accuracy"
+
+
+def test_submit_endpoint_blocks_a_second_pending_correction_for_the_whole_job():
+    source = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
+    pending_start = source.index('from("corrections").select("id,exception_id")')
+    pending_end = source.index("if (active?.length)", pending_start)
+    pending_query = source[pending_start:pending_end]
+    assert '.eq("job_id", jobId)' in pending_query
+    assert '.eq("exception_id", exceptionId)' not in pending_query

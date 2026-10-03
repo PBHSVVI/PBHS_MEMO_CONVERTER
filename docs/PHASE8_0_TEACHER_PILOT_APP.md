@@ -233,7 +233,7 @@ the semantic check reads as consistent accuracy still raises
 `shorthand_semantic_conflict` for teacher review. High model confidence does not
 choose either interpretation.
 
-Review version 4.6 resolves the internal candidate ID to the actual question and
+Review version 4.7 resolves the internal candidate ID to the actual question and
 marking-point position. It presents the entered code and the automated interpretation
 in teacher language, followed by explicit choices such as `Use CA — Consistent
 accuracy` and `Keep A — Accuracy`. Candidate IDs, semantic enums, confidence and
@@ -241,6 +241,22 @@ provider routing appear only inside collapsed Technical details. The selected ch
 is converted to a bounded `resolve_mark_semantic_conflict` patch, shown back in full,
 and applied only after the existing confirmation step. A legacy pending raw-suggestion
 attempt must be cancelled in the UI before these explicit choices are opened.
+
+The review page now presents an actionable queue with Previous, Next and Skip for
+now controls. Only active, non-dependent exceptions appear; parent subtotal and
+document discrepancies continue to wait for their underlying causes. Skipping is
+local navigation only and leaves the exception unresolved. Typed, content and
+grouped-allocation drafts are retained per job and exception. A submitted pending
+correction locks queue navigation until the teacher confirms or explicitly cancels
+it, preventing concurrent correction attempts.
+
+Multiple semantic conflicts for one question display both their marking-point
+position and their progress within that question. If the automated semantic result
+cannot map safely to a code, the page states that limitation and offers the bounded
+M, A, CA, F, S and R chooser. This fallback uses the same structured correction,
+readable show-back and explicit confirmation path; neither AI nor entered shorthand
+selects a code automatically. Internal candidate IDs, enums, confidence and provider
+details remain in collapsed Technical details.
 
 This increment does not mutate live job or correction records. Existing pending attempts must be cancelled or rejected through the review UI before a replacement can be submitted.
 

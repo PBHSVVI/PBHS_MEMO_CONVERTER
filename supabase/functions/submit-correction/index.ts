@@ -21,13 +21,17 @@ const ALLOWED_SEMANTICS_BY_CODE: Record<string, Set<string>> = {
   CA: new Set(["consistent_accuracy"]), F: new Set(["formula", "factorisation"]),
   S: new Set(["statement", "substitution", "simplification"]), R: new Set(["reason"]),
 };
+const DEFAULT_SEMANTIC_BY_CODE: Record<string, string> = {
+  M: "method", A: "accuracy", CA: "consistent_accuracy",
+  F: "formula", S: "statement", R: "reason",
+};
 
 function markSemantic(code: string, descriptor: string): string {
   if (code === "CA") return "consistent_accuracy";
   if (code === "M") return "method";
   if (code === "A") return /\b(?:answer|final)\b/i.test(descriptor) ? "answer" : "accuracy";
   if (code === "F") return "formula";
-  if (code === "S") return "selection";
+  if (code === "S") return "statement";
   if (code === "R") return "reason";
   return "other";
 }
@@ -210,10 +214,10 @@ export default {
     }
 
     const { data: active } = await ctx.supabase
-      .from("corrections").select("id")
-      .eq("exception_id", exceptionId).eq("confirmation_status", "pending").limit(1);
+      .from("corrections").select("id,exception_id")
+      .eq("job_id", jobId).eq("confirmation_status", "pending").limit(1);
     if (active?.length) {
-      return Response.json({ error: "pending_correction_exists", correction_id: active[0].id }, { status: 409 });
+      return Response.json({ error: "pending_correction_exists", correction_id: active[0].id, exception_id: active[0].exception_id }, { status: 409 });
     }
 
     let typedText: string | null = null;
@@ -240,7 +244,7 @@ export default {
         const value = semanticResolution as Record<string, unknown>;
         const choice = value.choice;
         const candidateId = typeof selected.candidate_id === "string" ? selected.candidate_id : "";
-        if (!candidateId || value.candidate_id !== candidateId || !["suggested", "entered"].includes(String(choice))) {
+        if (!candidateId || value.candidate_id !== candidateId || !["suggested", "entered", "code"].includes(String(choice))) {
           return Response.json({ error: "invalid_semantic_resolution" }, { status: 400 });
         }
         const questionId = String(exception.affected_id ?? "");
@@ -260,12 +264,16 @@ export default {
         const suggestedSemantic = typeof selected.semantic_type === "string" ? selected.semantic_type : "";
         const suggestedCode = SEMANTIC_TO_CODE[suggestedSemantic];
         const enteredSemantic = markSemantic(sourceCode, sourceDescriptor);
-        if (!point || !Number.isInteger(sourceCount) || sourceCount < 1 || !MARK_CODES.has(sourceCode) || !sourceDescriptor || !suggestedCode) {
+        if (!point || !Number.isInteger(sourceCount) || sourceCount < 1 || !MARK_CODES.has(sourceCode) || !sourceDescriptor) {
           return Response.json({ error: "semantic_source_unavailable" }, { status: 409 });
         }
         const useSuggestion = choice === "suggested";
-        const selectedCode = useSuggestion ? suggestedCode : sourceCode;
-        const selectedSemantic = useSuggestion ? suggestedSemantic : enteredSemantic;
+        const explicitCode = typeof value.selected_code === "string" ? value.selected_code.toUpperCase() : "";
+        if ((useSuggestion && !suggestedCode) || (choice === "code" && (suggestedCode || !MARK_CODES.has(explicitCode)))) {
+          return Response.json({ error: "invalid_semantic_choice" }, { status: 400 });
+        }
+        const selectedCode = String(useSuggestion ? suggestedCode : choice === "code" ? explicitCode : sourceCode);
+        const selectedSemantic = String(useSuggestion ? suggestedSemantic : choice === "code" ? DEFAULT_SEMANTIC_BY_CODE[selectedCode] : enteredSemantic);
         if (!ALLOWED_SEMANTICS_BY_CODE[selectedCode]?.has(selectedSemantic)) {
           return Response.json({ error: "invalid_semantic_choice" }, { status: 400 });
         }

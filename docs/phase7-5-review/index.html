@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 7.5 Review v4.6</title>
+<title>PBHS Memo Converter — Phase 7.5 Review v4.7</title>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
 <style>
@@ -19,11 +19,12 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 #sourceFullHost.offscreen{position:fixed;left:-12000px;top:0;width:980px;visibility:hidden;pointer-events:none}.pdfFrame{width:900px;height:1200px;border:0;background:white}.sourceImg{display:block;max-width:none}
 .explain{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:10px}.explain>div{padding:11px 12px;border-top:1px solid var(--line)}.explain>div:first-child{border-top:0}.explain b{display:block;margin-bottom:4px}.reviewEyebrow{color:#526071;font-size:.78rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;margin:4px 0}.parentContext{border:1px solid #bfd2ea;border-left:5px solid var(--navy);border-radius:11px;background:var(--bluebg);padding:12px;margin:12px 0}.parentContextTitle{font-weight:900;color:#17365d;margin-bottom:8px}.parentDiscrepancy{background:#fff;border:1px solid #d7e3f1;border-radius:9px;padding:10px;margin-top:8px}.parentDiscrepancy:first-of-type{margin-top:0}.parentQuestion{font-weight:900}.parentTotals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}.parentTotal{background:#f7f9fc;border-radius:8px;padding:8px}.parentTotal span{display:block;color:#526071;font-size:.78rem;font-weight:800;text-transform:uppercase}.parentTotal strong{display:block;font-size:1.15rem;margin-top:2px}.parentRelationship{margin:8px 0 0}.parentContextNote{color:#526071;font-size:.9rem;margin:8px 0 0}.proposal{border:1px solid #cbe6d5;background:#f3fbf6;border-radius:12px;padding:14px;margin-top:12px}.proposalSummary{font-weight:850;margin:8px 0}.markPointList{margin:8px 0;padding-left:22px}.markPointList li{margin:5px 0}.technicalProposal{margin-top:10px;color:#526071}.choices{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#fbfcfe}.choiceBlock{padding:10px 0;border-top:1px solid #e1e6ee}.choiceBlock:first-child{border-top:0;padding-top:0}.suggestionBtn{display:block;width:100%;text-align:left;background:#eaf8f0;color:#146c43;margin:6px 0}.semanticConflict{border-left:5px solid var(--amber);background:#fffaf0;border-radius:9px;padding:12px;margin-top:8px}.semanticCompare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}.semanticOption{background:#fff;border:1px solid #ead8a5;border-radius:8px;padding:10px}.semanticOption span{display:block;color:#526071;font-size:.8rem;font-weight:800;text-transform:uppercase;margin-bottom:5px}.semanticOption strong{display:block}.fileRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}@media(max-width:600px){.fileRow{grid-template-columns:1fr}.parentTotals,.semanticCompare{grid-template-columns:1fr}.parentContext{padding:10px}.parentDiscrepancy{padding:9px}}.buttonRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.progress{font-weight:850;margin-bottom:8px}.pauseNote{background:var(--bluebg);border-radius:10px;padding:10px;margin-top:10px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1424;color:#dce9f8;border-radius:10px;padding:14px;max-height:420px;overflow:auto}code{background:#edf1f6;padding:2px 5px;border-radius:5px}
 #sourceText{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:260px}.pendingBadge{display:inline-block;padding:4px 8px;border-radius:999px;background:#fff3e8;color:#8a4c00;font-size:.82rem;font-weight:850}.sectionTitle{margin:.2rem 0 .4rem;font-size:1.05rem}
+.queueNav{border:1px solid var(--line);background:var(--soft);border-radius:11px;padding:10px;margin-bottom:12px}.queuePosition{font-weight:900}.queueButtons{display:flex;gap:4px;flex-wrap:wrap;margin-top:7px}.queueDetails{margin-top:7px}.queueDetails summary{cursor:pointer;font-weight:800}.queueList{display:grid;gap:5px;margin-top:8px}.queueItem{width:100%;text-align:left;background:#fff;color:#17365d;border:1px solid var(--line);padding:8px}.queueItem.current{border:2px solid var(--navy);background:var(--bluebg)}.queueMeta{display:block;font-size:.8rem;font-weight:600;color:#526071;margin-top:2px}.semanticChooser{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px}.semanticChooser button{width:100%;text-align:left}.semanticCurrent{border:2px solid var(--navy)}@media(max-width:600px){.semanticChooser{grid-template-columns:1fr}}
 .guide{border:1px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:10px 12px;margin:12px 0}.guide summary{cursor:pointer;font-weight:900;color:#17365d}.guide ul{padding-left:20px}.guide li{margin:6px 0}.contentEditor{border-left:5px solid var(--navy);padding-left:12px}.contentEditor textarea{min-height:82px}.contentEditor .solution{min-height:130px}.contentPreview{border:1px solid #cbe6d5;background:#fff;border-radius:9px;padding:10px;margin:8px 0}.contentPreview b{display:block;margin:8px 0 4px}.contentPreview pre{background:#f4f6f9;color:#172033;border:1px solid #d9e0ea;max-height:240px;margin:4px 0}
 .allocationEditor{border:2px solid #bfd2ea;background:var(--bluebg);border-radius:11px;padding:12px}.allocationRows{display:grid;gap:10px;margin:10px 0}.allocationRow{background:#fff;border:1px solid #cbd8e8;border-radius:9px;padding:10px}.allocationRowHead{display:grid;grid-template-columns:minmax(120px,.35fr) minmax(140px,.65fr);gap:10px;align-items:end}.allocationRow textarea{min-height:90px}.allocationQuestion{font-size:1.05rem;font-weight:900;padding:10px 0}@media(max-width:600px){.allocationRowHead{grid-template-columns:1fr}}</style>
 </head>
 <body>
-<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.6</h1><div class="sub">Focused evidence • editable question and memo content • guided corrections • dynamic resume</div></div></header>
+<header><div><h1>PBHS Mathematics — Phase 7.5 Review v4.7</h1><div class="sub">Focused evidence • actionable review queue • guided corrections • safe resume</div></div></header>
 <main>
 <section class="panel">
   <h2 style="margin-top:0">RAW memo review</h2>
@@ -60,6 +61,11 @@ button{border:0;border-radius:9px;padding:11px 14px;font:inherit;font-weight:800
 
   <div>
     <div id="progress" class="progress"></div>
+    <nav id="queueNav" class="queueNav" aria-label="Actionable review queue">
+      <div id="queuePosition" class="queuePosition" aria-live="polite"></div>
+      <div class="queueButtons"><button id="previousReview" class="secondary">Previous</button><button id="skipReview" class="secondary">Skip for now</button><button id="nextReview" class="secondary">Next</button></div>
+      <details id="queueDetails" class="queueDetails"><summary>View review queue</summary><div id="queueList" class="queueList"></div></details>
+    </nav>
     <div class="reviewEyebrow">What needs review now</div>
     <h2 id="stepTitle" style="margin-top:0"></h2>
     <div id="exceptionBox" class="status"></div>
@@ -153,13 +159,13 @@ function requestedReviewJob(search){return validJobId(new URLSearchParams(search
 // END JOB SELECTION MODEL
 let jobId=requestedReviewJob(location.search);
 $('#job').value=jobId;
-let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
+let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],reviewQueue={ids:[],selected_id:null,items:[]},queueLocked=false,sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
 function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
 function selectJob(){
  const selected=validJobId($('#job').value);if(!selected)throw new Error('Enter a valid review Job ID. The page no longer falls back to the completed acceptance job.');
- if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey=''}
+ if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];reviewQueue={ids:[],selected_id:null,items:[]};queueLocked=false;sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey=''}
  const url=new URL(location.href);url.searchParams.set('job_id',jobId);history.replaceState(null,'',url);
  return jobId;
 }
@@ -190,19 +196,21 @@ function candidateText(s){if(!s||typeof s!=='object')return null;return typeof s
 // BEGIN SEMANTIC CONFLICT MODEL
 const semanticLabels={method:'Method',accuracy:'Accuracy',answer:'Answer',consistent_accuracy:'Consistent accuracy',formula:'Formula',factorisation:'Factorisation',statement:'Statement',substitution:'Substitution',simplification:'Simplification',reason:'Reason'};
 const semanticCodes={method:'M',accuracy:'A',answer:'A',consistent_accuracy:'CA',formula:'F',factorisation:'F',statement:'S',substitution:'S',simplification:'S',reason:'R'};
+const markingCodeChoices=[{code:'M',semantic:'method',label:'Method'},{code:'A',semantic:'accuracy',label:'Accuracy'},{code:'CA',semantic:'consistent_accuracy',label:'Consistent accuracy'},{code:'F',semantic:'formula',label:'Formula / factorisation'},{code:'S',semantic:'statement',label:'Statement / substitution / simplification'},{code:'R',semantic:'reason',label:'Reason'}];
 function ordinal(n){const m=n%100;return `${n}${m>=11&&m<=13?'th':n%10===1?'st':n%10===2?'nd':n%10===3?'rd':'th'}`}
-function enteredSemantic(code,descriptor,existing){if(code==='CA')return 'consistent_accuracy';if(code==='M')return 'method';if(code==='R')return 'reason';if(code==='A')return /\b(?:answer|final)\b/i.test(descriptor)?'answer':'accuracy';if(code==='F')return /factor/i.test(descriptor)?'factorisation':'formula';return semanticLabels[existing]?existing:'other'}
+function enteredSemantic(code,descriptor,existing){if(code==='CA')return 'consistent_accuracy';if(code==='M')return 'method';if(code==='R')return 'reason';if(code==='A')return /\b(?:answer|final)\b/i.test(descriptor)?'answer':'accuracy';if(code==='F')return /factor/i.test(descriptor)?'factorisation':'formula';if(code==='S')return 'statement';return semanticLabels[existing]?existing:'other'}
 function semanticConflictModel(ex,s,structure){
  if(!s||typeof s!=='object')return null;
  const candidateId=String(s.candidate_id||''),questionId=String(ex?.affected_id||s.question_id||''),match=candidateId.match(/__m(\d+)$/),markIndex=Number.isInteger(Number(s.mark_index))?Number(s.mark_index):(match?Number(match[1])-1:-1);
  if(!candidateId||!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(questionId)||markIndex<0||candidateId!==`${questionId.replaceAll('.','_')}__m${markIndex+1}`)return null;
  const question=(Array.isArray(structure?.questions)?structure.questions:[]).find(item=>String(item?.question_id||'')===questionId),points=Array.isArray(question?.mark_points)?question.mark_points:[],source=points[markIndex]||s;
  const count=Number(source?.count),sourceCode=String(source?.code||source?.source_shorthand||'').toUpperCase(),descriptor=String(source?.descriptor||'').trim(),suggestedSemantic=String(s.semantic_type||''),suggestedCode=semanticCodes[suggestedSemantic],sourceSemantic=enteredSemantic(sourceCode,descriptor,String(source?.semantic||''));
- if(!Number.isInteger(count)||count<1||!sourceCode||!descriptor||!suggestedCode||!semanticLabels[sourceSemantic])return null;
+ if(!Number.isInteger(count)||count<1||!sourceCode||!descriptor||!semanticLabels[sourceSemantic])return null;
  const position=points.length&&markIndex===points.length-1?'final marking point':`${ordinal(markIndex+1)} marking point`;
- return {question_id:questionId,candidate_id:candidateId,mark_index:markIndex,position,count,descriptor,entered_code:sourceCode,entered_semantic:sourceSemantic,entered_label:semanticLabels[sourceSemantic]||humanCategory(sourceSemantic),suggested_code:suggestedCode,suggested_semantic:suggestedSemantic,suggested_label:semanticLabels[suggestedSemantic]||humanCategory(suggestedSemantic),confidence_score:s.confidence_score??null,provider:s.resolution_method||s.provider||null,conflict_reason:s.conflict_reason||null};
+ return {question_id:questionId,candidate_id:candidateId,mark_index:markIndex,position,count,descriptor,entered_code:sourceCode,entered_semantic:sourceSemantic,entered_label:semanticLabels[sourceSemantic]||humanCategory(sourceSemantic),suggested_code:suggestedCode||null,suggested_semantic:suggestedSemantic,suggested_label:suggestedCode?(semanticLabels[suggestedSemantic]||humanCategory(suggestedSemantic)):null,confidence_score:s.confidence_score??null,provider:s.resolution_method||s.provider||null,conflict_reason:s.conflict_reason||null};
 }
-function semanticConflictPresentation(model){return {title:`Question ${model.question_id} — ${model.position}`,entered:`${model.count}${model.entered_code} — ${model.descriptor}`,suggested:`${model.count}${model.suggested_code} — ${model.descriptor}`,suggested_choice:`Use ${model.suggested_code} — ${model.suggested_label}`,entered_choice:`Keep ${model.entered_code} — ${model.entered_label}`}}
+function semanticConflictPresentation(model){return {title:`Question ${model.question_id} — ${model.position}`,entered:`${model.count}${model.entered_code} — ${model.descriptor}`,suggested:model.suggested_code?`${model.count}${model.suggested_code} — ${model.descriptor}`:null,suggested_choice:model.suggested_code?`Use ${model.suggested_code} — ${model.suggested_label}`:null,entered_choice:`Keep ${model.entered_code} — ${model.entered_label}`}}
+function semanticCodeOptions(model){return markingCodeChoices.map(item=>({...item,action:item.code===model.entered_code?`Keep current code ${item.code} — ${item.label}`:`Use ${item.code} — ${item.label}`}))}
 // END SEMANTIC CONFLICT MODEL
 
 // BEGIN CORRECTION AUDIT EVALUATOR
@@ -269,7 +277,7 @@ const knownSpecs={
 function genericExplain(ex){
  const a=String(ex.affected_id||'');
  switch(ex.category){
-  case 'ambiguous_mark_semantics': return {title:`Confirm the marking code for Question ${a}`,what:'The entered shorthand code and the automated meaning check disagree.',need:'Compare the two plain-language choices below. Neither choice is applied until you select it and confirm the complete show-back.'};
+  case 'ambiguous_mark_semantics': return {title:`Confirm the marking code for Question ${a}`,what:'The source shorthand code and the automated meaning check disagree or could not be mapped safely.',need:'Review the exact marking point and explicitly choose the intended code below. Nothing is applied until you confirm the complete show-back.'};
   case 'question_allocation_pairing_ambiguous': return {title:'Allocate a shared source row',what:ex.message||'Several question numbers and allocations share one source row and cannot be paired safely.',need:'Use the grouped editor to assign a total and complete marking scheme to every listed question in one atomic correction.'};
   case 'item_total_mismatch': return {title:`Check Question ${a}`,what:ex.message||'The printed item total and extracted marking points do not agree.',need:'Inspect the highlighted item and tell the system the correct mark allocation or marking scheme. If the printed total is correct, explain how the marking points should add to it.'};
   case 'question_total_mismatch': return {title:`Check Question ${a} subtotal`,what:ex.message||'The question subtotal and item totals do not agree.',need:'This is usually a consequence of an unresolved item inside the same question. It should only be corrected directly if no more specific item-level cause remains.'};
@@ -307,6 +315,17 @@ function isDependent(ex,list){
  return false;
 }
 function choosePrimary(list){const causes=list.filter(x=>!isDependent(x,list));return causes[0]||list[0]||null}
+// BEGIN REVIEW QUEUE MODEL
+function actionableReviewQueue(list){return (Array.isArray(list)?list:[]).filter(item=>!isDependent(item,list))}
+function reconcileReviewQueue(list,state={}){
+ const actionable=actionableReviewQueue(list),byId=new Map(actionable.map(item=>[item.id,item])),saved=Array.isArray(state.ids)?state.ids:[];
+ const ids=[...saved.filter(id=>byId.has(id)),...actionable.map(item=>item.id).filter(id=>!saved.includes(id))];
+ const requested=String(state.selected_id||''),selected_id=ids.includes(requested)?requested:(ids[0]||null);
+ return {ids,selected_id,items:ids.map(id=>byId.get(id))};
+}
+function moveReviewQueue(state,direction){const ids=[...(state?.ids||[])],index=ids.indexOf(state?.selected_id);if(index<0||ids.length<2)return {...state};const next=(index+(direction<0?-1:1)+ids.length)%ids.length;return {...state,selected_id:ids[next]}}
+function skipReviewQueue(state){const ids=[...(state?.ids||[])],index=ids.indexOf(state?.selected_id);if(index<0||ids.length<2)return {...state};const skipped=ids.splice(index,1)[0];ids.push(skipped);return {...state,ids,selected_id:ids[Math.min(index,ids.length-1)]}}
+// END REVIEW QUEUE MODEL
 function parentMismatchesFor(ex,list){
  if(!ex||ex.category==='question_total_mismatch')return[];
  return list.filter(parent=>parent.id!==ex.id&&parent.category==='question_total_mismatch'&&isDescendantId(ex.affected_id,parent.affected_id));
@@ -331,6 +350,37 @@ function reviewDependencyContext(ex,list){return {child_id:String(ex?.affected_i
 // Backward-compatible name for the existing review flow and historical tests.
 function dependentsFor(ex,list){return parentMismatchesFor(ex,list)}
 // END REVIEW DEPENDENCY MODEL
+
+function queueStateKey(){return `pbhs-review-queue:${jobId}`}
+function draftKey(exceptionId){return `pbhs-review-draft:${jobId}:${exceptionId}`}
+function lastDecisionKey(){return `pbhs-review-last-decision:${jobId}`}
+function readQueueState(){try{return JSON.parse(sessionStorage.getItem(queueStateKey())||'{}')}catch{return {}}}
+function writeQueueState(state){sessionStorage.setItem(queueStateKey(),JSON.stringify({ids:state.ids,selected_id:state.selected_id}))}
+function refreshReviewQueue(list){
+ const saved=readQueueState(),requested=new URL(location.href).searchParams.get('exception_id'),next=reconcileReviewQueue(list,saved);
+ if(requested&&next.ids.includes(requested))next.selected_id=requested;
+ reviewQueue=next;writeQueueState(reviewQueue);return reviewQueue;
+}
+function selectQueueItem(id){
+ if(!reviewQueue.ids.includes(id))return false;reviewQueue.selected_id=id;writeQueueState(reviewQueue);
+ const url=new URL(location.href);url.searchParams.set('exception_id',id);history.replaceState(null,'',url);return true;
+}
+// BEGIN SEMANTIC QUEUE PRESENTATION MODEL
+function semanticCandidateIndex(ex){const suggestion=(Array.isArray(ex?.suggestions)?ex.suggestions:[]).find(item=>item&&typeof item==='object'&&item.candidate_id);const match=String(suggestion?.candidate_id||'').match(/__m(\d+)$/);return match?Number(match[1]):Number(suggestion?.mark_index)+1}
+function semanticConflictProgress(ex,list){
+ if(ex?.category!=='ambiguous_mark_semantics')return null;const peers=actionableReviewQueue(list).filter(item=>item.category==='ambiguous_mark_semantics'&&String(item.affected_id)===String(ex.affected_id)).sort((a,b)=>semanticCandidateIndex(a)-semanticCandidateIndex(b));
+ const index=peers.findIndex(item=>item.id===ex.id);return index<0?null:{index:index+1,total:peers.length,label:`Semantic conflict ${index+1} of ${peers.length} for Question ${ex.affected_id}`};
+}
+// END SEMANTIC QUEUE PRESENTATION MODEL
+function saveDraft(ex=currentException){
+ if(!ex)return;const values={typedText:$('#typedText').value,contentTarget:$('#contentTarget').value,contentQuestion:$('#contentQuestion').value,contentSolution:$('#contentSolution').value,contentMarking:$('#contentMarking').value,allocations:[...document.querySelectorAll('#allocationRows .allocationRow')].map(row=>({question_id:row.dataset.questionId,total:row.querySelector('.allocationTotal').value,marking:row.querySelector('.allocationMarking').value}))};
+ if(Object.values(values).some(value=>Array.isArray(value)?value.some(item=>item.total||item.marking):String(value||'').trim()))localStorage.setItem(draftKey(ex.id),JSON.stringify(values));else localStorage.removeItem(draftKey(ex.id));
+}
+function restoreDraft(ex){
+ let draft=null;try{draft=JSON.parse(localStorage.getItem(draftKey(ex.id))||'null')}catch{}if(!draft)return;
+ for(const id of ['typedText','contentTarget','contentQuestion','contentSolution','contentMarking'])if(typeof draft[id]==='string')$('#'+id).value=draft[id];
+ for(const item of draft.allocations||[]){const row=[...document.querySelectorAll('#allocationRows .allocationRow')].find(node=>node.dataset.questionId===item.question_id);if(row){row.querySelector('.allocationTotal').value=item.total||'';row.querySelector('.allocationMarking').value=item.marking||''}}
+}
 
 function flattenNormalized(normalized){
  const content=normalized?.content||{},units=content.units;
@@ -436,25 +486,36 @@ function renderExplanation(ex,step){
  }).join('')}`;
 }
 function compositeQuestionIds(value){const ids=String(value||'').split(',').map(id=>id.trim()).filter(Boolean);return ids.length>=2&&ids.length<=20&&new Set(ids).size===ids.length&&ids.every(id=>/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(id))?ids:[]}
+function renderQueueNavigation(){
+ const index=reviewQueue.ids.indexOf(currentException?.id),count=reviewQueue.ids.length,locked=queueLocked||!!currentCorrection;
+ $('#queuePosition').textContent=count?`Review item ${index+1} of ${count}${locked?' • Finish or cancel the pending correction before moving':''}`:'No actionable review items';
+ for(const id of ['previousReview','skipReview','nextReview'])$('#'+id).disabled=locked||count<2;
+ const host=$('#queueList');host.innerHTML='';reviewQueue.items.forEach((item,i)=>{const suggestion=(Array.isArray(item.suggestions)?item.suggestions:[])[0],markNumber=semanticCandidateIndex(item),semanticDetail=item.category==='ambiguous_mark_semantics'&&Number.isInteger(markNumber)?`${ordinal(markNumber)} marking point${suggestion?.source_shorthand?` • ${suggestion.source_shorthand}`:''}${suggestion?.descriptor?` — ${suggestion.descriptor}`:''}`:humanCategory(item.category);const button=document.createElement('button');button.className=`queueItem${item.id===currentException?.id?' current':''}`;button.disabled=locked;button.innerHTML=`${esc(i+1)}. ${esc(item.affected_id?`Question ${item.affected_id}`:humanCategory(item.category))}<span class="queueMeta">${esc(semanticDetail)}</span>`;button.onclick=()=>navigateReview(item.id);host.append(button)});
+}
+async function navigateReview(id){if(queueLocked||currentCorrection){status('Finish or cancel the saved correction before moving to another review item.','warn');return}saveDraft();if(!selectQueueItem(id))return;const ex=reviewQueue.items.find(item=>item.id===id);if(ex)await showException(ex)}
+async function moveReview(direction){saveDraft();reviewQueue=moveReviewQueue(reviewQueue,direction);writeQueueState(reviewQueue);await navigateReview(reviewQueue.selected_id)}
+async function skipCurrentReview(){saveDraft();reviewQueue=skipReviewQueue(reviewQueue);writeQueueState(reviewQueue);await navigateReview(reviewQueue.selected_id);status('Skipped for now. The item remains unresolved and has moved to the end of this review queue.','success')}
 async function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#photoInput').value='';$('#fileInput').value='';
  $('#contentTarget').value=/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(String(ex?.affected_id||''))?String(ex.affected_id):'';$('#contentQuestion').value='';$('#contentSolution').value='';$('#contentMarking').value='';
- const grouped=ex.category==='question_allocation_pairing_ambiguous',ids=grouped?compositeQuestionIds(ex.affected_id):[];
- $('#allocationEditor').classList.toggle('hide',!grouped);for(const id of ['typedCorrectionBlock','contentCorrectionBlock','fileCorrectionBlock'])$('#'+id).classList.toggle('hide',grouped);
+ const grouped=ex.category==='question_allocation_pairing_ambiguous',semantic=ex.category==='ambiguous_mark_semantics',ids=grouped?compositeQuestionIds(ex.affected_id):[];
+ $('#allocationEditor').classList.toggle('hide',!grouped);for(const id of ['typedCorrectionBlock','contentCorrectionBlock','fileCorrectionBlock'])$('#'+id).classList.toggle('hide',grouped||semantic);
  const rows=$('#allocationRows');rows.innerHTML='';if(grouped){for(const id of ids){const row=document.createElement('div');row.className='allocationRow';row.dataset.questionId=id;row.innerHTML=`<div class="allocationRowHead"><div class="allocationQuestion">Question ${esc(id)}</div><div><label>Question total</label><input class="allocationTotal" type="number" min="1" max="999" step="1" inputmode="numeric" aria-label="Question ${esc(id)} total"></div></div><label>Marking scheme</label><textarea class="allocationMarking" aria-label="Question ${esc(id)} marking scheme" placeholder="1M method&#10;1A answer&#10;OR&#10;2A alternative answer"></textarea>`;rows.append(row)}}
  const suggestions=Array.isArray(ex.suggestions)?ex.suggestions:[],$sb=$('#suggestionButtons');$sb.innerHTML='';let rendered=0;
  if(!grouped&&ex.category==='ambiguous_mark_semantics'&&suggestions.length){
   let structure=null;try{structure=await ensureStructure()}catch(e){log('SEMANTIC CONFLICT SOURCE WARNING',{message:e.message})}
-  suggestions.forEach((s,i)=>{const model=semanticConflictModel(ex,s,structure);if(!model)return;rendered+=1;const view=semanticConflictPresentation(model),card=document.createElement('div');card.className='semanticConflict';card.innerHTML=`<div class="reviewEyebrow">${esc(view.title)}</div><p>The marking code and automated meaning do not agree. Please confirm which marking code is intended.</p><div class="semanticCompare"><div class="semanticOption"><span>You entered</span><strong>${esc(view.entered)}</strong><div>${esc(model.entered_label)}</div></div><div class="semanticOption"><span>The automated check suggests</span><strong>${esc(view.suggested)}</strong><div>${esc(model.suggested_label)}</div></div></div><button class="suggestionBtn semanticSuggested">${esc(view.suggested_choice)}</button><button class="secondary suggestionBtn semanticEntered">${esc(view.entered_choice)}</button><details class="technicalProposal"><summary>Technical details</summary><div>Candidate: <code>${esc(model.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.suggested_semantic)}</code></div>${model.confidence_score==null?'':`<div>Confidence: <code>${esc(model.confidence_score)}</code></div>`}${model.provider?`<div>Provider path: <code>${esc(model.provider)}</code></div>`:''}${model.conflict_reason?`<div>Validation: <code>${esc(model.conflict_reason)}</code></div>`:''}</details>`;card.querySelector('.semanticSuggested').onclick=()=>submitSemanticChoice(i,model,'suggested');card.querySelector('.semanticEntered').onclick=()=>submitSemanticChoice(i,model,'entered');$sb.append(card)})
+  suggestions.forEach((s,i)=>{const model=semanticConflictModel(ex,s,structure);if(!model)return;rendered+=1;const view=semanticConflictPresentation(model),card=document.createElement('div');card.className='semanticConflict';const technical=`<details class="technicalProposal"><summary>Technical details</summary><div>Candidate: <code>${esc(model.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.suggested_semantic)}</code></div>${model.confidence_score==null?'':`<div>Confidence: <code>${esc(model.confidence_score)}</code></div>`}${model.provider?`<div>Provider path: <code>${esc(model.provider)}</code></div>`:''}${model.conflict_reason?`<div>Validation: <code>${esc(model.conflict_reason)}</code></div>`:''}</details>`;
+   if(model.suggested_code){card.innerHTML=`<div class="reviewEyebrow">${esc(view.title)}</div><p>The marking code and automated meaning do not agree. Please confirm which marking code is intended.</p><div class="semanticCompare"><div class="semanticOption"><span>Current source mark</span><strong>${esc(view.entered)}</strong><div>${esc(model.entered_label)}</div></div><div class="semanticOption"><span>The automated check suggests</span><strong>${esc(view.suggested)}</strong><div>${esc(model.suggested_label)}</div></div></div><button class="suggestionBtn semanticSuggested">${esc(view.suggested_choice)}</button><button class="secondary suggestionBtn semanticEntered">${esc(view.entered_choice)}</button>${technical}`;card.querySelector('.semanticSuggested').onclick=()=>submitSemanticChoice(i,model,'suggested');card.querySelector('.semanticEntered').onclick=()=>submitSemanticChoice(i,model,'entered')}
+   else{card.innerHTML=`<div class="reviewEyebrow">${esc(view.title)}</div><p>The automatic check could not confidently identify the intended marking code. Choose the code the source mark should use.</p><div class="semanticOption"><span>Current source mark</span><strong>${esc(view.entered)}</strong><div>${esc(model.entered_label)}</div></div><div class="semanticChooser"></div>${technical}`;const chooser=card.querySelector('.semanticChooser');semanticCodeOptions(model).forEach(option=>{const button=document.createElement('button');button.className=`${option.code===model.entered_code?'secondary semanticCurrent':'suggestionBtn'} semanticCodeChoice`;button.textContent=option.action;button.onclick=()=>submitSemanticChoice(i,model,'code',option.code);chooser.append(button)})}$sb.append(card)})
  }else if(!grouped){suggestions.forEach((s,i)=>{const label=candidateText(s);if(!label)return;rendered+=1;const b=document.createElement('button');b.className='suggestionBtn';b.textContent=`Use ${label}`;b.onclick=()=>submitSuggestion(i);$sb.append(b)})}
- $('#suggestionBlock').classList.toggle('hide',rendered===0);$('#suggestionHeading').textContent=ex.category==='ambiguous_mark_semantics'?'Resolve the marking-code conflict':'Choose a supplied interpretation';
+ $('#suggestionBlock').classList.toggle('hide',rendered===0);$('#suggestionHeading').textContent=semantic?'Resolve the marking-code conflict':'Choose a supplied interpretation';restoreDraft(ex);
 }
 async function showException(ex){
- currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);await renderChoices(ex);$('#review').classList.remove('hide');$('#progress').textContent=`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;status('Review the focused source evidence, then choose how to correct the item shown.','success');await showEvidence();
+ currentException=ex;selectQueueItem(ex.id);currentStep=specFor(ex);renderExplanation(ex,currentStep);await renderChoices(ex);$('#review').classList.remove('hide');const semanticProgress=semanticConflictProgress(ex,currentActive);$('#progress').textContent=semanticProgress?.label||`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;renderQueueNavigation();let previous=null;try{previous=JSON.parse(sessionStorage.getItem(lastDecisionKey())||'null')}catch{}const advanced=previous&&previous.exception_id!==ex.id;status(advanced?`Previous decision confirmed and revalidated. Advanced to ${semanticProgress?.label||`the next unresolved review item${ex.affected_id?` for Question ${ex.affected_id}`:''}`}.`:'Review the focused source evidence, then choose how to correct the item shown.','success');if(advanced)sessionStorage.removeItem(lastDecisionKey());await showEvidence();
 }
 
 function showRecovery(corr,message){
- currentCorrection=corr;
+ currentCorrection=corr;queueLocked=true;
  const grouped=currentException?.category==='question_allocation_pairing_ambiguous';
  const semantic=currentException?.category==='ambiguous_mark_semantics';
  $('#choices').classList.add('hide');
@@ -463,13 +524,13 @@ function showRecovery(corr,message){
  $('#retryInterpretation').classList.toggle('hide',grouped||semantic);
  $('#editResubmit').textContent=grouped?'Cancel and open grouped editor':semantic?'Cancel and reopen conflict choices':'Edit / resubmit correction';
  $('#recoveryMessage').textContent=grouped?'This saved free-text attempt cannot resolve a linked allocation safely. Nothing was applied. Cancel it and complete every listed question in the grouped editor.':semantic?'This older suggestion attempt does not contain an explicit marking-code choice. Nothing was applied. Cancel it, then choose the intended code in teacher language.':(message||'I could not understand this correction safely yet. Your evidence is saved and nothing was applied. Edit and resubmit it; use the structured content editor when the actual question, answer, or working is wrong.');
- status(grouped?'Your earlier attempt is saved but cannot be applied. Cancel it to open the grouped editor.':semantic?'Your earlier attempt is saved but cannot be applied. Cancel it to reopen the two marking-code choices.':'Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
+ renderQueueNavigation();status(grouped?'Your earlier attempt is saved but cannot be applied. Cancel it to open the grouped editor.':semantic?'Your earlier attempt is saved but cannot be applied. Cancel it to reopen the marking-code choices.':'Your evidence is saved. Retry it, edit/resubmit it, or cancel this attempt.','warn');
 }
 async function rejectAndReopen(prefill=''){
  if(!currentCorrection)return;
  const ex=currentException||await exceptionById(currentCorrection.exception_id);
  await invoke('reject-correction',{correction_id:currentCorrection.id});
- currentCorrection=null;
+ currentCorrection=null;queueLocked=false;
  currentActive=await activeExceptions();
  await showException(ex);
  if(prefill)$('#typedText').value=prefill;
@@ -519,7 +580,7 @@ function teacherShowBackModel(corr){
 }
 // END TEACHER SHOWBACK MODEL
 function showProposal(corr){
- currentCorrection=corr;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');
+ currentCorrection=corr;queueLocked=true;$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');renderQueueNavigation();
  const model=teacherShowBackModel(corr),pointList=model.mark_points.length?`<ul class="markPointList">${model.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'';
  const semanticContent=model.semantic_choice?`<div class="contentPreview"><b>Confirmed marking-code interpretation</b><ul class="markPointList"><li><b>${esc(model.semantic_choice.count)}${esc(model.semantic_choice.selected_code)}</b> — ${esc(model.semantic_choice.descriptor)}</li></ul><div>${esc(semanticLabels[model.semantic_choice.selected_semantic]||humanCategory(model.semantic_choice.selected_semantic))}</div></div>`:'';
  const allocationContent=model.allocations.length?`<div class="contentPreview"><b>Complete grouped allocation</b>${model.allocations.map(item=>`<div class="allocationRow"><b>Question ${esc(item.question_id)} — ${esc(item.printed_marks)} marks</b><ul class="markPointList">${item.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul><span class="muted">${esc(item.mark_calculation_mode)}</span></div>`).join('')}</div>`:'';
@@ -531,14 +592,14 @@ function showProposal(corr){
 async function submitAndInterpret(body){
  setBusy(true);try{
   const saved=await pendingCorrection();
-  if(saved&&saved.exception_id===body.exception_id){
-   status('A saved correction attempt already exists for this item. Resuming that attempt instead of creating a duplicate.','warn');
+  if(saved){
+   status('A saved correction attempt already exists. Confirm or cancel it before submitting another correction.','warn');
    await resumePending();return;
   }
-  const submittedAt=new Date();const result=await invoke('submit-correction',body);const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
+  const submittedAt=new Date();const result=await invoke('submit-correction',body);localStorage.removeItem(draftKey(body.exception_id));const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
  }finally{setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
-async function submitSemanticChoice(index,model,choice){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index,semantic_resolution:{candidate_id:model.candidate_id,choice}})}
+async function submitSemanticChoice(index,model,choice,selectedCode=null){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index,semantic_resolution:{candidate_id:model.candidate_id,choice,...(selectedCode?{selected_code:selectedCode}:{})}})}
 async function submitTyped(){const t=$('#typedText').value.trim();if(!t){status('Type the correction or LaTeX first.','warn');return}await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:t})}
 function parseStructuredMarking(text,{allowOr=false}={}){
  const fragments=String(text||'').trim().split(/\n|;|\|/).map(value=>value.trim()).filter(Boolean),branches=[[]];if(!fragments.length)throw new Error('Enter at least one marking line.');
@@ -567,11 +628,11 @@ async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status
 function setBusy(v){for(const id of ['submitTyped','submitContent','submitAllocations','submitPhoto','submitFile','confirm','start','retryInterpretation','editResubmit','cancelCorrection','editProposal']){const el=$('#'+id);if(el)el.disabled=v}}
 
 async function waitStable(){for(let i=0;i<300;i++){await sleep(2000);const j=await currentJob();if(i===0||i%5===4)log(`Worker poll ${i+1}`,j);if(j.status==='complete')return j;if(j.status==='needs_review'&&j.stage==='phase7_review'&&j.engine_version==='phase7.5')return j;if(j.status==='correction_pending')return j;if(['failed','failed_retryable'].includes(j.status))throw new Error(`Worker stopped: ${j.status}/${j.stage} — ${j.error_code||''} ${j.error_message||''}`)}throw new Error('Timed out waiting for Phase 7.5 revalidation.')}
-async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;await showEvidence();let corr=p;if(!corr.proposed_patch&&ex.category==='ambiguous_mark_semantics'){showRecovery(corr);return true}if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
+async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);currentActive=await activeExceptions();refreshReviewQueue(currentActive);if(!reviewQueue.ids.includes(ex.id)){reviewQueue.ids.unshift(ex.id);reviewQueue.items.unshift(ex)}selectQueueItem(ex.id);queueLocked=true;currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Saved pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;renderQueueNavigation();await showEvidence();let corr=p;if(!corr.proposed_patch&&ex.category==='ambiguous_mark_semantics'){showRecovery(corr);return true}if(!corr.proposed_patch){status('Your saved correction is being interpreted…');corr=await retrySavedInterpretation(corr);if(!corr)return true}showProposal(corr);return true}
 async function resumeFlow(){
  const j=await currentJob();log('RESUME STATE',j);if(j.status==='complete'){await finalAudit();return}if(await resumePending())return;
  if(['processing','dispatched','correction_confirmed'].includes(j.status)){status('Processing is running. Waiting for the next stable review state…');await waitStable();if(await resumePending())return}
- currentActive=await activeExceptions();if(!currentActive.length){await finalAudit();return}const primary=choosePrimary(currentActive);if(!primary){await finalAudit();return}await showException(primary);
+ currentActive=await activeExceptions();if(!currentActive.length){await finalAudit();return}queueLocked=false;refreshReviewQueue(currentActive);const primary=reviewQueue.items.find(item=>item.id===reviewQueue.selected_id)||choosePrimary(currentActive);if(!primary){await finalAudit();return}await showException(primary);
 }
 async function finalAudit(){
  const j=await currentJob(),active=await activeExceptions();if(j.status!=='complete'){status(active.length?`There are ${active.length} unresolved review exception(s), but none could be selected. See technical log.`:`Review state is ${j.status}/${j.stage}; waiting for a new review exception or completion.`,'warn');log('FINAL/RESUME DIAGNOSTIC',{job:j,active});return}
@@ -623,12 +684,16 @@ $('#retryInterpretation').onclick=()=>retryCurrentInterpretation().catch(e=>{log
 $('#editResubmit').onclick=()=>{const t=currentCorrection?.typed_text||'';rejectAndReopen(t).catch(e=>{log('EDIT/RESUBMIT ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')})};
 $('#cancelCorrection').onclick=()=>rejectAndReopen('').catch(e=>{log('CANCEL CORRECTION ERROR',{message:e.message});status('Could not cancel the correction attempt: '+e.message,'error')});
 $('#editProposal').onclick=()=>{const t=currentCorrection?.typed_text||'';rejectAndReopen(t).catch(e=>{log('EDIT PROPOSAL ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')})};
-$('#confirm').onclick=async()=>{if(!currentCorrection)return;setBusy(true);try{const r=await invoke('confirm-correction',{correction_id:currentCorrection.id});log('TEACHER CONFIRMED SHOW-BACK',r);$('#review').classList.add('hide');status('Confirmed. The worker is revalidating the immutable RAW source…');await waitStable();await resumeFlow()}catch(e){log('CONFIRM ERROR',{message:e.message});status('Confirmation stopped: '+e.message,'error')}finally{setBusy(false)}};
+$('#confirm').onclick=async()=>{if(!currentCorrection)return;setBusy(true);try{sessionStorage.setItem(lastDecisionKey(),JSON.stringify({exception_id:currentException?.id,candidate_id:currentCorrection?.proposed_patch?.candidate_id||null}));const r=await invoke('confirm-correction',{correction_id:currentCorrection.id});log('TEACHER CONFIRMED SHOW-BACK',r);$('#review').classList.add('hide');status('Confirmed. The worker is revalidating the immutable RAW source…');await waitStable();await resumeFlow()}catch(e){log('CONFIRM ERROR',{message:e.message});status('Confirmation stopped: '+e.message,'error')}finally{setBusy(false)}};
 function pause(){ $('#review').classList.add('hide');status('Paused safely. Nothing else was accepted or changed. Resume whenever you are ready.','success');$('#start').textContent='Resume review'}
 $('#pause').onclick=pause;$('#pause2').onclick=pause;
 $('#signout').onclick=async()=>{await sb.auth.signOut();user=null;$('#review').classList.add('hide');status('Signed out. Job and pending correction state remain saved.');$('#start').textContent='Start / resume review'};
 $('#toggleFull').onclick=async()=>{const p=$('#fullMemoPanel');if(p.classList.contains('hide')){await ensureSourceLoaded();renderFullMemo();p.classList.remove('hide');$('#toggleFull').textContent='Hide full memo'}else{p.classList.add('hide');$('#toggleFull').textContent='Show full memo'}};
 $('#refocus').onclick=()=>{if(focusKey===currentException?.id){$('#focusViewport').scrollTop=0;$('#focusViewport').scrollLeft=0}else renderFocusedEvidence()};
+$('#previousReview').onclick=()=>moveReview(-1).catch(e=>status('Could not move in the review queue: '+e.message,'error'));
+$('#nextReview').onclick=()=>moveReview(1).catch(e=>status('Could not move in the review queue: '+e.message,'error'));
+$('#skipReview').onclick=()=>skipCurrentReview().catch(e=>status('Could not skip this review item: '+e.message,'error'));
+$('#choices').addEventListener('input',()=>saveDraft());
 (async()=>{try{const s=(await sb.auth.getSession()).data.session;if(s){user=s.user;$('#start').textContent='Resume review';status(jobId?'Saved sign-in and review Job ID found. Resume when ready.':'Saved sign-in found. Enter the Job ID for the memo you want to review.','success')}else if(!jobId)status('Enter the Job ID for the memo you want to review. The accepted baseline is no longer selected automatically.')}catch{}})();
 </script>
 </body>

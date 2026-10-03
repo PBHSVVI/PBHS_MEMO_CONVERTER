@@ -4,7 +4,7 @@ export function reviewUrl(jobId, currentHref = window.location.href) {
   if (!UUID_RE.test(jobId || "")) throw new Error("Invalid review job ID.");
   const url = new URL("../phase7-5-review/", currentHref);
   url.searchParams.set("job_id", jobId);
-  url.searchParams.set("v", "4.6");
+  url.searchParams.set("v", "4.7");
   return url.toString();
 }
 
