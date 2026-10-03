@@ -726,9 +726,20 @@ def _apply_replace_item_content(
         )
     target_id = str(patch.get("target_id") or affected_id or "").strip()
     active_id = str(affected_id or "").strip()
+    replacement_id = str(patch.get("replacement_id") or target_id).strip()
+    child_repair = patch.get("reconciliation_scope") == "suspicious_child"
+    valid_child_scope = (
+        child_repair
+        and category == "question_total_mismatch"
+        and QUESTION_ID_RE.fullmatch(active_id)
+        and target_id.startswith(f"{active_id}.")
+        and replacement_id.startswith(f"{active_id}.")
+    )
     if (
         not QUESTION_ID_RE.fullmatch(target_id)
-        or (QUESTION_ID_RE.fullmatch(active_id) and target_id != active_id)
+        or not QUESTION_ID_RE.fullmatch(replacement_id)
+        or (child_repair and not valid_child_scope)
+        or (not child_repair and QUESTION_ID_RE.fullmatch(active_id) and target_id != active_id)
     ):
         return None, _issue(
             "correction_target_invalid", affected_id,
@@ -750,7 +761,9 @@ def _apply_replace_item_content(
             f"Confirmed correction {correction_id} contains invalid memo working.",
         )
     solution_lines = [line.strip() for line in raw_lines if line.strip()]
-    if not question_text and not solution_lines:
+    points = patch.get("mark_points")
+    rename_requested = replacement_id != target_id
+    if not question_text and not solution_lines and points is None and not rename_requested:
         return None, _issue(
             "correction_content_invalid", target_id,
             f"Confirmed correction {correction_id} contains no replacement content.",
@@ -761,15 +774,32 @@ def _apply_replace_item_content(
             f"Confirmed correction {correction_id} exceeds the bounded content limits.",
         )
 
-    points = patch.get("mark_points")
     mark_total = None
     calc_mode = None
     normalized_points: list[dict[str, Any]] = []
+    trial = copy.deepcopy(structure)
+    trial_question = _question(trial, target_id)
+    if trial_question is None:
+        return None, _issue(
+            "correction_evidence_unresolved", target_id,
+            f"Confirmed correction {correction_id} could not resolve Question {target_id}.",
+        )
     if points is not None:
         mark_patch = dict(patch)
         # Reuse the strict mark-point validator on a temporary structure so the
         # content mutation remains atomic if the marking scheme is invalid.
-        trial = copy.deepcopy(structure)
+        supplied_total = patch.get("printed_marks")
+        if child_repair:
+            try:
+                supplied_total = int(supplied_total)
+            except (TypeError, ValueError):
+                supplied_total = 0
+            if supplied_total < 1 or supplied_total > 999:
+                return None, _issue(
+                    "correction_mark_total_invalid", target_id,
+                    f"Confirmed correction {correction_id} has an invalid child total.",
+                )
+            trial_question["printed_marks"] = supplied_total
         applied_marks, mark_issue = _apply_replace_mark_points(
             trial,
             correction_id=correction_id,
@@ -783,35 +813,53 @@ def _apply_replace_item_content(
         normalized_points = list((trial_question or {}).get("mark_points") or [])
         mark_total = (applied_marks or {}).get("mark_total")
         calc_mode = (applied_marks or {}).get("mark_calculation_mode")
-
-    question["content_override"] = {
-        "correction_id": correction_id,
-        "question_text": question_text or None,
-        "solution_lines": solution_lines,
-    }
-    if points is not None:
-        question["mark_points"] = normalized_points
-        question["computed_shorthand_marks"] = mark_total
-        question["mark_calculation_mode"] = calc_mode
-        question["teacher_marking_text"] = "\n".join(
+        trial_question["teacher_marking_text"] = "\n".join(
             str(point.get("source") or "").strip()
             for point in normalized_points
             if str(point.get("source") or "").strip()
         )
-    question["correction_overlay"] = {
+
+    if rename_requested:
+        if _question(trial, replacement_id) is not None:
+            return None, _issue(
+                "correction_target_conflict", replacement_id,
+                f"Question identifier {replacement_id} already exists.",
+            )
+        trial_question["source_question_id"] = str(trial_question.get("source_question_id") or target_id)
+        trial_question["question_id"] = replacement_id
+        trial_question["path"] = [int(part) for part in replacement_id.split(".")]
+        trial_question["depth"] = len(trial_question["path"])
+        trial["questions"].sort(key=lambda item: (
+            int(item.get("source_block_index", 10**9)),
+            tuple(item.get("path") or (999,)),
+        ))
+    if question_text or solution_lines:
+        trial_question["content_override"] = {
+            "correction_id": correction_id,
+            "question_text": question_text or None,
+            "solution_lines": solution_lines,
+        }
+    trial_question["correction_overlay"] = {
         "correction_id": correction_id,
         "operation": "replace_item_content",
+        **({"source_id": target_id} if rename_requested else {}),
     }
-    _remove_exception(structure, category, affected_id)
+    _remove_exception(trial, category, affected_id)
     if points is not None:
         for related in ("mark_arithmetic_mismatch", "item_total_mismatch", "correction_mark_total_invalid"):
-            _remove_exception(structure, related, target_id)
+            _remove_exception(trial, related, target_id)
+            if rename_requested:
+                _remove_exception(trial, related, replacement_id)
+    structure.clear()
+    structure.update(trial)
     return {
         "correction_id": correction_id,
         "operation": "replace_item_content",
         "category": category,
         "affected_id": affected_id,
-        "target_id": target_id,
+        "target_id": replacement_id,
+        "source_id": target_id if rename_requested else None,
+        "identifier_replaced": rename_requested,
         "question_text_replaced": bool(question_text),
         "solution_line_count": len(solution_lines),
         "mark_total": mark_total,

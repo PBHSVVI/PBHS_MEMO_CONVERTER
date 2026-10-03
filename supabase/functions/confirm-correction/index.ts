@@ -100,6 +100,10 @@ export default {
     }
 
     const deferRevalidation = body.defer_revalidation === true;
+    const patch = correction.proposed_patch as Record<string, unknown>;
+    const retainParentReview = deferRevalidation &&
+      patch.operation === "replace_item_content" &&
+      patch.reconciliation_scope === "suspicious_child";
     if (deferRevalidation) {
       const { data: currentJob } = await ctx.supabaseAdmin.from("jobs")
         .select("started_at").eq("id", correction.job_id).maybeSingle();
@@ -120,7 +124,9 @@ export default {
       confirmation_status: "confirmed", confirmed_at: now, updated_at: now,
     }).eq("id", correctionId).eq("confirmation_status", "pending");
 
-    await ctx.supabaseAdmin.from("exceptions").update({
+    await ctx.supabaseAdmin.from("exceptions").update(retainParentReview ? {
+      status: "open", resolved_by_correction_id: null, updated_at: now,
+    } : {
       status: "resolved", resolved_by_correction_id: correctionId, updated_at: now,
     }).eq("id", correction.exception_id).eq("status", "awaiting_confirmation");
 
@@ -149,6 +155,7 @@ export default {
       payload: {
         correction_id: correctionId, exception_id: correction.exception_id,
         remaining_review_count: remaining,
+        parent_review_retained: retainParentReview,
       },
     });
 

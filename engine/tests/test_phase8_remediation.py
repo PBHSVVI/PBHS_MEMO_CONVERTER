@@ -11,6 +11,7 @@ import pytest
 
 from engine.src.memo_engine.semantic import build_semantic_plan, interpret_semantics
 from engine.src.memo_engine.cli import _try_reuse_semantic
+from engine.src.memo_engine.phase7_5 import apply_phase7_5_patch
 from engine.src.memo_engine.structure import parse_mark_points
 from engine.src.memo_engine.teacher_language import TeacherLanguageError, ai_result_to_proposal
 
@@ -121,6 +122,129 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
     assert "defer_revalidation:!applyNow" in html
     assert "phase8_correction_staged" in edge
     assert "conflicting_staged_correction" in edge
+
+
+def _child_ledger(value: object) -> object:
+    model = _section("CHILD REPAIR MODEL")
+    helpers = """
+function majorQuestionId(value){const match=String(value||'').match(/^\\d+/);return match?match[0]:''}
+function compareQuestionIds(a,b){const aa=String(a).split('.').map(Number),bb=String(b).split('.').map(Number),n=Math.max(aa.length,bb.length);for(let i=0;i<n;i++){const d=(aa[i]??-1)-(bb[i]??-1);if(d)return d}return 0}
+function isDependent(){return false}
+function parentDiscrepancyDetails(parent){const values=String(parent.message||'').match(/\\d+/g)||[];return {source_total:values.at(-2)||null,converter_total:values.at(-1)||null}}
+"""
+    program = helpers + model + "\nconst x=JSON.parse(process.argv[1]);console.log(JSON.stringify(questionLedgerModel(x.structure,x.exceptions,x.staged,x.major)));"
+    return _node(program, value)
+
+
+def test_parent_mismatch_makes_zero_mark_child_without_exception_actionable():
+    result = _child_ledger({
+        "major": "3",
+        "structure": {"questions": [
+            {"question_id": "3.1", "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []},
+            {"question_id": "3.1.2", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+            {"question_id": "3.1.3", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+            {"question_id": "3.1.4", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+        ]},
+        "exceptions": [{"id": "parent", "category": "question_total_mismatch", "affected_id": "3", "message": "source subtotal 14; computed total 12"}],
+        "staged": [],
+    })
+    first = result["rows"][0]
+    assert first["question_id"] == "3.1"
+    assert first["exception_id"] is None
+    assert any(reason.startswith("Possible missing child allocation") for reason in first["suspicion_reasons"])
+    assert any(reason.startswith("Numbering sequence may be incomplete") for reason in first["suspicion_reasons"])
+    assert first["projected_id"] == "3.1"  # inspection never auto-renames
+
+
+def test_staged_child_repair_projects_parent_balance_before_revalidation():
+    value = {
+        "major": "3",
+        "structure": {"questions": [
+            {"question_id": "3.1", "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []},
+            {"question_id": "3.1.2", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+            {"question_id": "3.1.3", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+            {"question_id": "3.1.4", "printed_marks": 4, "computed_shorthand_marks": 4, "mark_points": [{"count": 4}]},
+        ]},
+        "exceptions": [{"id": "parent", "category": "question_total_mismatch", "affected_id": "3", "message": "source subtotal 14; computed total 12"}],
+        "staged": [{"proposed_patch": {"operation": "replace_item_content", "target_id": "3.1", "replacement_id": "3.1.1", "expected_total": 2}}],
+    }
+    result = _child_ledger(value)
+    assert result["computed_total"] == 12
+    assert result["projected_total"] == 14
+    assert int(result["source_total"]) - result["projected_total"] == 0
+    assert result["rows"][0]["projected_id"] == "3.1.1"
+    assert result["rows"][0]["staged"] is True
+    assert result["rows"][0]["suspicion_reasons"] == []
+
+
+def test_healthy_child_without_exception_remains_non_actionable():
+    result = _child_ledger({
+        "major": "4",
+        "structure": {"questions": [
+            {"question_id": "4.1", "printed_marks": 2, "computed_shorthand_marks": 2, "mark_points": [{"count": 2}]},
+            {"question_id": "4.2", "printed_marks": 3, "computed_shorthand_marks": 3, "mark_points": [{"count": 3}]},
+        ]},
+        "exceptions": [{"id": "parent", "category": "question_total_mismatch", "affected_id": "4", "message": "source subtotal 5; computed total 5"}],
+        "staged": [],
+    })
+    assert all(not row["suspicion_reasons"] for row in result["rows"])
+
+
+def test_child_rename_and_marks_apply_atomically():
+    structure = {
+        "questions": [{"question_id": "3.1", "path": [3, 1], "depth": 2, "source_block_index": 10, "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []}],
+        "exceptions": [{"category": "question_total_mismatch", "affected_id": "3"}],
+    }
+    patch = {
+        "operation": "replace_item_content", "category": "question_total_mismatch", "affected_id": "3",
+        "target_id": "3.1", "replacement_id": "3.1.1", "printed_marks": 2, "expected_total": 2,
+        "mark_points": [
+            {"count": 1, "code": "A", "descriptor": "x-coordinate of M", "source": "1A x-coordinate of M"},
+            {"count": 1, "code": "A", "descriptor": "y-coordinate of M", "source": "1A y-coordinate of M"},
+        ],
+        "question_text": None, "solution_lines": [], "reconciliation_scope": "suspicious_child",
+    }
+    applied, issue, handled = apply_phase7_5_patch(structure, {}, correction_id="corr", category="question_total_mismatch", affected_id="3", operation="replace_item_content", patch=patch)
+    assert handled and issue is None
+    assert applied["identifier_replaced"] is True
+    question = structure["questions"][0]
+    assert question["question_id"] == "3.1.1"
+    assert question["source_question_id"] == "3.1"
+    assert question["printed_marks"] == question["computed_shorthand_marks"] == 2
+    assert len(question["mark_points"]) == 2
+    assert structure["exceptions"] == []
+
+
+def test_invalid_child_marks_do_not_leave_half_rename():
+    structure = {
+        "questions": [{"question_id": "3.1", "path": [3, 1], "depth": 2, "source_block_index": 10, "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []}],
+        "exceptions": [{"category": "question_total_mismatch", "affected_id": "3"}],
+    }
+    original = json.loads(json.dumps(structure))
+    patch = {
+        "operation": "replace_item_content", "category": "question_total_mismatch", "affected_id": "3",
+        "target_id": "3.1", "replacement_id": "3.1.1", "printed_marks": 2, "expected_total": 2,
+        "mark_points": [{"count": 1, "code": "A", "descriptor": "x-coordinate", "source": "1A x-coordinate"}],
+        "question_text": None, "solution_lines": [], "reconciliation_scope": "suspicious_child",
+    }
+    applied, issue, handled = apply_phase7_5_patch(structure, {}, correction_id="corr", category="question_total_mismatch", affected_id="3", operation="replace_item_content", patch=patch)
+    assert handled and applied is None
+    assert issue["category"] == "correction_mark_total_invalid"
+    assert structure == original
+
+
+def test_child_repair_stays_confirmation_gated_and_auditable():
+    html = PAGE.read_text(encoding="utf-8")
+    submit = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
+    confirm = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
+    assert "Correct this item" in html
+    assert "Review this correction" in html
+    assert "SHOW-BACK — not applied yet" in html
+    assert 'id="confirm"' in html
+    assert 'reconciliation_scope: "suspicious_child"' in submit
+    assert 'exceptionStatus = "awaiting_confirmation"' in submit
+    assert "parent_review_retained" in confirm
+    assert "retainParentReview" in confirm
 
 
 def test_sr_aliases_are_one_combined_mark():

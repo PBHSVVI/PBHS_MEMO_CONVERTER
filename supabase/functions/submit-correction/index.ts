@@ -371,6 +371,7 @@ export default {
       displayText = typedText;
       const allocationResolution = body.allocation_resolution;
       const parentResolution = body.parent_reconciliation;
+      const childRepair = body.child_repair;
       const content = body.content_correction;
       if (parentResolution && typeof parentResolution === "object") {
         if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
@@ -385,6 +386,51 @@ export default {
         }
         proposedPatch = { schema_version: "1.0", operation: "set_question_subtotal", category: exception.category, affected_id: exception.affected_id, target_id: exception.affected_id, subtotal: computedTotal, reinterpretation_method: "deterministic_parent_ledger" };
         displayText = `Question ${exception.affected_id}: record the deterministic child total ${computedTotal} because the printed source subtotal is wrong.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (childRepair && typeof childRepair === "object") {
+        const parentId = String(exception.affected_id ?? "");
+        if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(parentId)) {
+          return Response.json({ error: "child_repair_category_mismatch" }, { status: 400 });
+        }
+        const value = childRepair as Record<string, unknown>;
+        const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
+        const replacementId = typeof value.replacement_id === "string" ? value.replacement_id.trim() : "";
+        const markingText = typeof value.marking_text === "string" ? value.marking_text.trim() : "";
+        const printedMarks = value.printed_marks == null || value.printed_marks === "" ? null : Number(value.printed_marks);
+        const withinParent = (id: string) => id.startsWith(`${parentId}.`) && id !== parentId;
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown> | undefined;
+        const replacementConflict = replacementId !== targetId && questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === replacementId);
+        if (!QUESTION_ID_RE.test(targetId) || !QUESTION_ID_RE.test(replacementId) || !withinParent(targetId) || !withinParent(replacementId) || !question || replacementConflict) {
+          return Response.json({ error: "invalid_child_repair_target" }, { status: 400 });
+        }
+        const renameRequested = replacementId !== targetId;
+        let parsed: ReturnType<typeof parseMarkingScheme> = null;
+        if (markingText) parsed = parseMarkingScheme(markingText, ordinaryMathSemanticProfile(question, {}));
+        if ((!renameRequested && !parsed) || (markingText && (!Number.isInteger(printedMarks) || Number(printedMarks) < 1 || Number(printedMarks) > 999 || !parsed || parsed.total !== printedMarks)) || (!markingText && printedMarks !== null)) {
+          return Response.json({ error: "invalid_child_repair" }, { status: 400 });
+        }
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "replace_item_content",
+          category: exception.category,
+          affected_id: parentId,
+          target_id: targetId,
+          replacement_id: replacementId,
+          question_text: null,
+          solution_lines: [],
+          ...(parsed ? {
+            printed_marks: printedMarks,
+            mark_points: parsed.points,
+            expected_total: parsed.total,
+            mark_calculation_mode: parsed.mode,
+          } : {}),
+          reconciliation_scope: "suspicious_child",
+          reinterpretation_method: "structured_child_repair_editor",
+        };
+        const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");
+        displayText = `Question ${targetId}: ${actions}.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (allocationResolution && typeof allocationResolution === "object") {
         if (exception.category !== "question_allocation_pairing_ambiguous") {

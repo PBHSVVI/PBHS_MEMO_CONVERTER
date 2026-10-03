@@ -314,6 +314,24 @@ Difference, and offers three bounded choices: use the deterministic child total 
 the printed source subtotal is wrong, inspect/correct a child when the source subtotal
 is correct, or defer the parent. The system never invents missing marks.
 
+#### v4.9.1 suspicious-child repair hotfix
+
+A parent subtotal can expose a structurally suspicious child even when the worker did
+not create a separate child exception. The question workspace now makes a child
+actionable when bounded deterministic signals are present, including a zero-mark row
+inside a positive parent difference or a sequence such as `3.1`, `3.1.2`, `3.1.3`,
+`3.1.4` with no `3.1.1`. Detection only offers inspection; it never renames or assigns
+marks automatically. Healthy rows without an active exception remain read-only.
+
+The teacher may correct the selected child's identifier, its complete marking scheme,
+or both. The repair is anchored to the active parent subtotal exception, restricted to
+one existing child within that major question, shown back before confirmation, and
+stored as one auditable `replace_item_content` patch. Rename and mark changes validate
+on a trial structure and commit atomically. When staged, the parent review stays open
+and the ledger immediately recalculates the projected subtotal and remaining
+difference. The normal batch revalidation remains responsible for resolving or
+regenerating the parent discrepancy.
+
 ### Semantic reuse and invalidation
 
 Revalidation checks the current job's previous `internal/semantic.json` before looking
