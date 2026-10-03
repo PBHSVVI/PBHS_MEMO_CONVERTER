@@ -233,7 +233,7 @@ the semantic check reads as consistent accuracy still raises
 `shorthand_semantic_conflict` for teacher review. High model confidence does not
 choose either interpretation.
 
-Review version 4.7 resolves the internal candidate ID to the actual question and
+Review version 4.8 resolves the internal candidate ID to the actual question and
 marking-point position. It presents the entered code and the automated interpretation
 in teacher language, followed by explicit choices such as `Use CA — Consistent
 accuracy` and `Keep A — Accuracy`. Candidate IDs, semantic enums, confidence and
@@ -252,8 +252,13 @@ it, preventing concurrent correction attempts.
 
 Multiple semantic conflicts for one question display both their marking-point
 position and their progress within that question. If the automated semantic result
-cannot map safely to a code, the page states that limitation and offers the bounded
-M, A, CA, F, S and R chooser. This fallback uses the same structured correction,
+cannot map safely to a code, the page states that limitation and uses the bounded
+ordinary FET Mathematics profile. General and non-geometry questions offer M, A,
+CA and F. Explicit geometry context additionally offers S for Statement and R for
+Reason; S/R is offered only when that combined convention appears in the source.
+SF and AO remain source-explicit only. S is never presented as substitution or simplification, and R
+is never presented as rounding. Technical Mathematics and Mathematical Literacy
+codes are outside this phase. The fallback uses the same structured correction,
 readable show-back and explicit confirmation path; neither AI nor entered shorthand
 selects a code automatically. Internal candidate IDs, enums, confidence and provider
 details remain in collapsed Technical details.

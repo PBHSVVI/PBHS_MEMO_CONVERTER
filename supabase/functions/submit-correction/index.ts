@@ -5,34 +5,61 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
 const QUESTION_ID_RE = /^\d{1,2}(?:\.\d{1,2}){0,2}$/;
 const MARK_CODES = new Set(["M", "A", "CA", "F", "S", "R"]);
-const SEMANTIC_TO_CODE: Record<string, string> = {
+const SEMANTIC_RESOLUTION_CODES = new Set(["M", "A", "CA", "F", "S", "R", "S/R", "SF", "AO"]);
+const GENERAL_SEMANTIC_TO_CODE: Record<string, string> = {
   method: "M", accuracy: "A", answer: "A", consistent_accuracy: "CA",
-  formula: "F", factorisation: "F", statement: "S", substitution: "S",
-  simplification: "S", reason: "R",
+  formula: "F", factorisation: "F",
 };
 const SEMANTIC_LABELS: Record<string, string> = {
   method: "Method", accuracy: "Accuracy", answer: "Answer",
   consistent_accuracy: "Consistent accuracy", formula: "Formula",
   factorisation: "Factorisation", statement: "Statement",
-  substitution: "Substitution", simplification: "Simplification", reason: "Reason",
+  substitution: "Substitution", reason: "Reason",
+  statement_reason: "Statement and reason", answer_only: "Answer only",
 };
 const ALLOWED_SEMANTICS_BY_CODE: Record<string, Set<string>> = {
   M: new Set(["method"]), A: new Set(["accuracy", "answer"]),
   CA: new Set(["consistent_accuracy"]), F: new Set(["formula", "factorisation"]),
-  S: new Set(["statement", "substitution", "simplification"]), R: new Set(["reason"]),
+  S: new Set(["statement"]), R: new Set(["reason"]),
+  "S/R": new Set(["statement_reason"]), SF: new Set(["substitution"]),
+  AO: new Set(["answer_only"]),
 };
 const DEFAULT_SEMANTIC_BY_CODE: Record<string, string> = {
   M: "method", A: "accuracy", CA: "consistent_accuracy",
-  F: "formula", S: "statement", R: "reason",
+  F: "formula", S: "statement", R: "reason", "S/R": "statement_reason",
+  SF: "substitution", AO: "answer_only",
 };
+const GEOMETRY_CONTEXT_RE = /\b(?:euclidean\s+geometry|geometry|theorem|parallel|perpendicular|cyclic|chord|radius|diameter|quadrilateral)\b/i;
 
-function markSemantic(code: string, descriptor: string): string {
+function ordinaryMathSemanticProfile(question: Record<string, unknown> | undefined, selected: Record<string, unknown>) {
+  const points = Array.isArray(question?.mark_points) ? question.mark_points : [];
+  const override = question?.content_override && typeof question.content_override === "object" ? question.content_override as Record<string, unknown> : {};
+  const evidence = [question?.source_preview, override.question_text, selected.question_context, selected.context,
+    ...points.map((item) => item && typeof item === "object" ? `${(item as Record<string, unknown>).code ?? ""} ${(item as Record<string, unknown>).descriptor ?? ""}` : "")]
+    .filter(Boolean).join(" ");
+  const geometry = GEOMETRY_CONTEXT_RE.test(evidence);
+  const explicitCodes = new Set<string>();
+  if (/(?:^|\s)S\s*\/\s*R(?=\s|$)/i.test(evidence)) explicitCodes.add("S/R");
+  for (const code of ["SF", "AO"]) if (new RegExp(`(?:^|[^A-Z])${code}(?=[^A-Z]|$)`, "i").test(evidence)) explicitCodes.add(code);
+  const semanticToCode: Record<string, string> = { ...GENERAL_SEMANTIC_TO_CODE };
+  if (geometry) Object.assign(semanticToCode, { statement: "S", reason: "R" });
+  if (geometry && explicitCodes.has("S/R")) semanticToCode.statement_reason = "S/R";
+  if (explicitCodes.has("SF")) semanticToCode.substitution = "SF";
+  if (explicitCodes.has("AO")) semanticToCode.answer_only = "AO";
+  const allowedCodes = new Set(["M", "A", "CA", "F", ...(geometry ? ["S", "R"] : []), ...explicitCodes]);
+  return { name: geometry ? "ordinary_mathematics_geometry" : "ordinary_mathematics_general", geometry, semanticToCode, allowedCodes };
+}
+
+function markSemantic(code: string, descriptor: string, profile: ReturnType<typeof ordinaryMathSemanticProfile>): string {
   if (code === "CA") return "consistent_accuracy";
   if (code === "M") return "method";
   if (code === "A") return /\b(?:answer|final)\b/i.test(descriptor) ? "answer" : "accuracy";
   if (code === "F") return "formula";
-  if (code === "S") return "statement";
-  if (code === "R") return "reason";
+  if (profile.geometry && code === "S") return "statement";
+  if (profile.geometry && code === "R") return "reason";
+  if (profile.geometry && code === "S/R") return "statement_reason";
+  if (profile.allowedCodes.has("SF") && code === "SF") return "substitution";
+  if (profile.allowedCodes.has("AO") && code === "AO") return "answer_only";
   return "other";
 }
 
@@ -261,15 +288,17 @@ export default {
         const sourceCount = Number(point?.count);
         const sourceCode = typeof point?.code === "string" ? point.code.toUpperCase() : "";
         const sourceDescriptor = typeof point?.descriptor === "string" ? point.descriptor.trim() : "";
+        const profile = ordinaryMathSemanticProfile(question, selected);
         const suggestedSemantic = typeof selected.semantic_type === "string" ? selected.semantic_type : "";
-        const suggestedCode = SEMANTIC_TO_CODE[suggestedSemantic];
-        const enteredSemantic = markSemantic(sourceCode, sourceDescriptor);
-        if (!point || !Number.isInteger(sourceCount) || sourceCount < 1 || !MARK_CODES.has(sourceCode) || !sourceDescriptor) {
+        const suggestedCode = profile.semanticToCode[suggestedSemantic];
+        const enteredSemantic = markSemantic(sourceCode, sourceDescriptor, profile);
+        if (!point || !Number.isInteger(sourceCount) || sourceCount < 1 || !SEMANTIC_RESOLUTION_CODES.has(sourceCode) || !sourceDescriptor) {
           return Response.json({ error: "semantic_source_unavailable" }, { status: 409 });
         }
         const useSuggestion = choice === "suggested";
         const explicitCode = typeof value.selected_code === "string" ? value.selected_code.toUpperCase() : "";
-        if ((useSuggestion && !suggestedCode) || (choice === "code" && (suggestedCode || !MARK_CODES.has(explicitCode)))) {
+        const fallbackRequired = !suggestedCode || !profile.allowedCodes.has(sourceCode);
+        if ((useSuggestion && !suggestedCode) || (choice === "code" && (!fallbackRequired || !SEMANTIC_RESOLUTION_CODES.has(explicitCode) || !profile.allowedCodes.has(explicitCode)))) {
           return Response.json({ error: "invalid_semantic_choice" }, { status: 400 });
         }
         const selectedCode = String(useSuggestion ? suggestedCode : choice === "code" ? explicitCode : sourceCode);
@@ -295,6 +324,7 @@ export default {
           confidence_score: selected.confidence_score ?? null,
           resolution_method: selected.resolution_method ?? null,
           teacher_choice: choice,
+          shorthand_profile: profile.name,
           reinterpretation_method: "structured_semantic_conflict_choice",
         };
         displayText = `Question ${questionId} — ${position}: use ${sourceCount}${selectedCode} — ${sourceDescriptor} (${selectedLabel}).`;

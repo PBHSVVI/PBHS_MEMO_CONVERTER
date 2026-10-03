@@ -21,7 +21,7 @@ MARK_TYPES = {
     "method", "accuracy", "answer", "consistent_accuracy", "formula",
     "factorisation", "substitution", "simplification", "statement", "reason",
     "statement_reason", "conclusion", "construction", "given", "graph_feature",
-    "selection", "progressive", "other",
+    "selection", "progressive", "answer_only", "other", "other_explicit",
 }
 
 DEFAULT_DESCRIPTOR = {
@@ -36,6 +36,8 @@ DEFAULT_DESCRIPTOR = {
     "statement": "statement",
     "reason": "reason",
     "statement_reason": "statement / reason",
+    "answer_only": "answer only",
+    "other_explicit": "other explicit mark",
     "conclusion": "conclusion",
     "construction": "Construction",
     "given": "Given",

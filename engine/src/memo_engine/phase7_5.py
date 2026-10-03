@@ -673,7 +673,12 @@ def _apply_resolve_mark_semantic_conflict(
         "R": {"reason"},
         "A": {"accuracy", "answer"},
         "F": {"formula", "factorisation"},
+        # Historical corrections may contain the legacy S meanings. New teacher
+        # choices are constrained by the ordinary-Mathematics Edge profile.
         "S": {"statement", "substitution", "simplification"},
+        "S/R": {"statement_reason"},
+        "SF": {"substitution"},
+        "AO": {"answer_only"},
     }
     if selected_semantic not in allowed_by_code.get(selected_code, set()):
         return None, _issue(

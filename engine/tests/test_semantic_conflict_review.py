@@ -113,8 +113,73 @@ def test_other_semantic_keeps_actual_mark_point_and_offers_bounded_code_choices(
     assert result["presentation"]["entered"] == "1A — change sign"
     assert result["presentation"]["suggested"] is None
     assert result["presentation"]["suggested_choice"] is None
-    assert [item["code"] for item in result["options"]] == ["M", "A", "CA", "F", "S", "R"]
+    assert result["model"]["profile"]["name"] == "ordinary_mathematics_general"
+    assert [item["code"] for item in result["options"]] == ["M", "A", "CA", "F"]
     assert result["options"][1]["action"] == "Keep current code A — Accuracy"
+
+
+def test_ordinary_geometry_adds_statement_reason_and_combined_choices_only_in_context():
+    exception = {
+        "category": "ambiguous_mark_semantics",
+        "affected_id": "9.2",
+        "suggestions": [{"candidate_id": "9_2__m2", "semantic_type": "other"}],
+    }
+    structure = {"questions": [{
+        "question_id": "9.2",
+        "source_preview": "Euclidean geometry: prove that the quadrilateral is cyclic using the S/R convention",
+        "mark_points": [
+            {"count": 1, "code": "S", "descriptor": "opposite angles supplementary"},
+            {"count": 1, "code": "R", "descriptor": "converse cyclic quadrilateral theorem"},
+        ],
+    }]}
+    program = (
+        "const humanCategory=value=>String(value||'').replaceAll('_',' ');\n"
+        + _section("SEMANTIC CONFLICT MODEL")
+        + "\nconst ex=JSON.parse(process.argv[1]);const model=semanticConflictModel(ex,ex.suggestions[0],JSON.parse(process.argv[2]));"
+        + "\nconsole.log(JSON.stringify({profile:model.profile,options:semanticCodeOptions(model)}));"
+    )
+    result = _run_node(program, exception, structure)
+    assert result["profile"]["name"] == "ordinary_mathematics_geometry"
+    assert [item["code"] for item in result["options"]] == ["M", "A", "CA", "F", "S", "R", "S/R"]
+    assert result["options"][-3:] == [
+        {"code": "S", "semantic": "statement", "label": "Statement", "action": "Use S — Statement"},
+        {"code": "R", "semantic": "reason", "label": "Reason", "action": "Keep current code R — Reason"},
+        {"code": "S/R", "semantic": "statement_reason", "label": "Statement and reason", "action": "Use S/R — Statement and reason"},
+    ]
+
+
+def test_ordinary_mathematics_never_labels_s_as_substitution_or_r_as_rounding():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "Statement / substitution / simplification" not in html
+    assert "S = Simplification" not in html
+    assert "Rounding" not in html
+    assert "label:'Statement'" in html
+    assert "label:'Reason'" in html
+    for unsupported in ["ST", "RE", "ST/RE", "NPR", "NPU"]:
+        assert f"code:'{unsupported}'" not in html
+
+
+def test_non_geometry_semantics_do_not_map_to_s_or_r_display_codes():
+    program = (
+        "const humanCategory=value=>String(value||'').replaceAll('_',' ');\n"
+        + _section("SEMANTIC CONFLICT MODEL")
+        + "\nconst profile=ordinaryMathShorthandProfile({source_preview:'Trigonometry identity'},{});"
+        + "\nconsole.log(JSON.stringify(['statement','reason','substitution','simplification'].map(value=>displayCodeForSemantic(value,profile))));"
+    )
+    assert _run_node(program) == [None, None, None, None]
+
+
+def test_sf_and_ao_are_only_added_when_literal_source_codes_are_present():
+    program = (
+        "const humanCategory=value=>String(value||'').replaceAll('_',' ');\n"
+        + _section("SEMANTIC CONFLICT MODEL")
+        + "\nconst profile=ordinaryMathShorthandProfile(JSON.parse(process.argv[1]),{});"
+        + "\nconsole.log(JSON.stringify(profile));"
+    )
+    absent = _run_node(program, {"source_preview": "substitute the value and give the answer"})
+    explicit = _run_node(program, {"source_preview": "Award 1SF for substitution; AO permitted"})
+    assert [item["code"] for item in absent["choices"]] == ["M", "A", "CA", "F"]
+    assert [item["code"] for item in explicit["choices"]] == ["M", "A", "CA", "F", "SF", "AO"]
 
 
 def test_suggestion_controls_never_render_raw_json():
@@ -187,8 +252,10 @@ def test_submit_endpoint_builds_confirmation_ready_auditable_semantic_patch():
     assert 'exceptionStatus = "awaiting_confirmation"' in source
     assert "ALLOWED_SEMANTICS_BY_CODE[selectedCode]?.has(selectedSemantic)" in source
     assert '!["suggested", "entered", "code"].includes(String(choice))' in source
-    assert 'choice === "code" && (suggestedCode || !MARK_CODES.has(explicitCode))' in source
+    assert "const fallbackRequired = !suggestedCode || !profile.allowedCodes.has(sourceCode)" in source
+    assert 'choice === "code" && (!fallbackRequired || !SEMANTIC_RESOLUTION_CODES.has(explicitCode) || !profile.allowedCodes.has(explicitCode))' in source
     assert "DEFAULT_SEMANTIC_BY_CODE[selectedCode]" in source
+    assert "ordinaryMathSemanticProfile(question, selected)" in source
 
 
 def test_semantic_review_disables_generic_free_text_and_keeps_technical_values_collapsed():

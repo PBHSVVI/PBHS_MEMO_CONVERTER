@@ -14,6 +14,9 @@ ALLOWED_BY_CODE: dict[str, set[str]] = {
     "A": {"accuracy", "answer"},
     "F": {"formula", "factorisation"},
     "S": {"statement", "substitution", "simplification"},
+    "S/R": {"statement_reason"},
+    "SF": {"substitution"},
+    "AO": {"answer_only"},
 }
 
 
