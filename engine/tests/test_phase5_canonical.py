@@ -70,11 +70,13 @@ class Phase5CacheTests(unittest.TestCase):
                 {
                     "candidate_id": "1_1__m1", "question_id": "1.1", "mark_index": 0,
                     "count": 1, "source_shorthand": "M", "descriptor": "method",
+                    "source_notation": "shorthand", "source_semantic": None,
                     "resolution_method": "deterministic",
                 },
                 {
                     "candidate_id": "1_1__m2", "question_id": "1.1", "mark_index": 1,
                     "count": 1, "source_shorthand": "A", "descriptor": "answer",
+                    "source_notation": "shorthand", "source_semantic": None,
                     "resolution_method": "deterministic",
                 },
             ],

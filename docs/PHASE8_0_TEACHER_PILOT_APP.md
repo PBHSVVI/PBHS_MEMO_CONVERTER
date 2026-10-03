@@ -233,7 +233,7 @@ the semantic check reads as consistent accuracy still raises
 `shorthand_semantic_conflict` for teacher review. High model confidence does not
 choose either interpretation.
 
-Review version 4.8 resolves the internal candidate ID to the actual question and
+Review version 4.9 resolves the internal candidate ID to the actual question and
 marking-point position. It presents the entered code and the automated interpretation
 in teacher language, followed by explicit choices such as `Use CA — Consistent
 accuracy` and `Keep A — Accuracy`. Candidate IDs, semantic enums, confidence and
@@ -255,7 +255,7 @@ position and their progress within that question. If the automated semantic resu
 cannot map safely to a code, the page states that limitation and uses the bounded
 ordinary FET Mathematics profile. General and non-geometry questions offer M, A,
 CA and F. Explicit geometry context additionally offers S for Statement and R for
-Reason; S/R is offered only when that combined convention appears in the source.
+Reason; SR and S/R are accepted as aliases for one combined Statement + Reason mark in geometry. The source spelling remains available in the mark evidence.
 SF and AO remain source-explicit only. S is never presented as substitution or simplification, and R
 is never presented as rounding. Technical Mathematics and Mathematical Literacy
 codes are outside this phase. The fallback uses the same structured correction,
@@ -264,6 +264,95 @@ selects a code automatically. Internal candidate IDs, enums, confidence and prov
 details remain in collapsed Technical details.
 
 This increment does not mutate live job or correction records. Existing pending attempts must be cancelled or rejected through the review UI before a replacement can be submitted.
+
+
+## Phase 8.0 hosted pilot remediation — v4.9
+
+This increment consolidates the teacher-pilot findings without changing the accepted
+Phase 7.5, 7.6 or 7.7 contracts. Phase 8.0 remains pending hosted acceptance.
+
+### Faster correction boundary
+
+A submitted correction is still structurally validated and shown back before the
+teacher can confirm it. Confirmation can now stage the correction and return to the
+remaining review queue without launching the full memo worker. Each staged correction
+keeps its own correction row, exception link and confirmation event. The teacher then
+uses **Apply confirmed corrections and recheck memo** once for the staged set, or may
+choose **Confirm, apply and recheck** when an immediate boundary is appropriate.
+
+The confirmation function rejects two staged corrections with the same durable target
+within the current review pass. No unconfirmed correction enters the overlay. The
+existing correction overlay remains the deterministic batch dry-run and fails closed
+if the confirmed set becomes inconsistent with the current source structure.
+
+### Review ordering, skip and source focus
+
+Actionable exceptions are sorted by numeric question segments and then by a stable
+category rank. Dependency filtering runs first, so a parent subtotal remains waiting
+behind its child causes. Skip remains browser-session state only and performs no
+server mutation. It records a logical key made from category, affected question,
+semantic candidate/mark index, or grouped target set; a recreated exception UUID
+therefore stays deferred behind the other actionable items.
+
+Focused evidence first uses the exact `source_block_index` from the current structure.
+If provenance is unavailable, it uses a question label anchored at the start of a
+cell, with numeric boundaries that distinguish Question 6 from an arbitrary 6 and
+Question 3 from Question 3.1 or mark values. Queue navigation resets and rebuilds the
+focus for every selected item.
+
+### Question workspace and parent totals
+
+The review page displays a question-level ledger for the selected major question.
+Each child row shows its source printed marks when known, converter marks, marking
+point count, active discrepancy and a direct review action. Confirmed staged child
+changes contribute to an explicitly labelled projected subtotal while retaining
+separate correction identities.
+
+A parent total remains dependent while a specific child issue exists. When no child
+cause is available, the parent screen shows source total, converter total and
+Difference, and offers three bounded choices: use the deterministic child total when
+the printed source subtotal is wrong, inspect/correct a child when the source subtotal
+is correct, or defer the parent. The system never invents missing marks.
+
+### Semantic reuse and invalidation
+
+Revalidation checks the current job's previous `internal/semantic.json` before looking
+at other jobs with the same immutable source hash. The per-candidate cache identity is:
+question ID, mark index, count, source shorthand, descriptor, source notation,
+source semantic, question context, neighbouring marks, and whether the result was
+deterministic. Exact matches reuse the whole semantic artifact. Partial matches reuse
+only provider-valid green AI results at confidence 0.90 or higher; changed candidates
+alone return to the provider. Older v4.8 records may warm the cache from the durable
+mark identity, while new v4.9 records also compare context and neighbour fields.
+
+A teacher-confirmed semantic decision changes the point notation to
+`teacher_semantic_confirmed`, is resolved deterministically on later passes, and cannot
+be replaced by an older AI cache entry. Source, mark structure, descriptor, context or
+neighbour changes invalidate the affected candidate without invalidating unrelated
+questions.
+
+### Long-running processing
+
+The review page no longer turns a ten-minute frontend timer into a processing failure.
+It polls durable job state with bounded backoff, maps real stages to teacher-facing
+phases, and after ten minutes says that processing is continuing and the page may be
+closed. Reloading resumes from the live job state. Only durable `failed` or
+`failed_retryable` state is presented as a worker failure.
+
+### Ordinary Mathematics shorthand
+
+General/non-geometry review remains bounded to M, A, CA and F. Geometry may add S,
+R and one combined Statement + Reason mark. `SR`, `S-R` and `S/R` parse to the stable
+`statement_reason` semantic and count as one mark, not separate S and R marks. SF and
+AO remain source-explicit. Technical Mathematics and Mathematical Literacy meanings
+remain outside scope.
+
+### Pre-live support requirement
+
+**Report a problem remains mandatory before general live use and is intentionally
+deferred from this remediation.** It needs a durable support record and notification
+path that preserve job, exception, correction, app version and state. Adding that
+infrastructure was not necessary to make the current pilot review safe and faster.
 
 ## Explicit non-goals
 

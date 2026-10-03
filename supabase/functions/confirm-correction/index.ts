@@ -3,6 +3,18 @@ import { withSupabase } from "npm:@supabase/server@^1";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function stagedTarget(patch: Record<string, unknown> | null): string | null {
+  if (!patch) return null;
+  const operation = String(patch.operation ?? "");
+  if (operation === "resolve_mark_semantic_conflict") return `semantic:${String(patch.candidate_id ?? "")}`;
+  if (operation === "resolve_question_allocation_pairing") {
+    const ids = Array.isArray(patch.allocations) ? patch.allocations.map((item: any) => String(item?.question_id ?? "")).sort() : [];
+    return ids.length ? `allocation:${ids.join(",")}` : null;
+  }
+  const target = String(patch.target_id ?? patch.affected_id ?? "");
+  return target ? `question:${target}` : null;
+}
+
 async function dispatchJob(ctx: any, jobId: string, userId: string, attemptCount: number) {
   const token = Deno.env.get("GITHUB_TOKEN");
   const repository = Deno.env.get("GITHUB_REPOSITORY") ?? "PBHSVVI/PBHS_MEMO_CONVERTER";
@@ -87,6 +99,22 @@ export default {
       return Response.json({ error: "exception_not_confirmable" }, { status: 409 });
     }
 
+    const deferRevalidation = body.defer_revalidation === true;
+    if (deferRevalidation) {
+      const { data: currentJob } = await ctx.supabaseAdmin.from("jobs")
+        .select("started_at").eq("id", correction.job_id).maybeSingle();
+      let stagedQuery = ctx.supabaseAdmin.from("corrections")
+        .select("id,proposed_patch,confirmed_at").eq("job_id", correction.job_id)
+        .eq("confirmation_status", "confirmed").is("applied_at", null);
+      if (currentJob?.started_at) stagedQuery = stagedQuery.gte("confirmed_at", currentJob.started_at);
+      const { data: staged, error: stagedError } = await stagedQuery;
+      if (stagedError) return Response.json({ error: "staged_correction_lookup_failed" }, { status: 502 });
+      const target = stagedTarget(correction.proposed_patch);
+      if (target && (staged ?? []).some((item: any) => stagedTarget(item.proposed_patch) === target)) {
+        return Response.json({ error: "conflicting_staged_correction", target }, { status: 409 });
+      }
+    }
+
     const now = new Date().toISOString();
     await ctx.supabaseAdmin.from("corrections").update({
       confirmation_status: "confirmed", confirmed_at: now, updated_at: now,
@@ -104,8 +132,9 @@ export default {
 
     const { data: job, error: jobError } = await ctx.supabaseAdmin.from("jobs")
       .update({
-        status: "correction_confirmed", stage: "phase7_correction_confirmed",
-        review_required: remaining > 0, updated_at: now,
+        status: deferRevalidation ? "needs_review" : "correction_confirmed",
+        stage: deferRevalidation ? "phase8_corrections_staged" : "phase7_correction_confirmed",
+        review_required: deferRevalidation || remaining > 0, updated_at: now,
         error_code: null, error_message: null,
       })
       .eq("id", correction.job_id)
@@ -115,12 +144,21 @@ export default {
 
     await ctx.supabaseAdmin.from("job_events").insert({
       job_id: correction.job_id, user_id: correction.user_id,
-      event_type: "phase7_correction_confirmed", stage: "phase7_correction_confirmed",
+      event_type: deferRevalidation ? "phase8_correction_staged" : "phase7_correction_confirmed",
+      stage: deferRevalidation ? "phase8_corrections_staged" : "phase7_correction_confirmed",
       payload: {
         correction_id: correctionId, exception_id: correction.exception_id,
         remaining_review_count: remaining,
       },
     });
+
+    if (deferRevalidation) {
+      return Response.json({
+        ok: true, correction_id: correctionId, staged: true,
+        remaining_review_count: remaining,
+        job_status: "needs_review", job_stage: "phase8_corrections_staged",
+      });
+    }
 
     const dispatched = await dispatchJob(
       ctx, correction.job_id, correction.user_id, Number(job.attempt_count ?? 0)

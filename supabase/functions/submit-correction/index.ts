@@ -4,7 +4,7 @@ import { withSupabase } from "npm:@supabase/server@^1";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
 const QUESTION_ID_RE = /^\d{1,2}(?:\.\d{1,2}){0,2}$/;
-const MARK_CODES = new Set(["M", "A", "CA", "F", "S", "R"]);
+const MARK_CODES = new Set(["M", "A", "CA", "F", "S", "R", "S/R", "SF", "AO"]);
 const SEMANTIC_RESOLUTION_CODES = new Set(["M", "A", "CA", "F", "S", "R", "S/R", "SF", "AO"]);
 const GENERAL_SEMANTIC_TO_CODE: Record<string, string> = {
   method: "M", accuracy: "A", answer: "A", consistent_accuracy: "CA",
@@ -39,14 +39,14 @@ function ordinaryMathSemanticProfile(question: Record<string, unknown> | undefin
     .filter(Boolean).join(" ");
   const geometry = GEOMETRY_CONTEXT_RE.test(evidence);
   const explicitCodes = new Set<string>();
-  if (/(?:^|\s)S\s*\/\s*R(?=\s|$)/i.test(evidence)) explicitCodes.add("S/R");
+  if (/(?:^|[^A-Z])S\s*(?:\/|-)?\s*R(?=[^A-Z]|$)/i.test(evidence)) explicitCodes.add("S/R");
   for (const code of ["SF", "AO"]) if (new RegExp(`(?:^|[^A-Z])${code}(?=[^A-Z]|$)`, "i").test(evidence)) explicitCodes.add(code);
   const semanticToCode: Record<string, string> = { ...GENERAL_SEMANTIC_TO_CODE };
   if (geometry) Object.assign(semanticToCode, { statement: "S", reason: "R" });
-  if (geometry && explicitCodes.has("S/R")) semanticToCode.statement_reason = "S/R";
+  if (geometry) semanticToCode.statement_reason = "S/R";
   if (explicitCodes.has("SF")) semanticToCode.substitution = "SF";
   if (explicitCodes.has("AO")) semanticToCode.answer_only = "AO";
-  const allowedCodes = new Set(["M", "A", "CA", "F", ...(geometry ? ["S", "R"] : []), ...explicitCodes]);
+  const allowedCodes = new Set(["M", "A", "CA", "F", ...(geometry ? ["S", "R", "S/R"] : []), ...explicitCodes]);
   return { name: geometry ? "ordinary_mathematics_geometry" : "ordinary_mathematics_general", geometry, semanticToCode, allowedCodes };
 }
 
@@ -105,7 +105,7 @@ type ParsedMarking = {
   normalizedText: string;
 };
 
-function parseMarkingScheme(value: unknown): ParsedMarking | null {
+function parseMarkingScheme(value: unknown, profile: ReturnType<typeof ordinaryMathSemanticProfile>): ParsedMarking | null {
   if (typeof value !== "string" || !value.trim() || value.length > 4000) return null;
   const fragments = value.replace(/\r/g, "").split(/\n|;|\|/).map((part) => part.trim()).filter(Boolean);
   if (!fragments.length) return null;
@@ -118,16 +118,17 @@ function parseMarkingScheme(value: unknown): ParsedMarking | null {
       normalizedFragments.push("OR");
       continue;
     }
-    const match = fragment.match(/^(\d{1,2})\s*(CA|M|A|F|S|R)\b\s*(.+)$/i);
+    const match = fragment.match(/^(\d{1,2})\s*(S\s*(?:\/|-)?\s*R|CA|SF|AO|M|A|F|S|R)\b\s*(.+)$/i);
     if (!match) return null;
     const count = Number(match[1]);
-    const code = match[2].toUpperCase();
+    const rawCode = match[2].toUpperCase().replace(/\s+/g, "");
+    const code = ["SR", "S-R"].includes(rawCode) ? "S/R" : rawCode;
     const descriptor = match[3].trim();
-    if (!Number.isInteger(count) || count < 1 || count > 10 || !descriptor || descriptor.length > 500) return null;
+    if (!Number.isInteger(count) || count < 1 || count > 10 || !profile.allowedCodes.has(code) || !descriptor || descriptor.length > 500) return null;
     normalizedFragments.push(`${count}${code} ${descriptor}`);
     branches.at(-1)?.push({
       count, code, descriptor,
-      semantic: markSemantic(code, descriptor),
+      semantic: markSemantic(code, descriptor, profile),
       source: `${count}${code} ${descriptor}`,
       notation: "teacher_confirmed",
     });
@@ -369,8 +370,23 @@ export default {
       }
       displayText = typedText;
       const allocationResolution = body.allocation_resolution;
+      const parentResolution = body.parent_reconciliation;
       const content = body.content_correction;
-      if (allocationResolution && typeof allocationResolution === "object") {
+      if (parentResolution && typeof parentResolution === "object") {
+        if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
+          return Response.json({ error: "parent_reconciliation_category_mismatch" }, { status: 400 });
+        }
+        const value = parentResolution as Record<string, unknown>;
+        const computedTotal = Number(value.computed_total);
+        const message = String(exception.message ?? "");
+        const match = message.match(/computed(?:\s+(?:sub)?total)?\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i) ?? message.match(/converter(?:\s+calculated)?\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i);
+        if (value.choice !== "source_wrong" || !Number.isInteger(computedTotal) || computedTotal < 0 || computedTotal > 999 || !match || Number(match[1]) !== computedTotal) {
+          return Response.json({ error: "invalid_parent_reconciliation" }, { status: 400 });
+        }
+        proposedPatch = { schema_version: "1.0", operation: "set_question_subtotal", category: exception.category, affected_id: exception.affected_id, target_id: exception.affected_id, subtotal: computedTotal, reinterpretation_method: "deterministic_parent_ledger" };
+        displayText = `Question ${exception.affected_id}: record the deterministic child total ${computedTotal} because the printed source subtotal is wrong.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (allocationResolution && typeof allocationResolution === "object") {
         if (exception.category !== "question_allocation_pairing_ambiguous") {
           return Response.json({ error: "allocation_resolution_category_mismatch" }, { status: 400 });
         }
@@ -389,7 +405,11 @@ export default {
           const item = allocations[index] as Record<string, unknown>;
           const printedMarks = Number(item.printed_marks);
           const markingText = typeof item.marking_text === "string" ? item.marking_text.trim() : "";
-          const parsed = parseMarkingScheme(markingText);
+          const structure = await loadStructure(ctx, job.user_id, jobId);
+          const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+          const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targets[index]) as Record<string, unknown> | undefined;
+          const profile = ordinaryMathSemanticProfile(question, {});
+          const parsed = parseMarkingScheme(markingText, profile);
           if (!Number.isInteger(printedMarks) || printedMarks < 1 || printedMarks > 999 || !parsed || parsed.total !== printedMarks) {
             return Response.json({ error: "invalid_allocation_marking", question_id: targets[index] }, { status: 400 });
           }
@@ -422,6 +442,10 @@ export default {
           ? value.solution_lines.filter((line) => typeof line === "string").map((line) => String(line).trim()).filter(Boolean)
           : [];
         const rawPoints = Array.isArray(value.mark_points) ? value.mark_points : [];
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown> | undefined;
+        const profile = ordinaryMathSemanticProfile(question, {});
         const markPoints = rawPoints.map((point) => {
           const item = point && typeof point === "object" ? point as Record<string, unknown> : {};
           const code = typeof item.code === "string" ? item.code.toUpperCase() : "";
@@ -430,7 +454,7 @@ export default {
             count: Number(item.count),
             code,
             descriptor,
-            semantic: markSemantic(code, descriptor),
+            semantic: markSemantic(code, descriptor, profile),
             source: typeof item.source === "string" ? item.source.trim() : "",
             notation: "teacher_confirmed",
           };
@@ -441,7 +465,7 @@ export default {
           solutionLines.length > 80 || solutionLines.some((line) => line.length > 1000);
         const invalidMarks = markPoints.some((point) =>
           !Number.isInteger(point.count) || point.count < 1 || point.count > 10 ||
-          !MARK_CODES.has(point.code) || !point.descriptor || !point.source
+          !MARK_CODES.has(point.code) || !profile.allowedCodes.has(point.code) || !point.descriptor || !point.source
         );
         if (invalidTarget || invalidContent || invalidMarks) {
           return Response.json({ error: "invalid_content_correction" }, { status: 400 });

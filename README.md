@@ -86,15 +86,7 @@ adds an atomic grouped editor for ambiguous question/allocation pairings. Generi
 free text and single-item content edits cannot clear that grouped exception. Hosted
 acceptance for Phase 8.0 remains pending.
 
-Review version 4.8 keeps semantic shorthand conflicts fail-closed while presenting
-the actual marking point and explicit teacher-language choices. Internal candidate
-IDs, semantic enums, confidence and provider routing are confined to Technical
-details; the chosen interpretation still requires confirmation and an auditable
-correction before revalidation. Its fallback follows ordinary FET Mathematics:
-M, A, CA and F generally; S and R only with explicit geometry context; S/R only
-when that geometry convention appears in the source; and
-no Technical Mathematics or Mathematical Literacy meanings. Phase 8.0 hosted
-acceptance remains pending.
+Review version 4.9 is the consolidated Phase 8.0 hosted-pilot remediation. It keeps semantic conflicts fail-closed and adds provenance-first source focus, natural numeric queue order, logical session-scoped defer keys, question-level child ledgers, staged individually audited corrections with one explicit batch recheck, durable long-running progress, and same-job per-candidate semantic reuse. General shorthand remains M/A/CA/F; geometry may add S, R and combined SR/S-R/S/R as one `statement_reason` mark. SF and AO remain source-explicit, with no Technical Mathematics or Mathematical Literacy meanings. **Phase 8.0 hosted acceptance remains pending.**
 
 - **Frontend:** static web application (target: GitHub Pages)
 - **Identity / database / storage / lightweight API:** Supabase

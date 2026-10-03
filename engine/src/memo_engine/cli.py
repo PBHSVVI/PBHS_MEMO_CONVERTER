@@ -73,6 +73,10 @@ def _semantic_signature(structure: dict[str, Any]) -> dict[str, tuple[Any, ...]]
             int(item.get("count") or 0),
             item.get("source_shorthand"),
             str(item.get("descriptor") or ""),
+            item.get("source_notation"),
+            item.get("source_semantic"),
+            str(item.get("question_context") or ""),
+            json.dumps(item.get("neighboring_marks") or [], sort_keys=True),
             item.get("resolution_method") == "deterministic",
         )
     return result
@@ -95,6 +99,10 @@ def _cached_semantic_matches(
                 int(item.get("count") or 0),
                 item.get("source_shorthand"),
                 str(item.get("descriptor") or ""),
+                item.get("source_notation"),
+                item.get("source_semantic"),
+                str(item.get("question_context") or ""),
+                json.dumps(item.get("neighboring_marks") or [], sort_keys=True),
                 item.get("resolution_method") == "deterministic",
             )
         except Exception:
@@ -112,11 +120,15 @@ def _try_reuse_semantic(
     reusable_ai: dict[str, dict[str, Any]] = {}
     partial_source_job_id: str | None = None
 
-    for candidate_job in db.find_reusable_semantic_jobs(
+    # Revalidation writes a new structure/semantic artifact under the same job.
+    # Inspect that job's previous semantic artifact first, then fall back to
+    # other jobs with the identical immutable source hash.
+    candidate_jobs = [{"id": job["id"]}, *db.find_reusable_semantic_jobs(
         user_id=str(job["user_id"]),
         source_sha256=source_sha256,
         exclude_job_id=str(job["id"]),
-    ):
+    )]
+    for candidate_job in candidate_jobs:
         source_job_id = str(candidate_job.get("id") or "")
         if not source_job_id:
             continue
@@ -153,10 +165,29 @@ def _try_reuse_semantic(
                     int(item.get("count") or 0),
                     item.get("source_shorthand"),
                     str(item.get("descriptor") or ""),
+                    item.get("source_notation"),
+                    item.get("source_semantic"),
+                    str(item.get("question_context") or ""),
+                    json.dumps(item.get("neighboring_marks") or [], sort_keys=True),
+                    False,
                 )
             except Exception:
                 continue
-            if cid not in expected or expected[cid] != signature:
+            if cid not in expected:
+                continue
+            expected_signature = expected[cid]
+            # v4.8 artifacts did not persist notation/semantic context. They may
+            # warm the v4.9 cache only when the durable mark identity is exact;
+            # new artifacts compare the additional fields as well.
+            if expected_signature[:5] != signature[:5] or expected_signature[-1] is not False:
+                continue
+            if signature[5] is not None and expected_signature[5] != signature[5]:
+                continue
+            if signature[6] is not None and expected_signature[6] != signature[6]:
+                continue
+            if signature[7] and expected_signature[7] != signature[7]:
+                continue
+            if signature[8] != "[]" and expected_signature[8] != signature[8]:
                 continue
             if item.get("provider_valid") is not True:
                 continue

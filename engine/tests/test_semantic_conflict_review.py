@@ -144,7 +144,7 @@ def test_ordinary_geometry_adds_statement_reason_and_combined_choices_only_in_co
     assert result["options"][-3:] == [
         {"code": "S", "semantic": "statement", "label": "Statement", "action": "Use S — Statement"},
         {"code": "R", "semantic": "reason", "label": "Reason", "action": "Keep current code R — Reason"},
-        {"code": "S/R", "semantic": "statement_reason", "label": "Statement and reason", "action": "Use S/R — Statement and reason"},
+        {"code": "S/R", "semantic": "statement_reason", "label": "Statement + reason (SR / S/R)", "action": "Use S/R — Statement + reason (SR / S/R)"},
     ]
 
 

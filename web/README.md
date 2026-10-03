@@ -10,7 +10,7 @@ memo-conversion pilot.
 3. Upload a PDF, DOCX, PNG or JPEG memo up to 50 MB.
 4. Create and dispatch a conversion.
 5. Follow teacher-friendly progress based on the durable job record.
-6. Open the accepted Phase 7 review page when teacher judgement is required.
+6. Open the v4.9 Phase 8 pilot review page when teacher judgement is required. The review page supports natural question order, stable skip, staged corrections and one explicit batch recheck.
 7. Download private Word and PDF outputs when complete.
 8. Retry a conversion that stopped in `failed_retryable`.
 
@@ -42,8 +42,8 @@ npm run test:run
 ```
 
 The tests cover auth routing, state mapping, upload validation and sequencing, review
-handoff, private downloads, retry/terminal failures, RLS assumptions and client
-secret checks.
+handoff to v4.9, private downloads, retry/terminal failures, RLS assumptions and
+client secret checks.
 
 ## GitHub Pages build
 

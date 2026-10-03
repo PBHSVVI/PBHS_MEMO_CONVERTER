@@ -26,7 +26,7 @@ WORD_NUMBERS = {
     "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
     "nineteen": 19, "twenty": 20,
 }
-MARK_CODES = ("M", "A", "CA", "F", "S", "R")
+MARK_CODES = ("M", "A", "CA", "F", "S", "R", "S/R", "SF", "AO")
 AI_RESPONSE_KEYS = frozenset({
     "status", "operation", "affected_id", "target_id", "printed_marks",
     "subtotal", "expected_total", "mark_calculation_mode", "mark_points",
@@ -103,9 +103,12 @@ If evidence is insufficient or multiple operations remain plausible, return
 ambiguous. If the requested action is outside the allowed operations, return
 unsupported. Keep reason and evidence entries concise; do not provide chain-of-thought.
 
-Mark codes are bounded to M, A, CA, F, S and R. Map explicit 'method mark' to M,
-'accuracy/answer mark' to A, 'consistent accuracy' to CA, and 'reason mark' to R.
-Do not guess whether an ambiguous F or S means one of its possible semantic roles.
+This phase supports ordinary FET Mathematics only. General/non-geometry codes are
+M, A, CA and F. S (Statement), R (Reason), and S/R (one combined Statement +
+Reason mark) require clear geometry context. SF and AO may be used only when the
+source evidence explicitly uses or permits them. Never introduce Technical
+Mathematics meanings such as S for simplification or R for rounding. Do not guess
+an ambiguous code or semantic role.
 Conditional thresholds such as 2A for three correct and 1A for two correct are
 alternatives with maximum 2, not additive 3."""
 
@@ -289,6 +292,29 @@ def _mark_code_grounded(code: str, teacher_text: str) -> bool:
     return bool(phrase and re.search(phrase, teacher_text, flags=re.I))
 
 
+GEOMETRY_CONTEXT_RE = re.compile(r"\b(?:euclidean\s+geometry|geometry|theorem|parallel|perpendicular|cyclic|chord|radius|diameter|quadrilateral)\b", re.I)
+
+
+def _ordinary_math_allowed_codes(context: dict[str, Any]) -> set[str]:
+    question = context.get("current_question") or {}
+    points = question.get("mark_points") if isinstance(question, dict) else []
+    evidence = " ".join([
+        str(context.get("source_excerpt") or ""),
+        str(question.get("source_preview") or "") if isinstance(question, dict) else "",
+        *(
+            f"{point.get('code') or ''} {point.get('descriptor') or ''}"
+            for point in (points or []) if isinstance(point, dict)
+        ),
+    ])
+    allowed = {"M", "A", "CA", "F"}
+    if GEOMETRY_CONTEXT_RE.search(evidence):
+        allowed.update({"S", "R", "S/R"})
+    for code in ("SF", "AO"):
+        if re.search(rf"(?i)(?:^|[^A-Z]){code}(?=[^A-Z]|$)", evidence):
+            allowed.add(code)
+    return allowed
+
+
 def _grounded_question_ids(context: dict[str, Any]) -> set[str]:
     result = _question_ids(str(context.get("teacher_text") or ""))
     for suggestion in context.get("suggestions") or []:
@@ -371,6 +397,12 @@ def ai_result_to_proposal(
         proposal.update({"target_id": target, "subtotal": subtotal})
     elif operation == "replace_mark_points":
         raw_points = result.get("mark_points") or []
+        allowed_codes = _ordinary_math_allowed_codes(context)
+        if any(str(point.get("code") or "") not in allowed_codes for point in raw_points):
+            raise TeacherLanguageError(
+                "AI_MARK_CODE_OUTSIDE_SUBJECT_PROFILE",
+                "A proposed marking code is not valid for this ordinary Mathematics context.",
+            )
         if not raw_points or any(
             not _descriptor_grounded(str(point["descriptor"]), teacher_text)
             or not _mark_count_grounded(int(point["count"]), teacher_text)

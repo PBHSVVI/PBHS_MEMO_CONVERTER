@@ -44,6 +44,12 @@ def deterministic_semantic(point: dict[str, Any]) -> tuple[str | None, str | Non
         return "consistent_accuracy", "shorthand_CA"
     if code == "R":
         return "reason", "shorthand_R"
+    if code == "S/R":
+        return "statement_reason", "shorthand_statement_reason"
+    if code == "SF":
+        return "substitution", "shorthand_SF"
+    if code == "AO":
+        return "answer_only", "shorthand_AO"
 
     if code == "F":
         if "formula" in desc:
@@ -121,6 +127,7 @@ def build_semantic_plan(structure: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 "source_shorthand": point.get("code"),
                 "descriptor": point.get("descriptor") or "",
                 "source_notation": point.get("notation"),
+                "source_semantic": point.get("semantic"),
             }
 
             if semantic is not None:
@@ -316,6 +323,10 @@ def interpret_semantics(
                 and int(cached.get("count") or 0) == int(candidate.get("count") or 0)
                 and cached.get("source_shorthand") == candidate.get("source_shorthand")
                 and str(cached.get("descriptor") or "") == str(candidate.get("descriptor") or "")
+                and (cached.get("source_notation") is None or cached.get("source_notation") == candidate.get("source_notation"))
+                and (cached.get("source_semantic") is None or cached.get("source_semantic") == candidate.get("source_semantic"))
+                and ("question_context" not in cached or str(cached.get("question_context") or "") == str(candidate.get("question_context") or ""))
+                and ("neighboring_marks" not in cached or cached.get("neighboring_marks") == candidate.get("neighboring_marks"))
                 and cached.get("provider_valid") is True
                 and cached.get("band") == "green"
                 and float(cached.get("confidence_score") or 0) >= 0.90
@@ -398,6 +409,10 @@ def interpret_semantics(
             "count": candidate["count"],
             "source_shorthand": candidate["source_shorthand"],
             "descriptor": candidate["descriptor"],
+            "source_notation": candidate.get("source_notation"),
+            "source_semantic": candidate.get("source_semantic"),
+            "question_context": candidate.get("question_context") or "",
+            "neighboring_marks": candidate.get("neighboring_marks") or [],
             "semantic_type": chosen["semantic_type"],
             "confidence_score": chosen["confidence_score"],
             "band": final_band,

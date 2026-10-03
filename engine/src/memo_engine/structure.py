@@ -13,8 +13,8 @@ SUBTOTAL_RE = re.compile(r"\[(\d{1,3})\]")
 DOCUMENT_TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
 PAREN_NUMBER_RE = re.compile(r"\((\d{1,2})\)")
 MARK_TOKEN_RE = re.compile(r"(?i)^\s*(\d+)\s*(.*)$")
-CODE_RE = re.compile(r"(?i)^(CA|M|A|F|S|R)\b")
-INLINE_CODE_RE = re.compile(r"(?i)(?:^|[;|])\s*(\d+)\s*(CA|M|A|F|S|R)\b")
+CODE_RE = re.compile(r"(?i)^(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)\b")
+INLINE_CODE_RE = re.compile(r"(?i)(?:^|[;|])\s*(\d+)\s*(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)\b")
 CHECK_RE = re.compile(r"^\s*(✓+)\s*(.*)$")
 
 MARK_DESCRIPTOR_PREFIXES = (
@@ -22,7 +22,8 @@ MARK_DESCRIPTOR_PREFIXES = (
     "shape", "point", "conclusion", "simpl", "formula", "deriv", "answer",
     "ans", "sub", "equation", "equns", "method", "standard", "value",
     "geometric", "arithmetic", "condition", "correct", "common", "ratio",
-    "sum", "algebra", "manip", "swop", "first", "second", "use", "m=", "c=",
+    "sum", "algebra", "manip", "swop", "first", "second", "use", "given",
+    "statement", "reason", "m=", "c=",
 )
 
 
@@ -59,7 +60,9 @@ def observed_document_total(normalized: dict[str, Any]) -> int | None:
 
 
 def semantic_for_code(code: str | None, descriptor: str) -> str:
-    c = (code or "").upper()
+    c = re.sub(r"\s+", "", (code or "").upper())
+    if c in {"SR", "S-R"}:
+        c = "S/R"
     d = descriptor.lower()
     if c == "M":
         return "method"
@@ -77,12 +80,22 @@ def semantic_for_code(code: str | None, descriptor: str) -> str:
         return "statement_or_substitution_or_simplification"
     if c == "R":
         return "reason"
+    if c == "S/R":
+        return "statement_reason"
+    if c == "SF":
+        return "substitution"
+    if c == "AO":
+        return "answer_only"
     if "formula" in d:
         return "formula"
     if "sub" in d:
         return "substitution"
     if "fac" in d or "factor" in d:
         return "factorisation"
+    if "statement" in d and "reason" in d:
+        return "statement_reason"
+    if "statement" in d:
+        return "statement"
     if "reason" in d:
         return "reason"
     if "conclusion" in d:
@@ -129,9 +142,10 @@ def _parse_numeric_mark(fragment: str) -> dict[str, Any] | None:
                 "notation": "shorthand_compact_descriptor",
             }
 
-        attached_code = re.match(r"(?i)^(CA|M|A|F|S|R)(.*)$", compact_rest)
+        attached_code = re.match(r"(?i)^(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)(.*)$", compact_rest)
         if attached_code:
-            code = attached_code.group(1).upper()
+            raw_code = re.sub(r"\s+", "", attached_code.group(1).upper())
+            code = "S/R" if raw_code in {"SR", "S-R"} else raw_code
             rest = attached_code.group(2).strip()
             return {
                 "count": count,
@@ -148,9 +162,10 @@ def _parse_numeric_mark(fragment: str) -> dict[str, Any] | None:
     count = int(normal.group(1))
     rest = normal.group(2).strip()
     code = None
-    cm = re.match(r"(?i)^(CA|M|A|F|S|R)\b", rest)
+    cm = re.match(r"(?i)^(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)\b", rest)
     if cm:
-        code = cm.group(1).upper()
+        raw_code = re.sub(r"\s+", "", cm.group(1).upper())
+        code = "S/R" if raw_code in {"SR", "S-R"} else raw_code
         rest = rest[cm.end():].strip()
     elif not _looks_like_descriptor(rest):
         return None
@@ -196,7 +211,7 @@ def parse_mark_points(text: str) -> list[dict[str, Any]]:
             descriptor = stripped[m.end():].strip()
             points.append({
                 "count": int(m.group(1)),
-                "code": m.group(2).upper(),
+                "code": "S/R" if re.sub(r"\s+", "", m.group(2).upper()) in {"SR", "S-R"} else re.sub(r"\s+", "", m.group(2).upper()),
                 "descriptor": descriptor,
                 "semantic": semantic_for_code(m.group(2), descriptor),
                 "source": stripped[m.start():].strip(),

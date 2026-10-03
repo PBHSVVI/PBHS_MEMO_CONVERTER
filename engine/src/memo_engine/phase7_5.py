@@ -57,7 +57,7 @@ PHASE7_5_REINTERPRET_CATEGORIES = {
 }
 
 MAX_ASSESSMENT_TOTAL = 999
-MARK_CODES = {"M", "A", "CA", "F", "S", "R"}
+MARK_CODES = {"M", "A", "CA", "F", "S", "R", "S/R", "SF", "AO"}
 GROUPED_ALLOCATION_CATEGORY = "question_allocation_pairing_ambiguous"
 
 CONTENT_CORRECTION_START = "[[PBHS_CONTENT_CORRECTION_V1]]"

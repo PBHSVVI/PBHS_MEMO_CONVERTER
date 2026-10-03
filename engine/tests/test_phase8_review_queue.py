@@ -83,7 +83,7 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert "reconcileReviewQueue(list,saved)" in html
-    assert "Previous decision confirmed and revalidated. Advanced to" in html
+    assert "Previous decision confirmed and staged. Advanced to" in html
     assert "lastDecisionKey()" in html
 
 
