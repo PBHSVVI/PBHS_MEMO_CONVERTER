@@ -135,6 +135,7 @@ def test_response_schema_is_closed_and_operation_allowlisted():
     schema = teacher_language_response_schema()
     assert SUPPORTED_CORRECTION_OPERATIONS == {
         "replace_item_content",
+        "insert_missing_child_question",
         "replace_mark_points",
         "set_item_total_override",
         "set_printed_marks",

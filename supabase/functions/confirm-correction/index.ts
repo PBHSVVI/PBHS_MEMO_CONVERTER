@@ -101,9 +101,10 @@ export default {
 
     const deferRevalidation = body.defer_revalidation === true;
     const patch = correction.proposed_patch as Record<string, unknown>;
-    const retainParentReview = deferRevalidation &&
-      patch.operation === "replace_item_content" &&
-      patch.reconciliation_scope === "suspicious_child";
+    const retainParentReview = deferRevalidation && (
+      (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
+      (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child")
+    );
     if (deferRevalidation) {
       const { data: currentJob } = await ctx.supabaseAdmin.from("jobs")
         .select("started_at").eq("id", correction.job_id).maybeSingle();

@@ -7,7 +7,7 @@ const userId = "7699652c-9795-40e6-a730-ac38c18f5a86";
 describe("review handoff", () => {
   it("passes the selected job to the accepted review application", () => {
     expect(reviewUrl(jobId, "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/"))
-      .toBe(`https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/phase7-5-review/?job_id=${jobId}&v=4.9.1`);
+      .toBe(`https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/phase7-5-review/?job_id=${jobId}&v=4.9.2`);
   });
 
   it("rejects malformed identifiers before navigation", () => {

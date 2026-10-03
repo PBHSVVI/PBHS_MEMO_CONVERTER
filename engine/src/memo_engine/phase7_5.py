@@ -867,6 +867,98 @@ def _apply_replace_item_content(
     }, None
 
 
+def _apply_insert_missing_child_question(
+    structure: dict[str, Any],
+    normalized: dict[str, Any],
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str | None,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    parent_id = str(patch.get("parent_id") or affected_id or "").strip()
+    question_id = str(patch.get("question_id") or patch.get("target_id") or "").strip()
+    if (
+        category != "question_total_mismatch"
+        or not QUESTION_ID_RE.fullmatch(parent_id)
+        or not QUESTION_ID_RE.fullmatch(question_id)
+        or not question_id.startswith(f"{parent_id}.")
+        or question_id == parent_id
+        or not _exception_exists(structure, category, affected_id)
+    ):
+        return None, _issue(
+            "correction_target_invalid", question_id or affected_id,
+            f"Confirmed correction {correction_id} does not identify a missing child within the active parent review.",
+        )
+    if _question(structure, question_id) is not None:
+        return None, _issue(
+            "correction_target_conflict", question_id,
+            f"Question identifier {question_id} already exists.",
+        )
+    try:
+        printed_marks = int(patch.get("printed_marks"))
+        source_index = patch.get("source_block_index")
+        source_index = None if source_index is None else int(source_index)
+    except (TypeError, ValueError):
+        printed_marks, source_index = 0, None
+    blocks = flatten_units(normalized) if normalized else []
+    if not 1 <= printed_marks <= 999 or (source_index is not None and (source_index < 0 or (blocks and source_index >= len(blocks)))):
+        return None, _issue(
+            "correction_mark_total_invalid", question_id,
+            f"Confirmed correction {correction_id} contains an invalid child total or source reference.",
+        )
+
+    trial = copy.deepcopy(structure)
+    trial_question: dict[str, Any] = {
+        "question_id": question_id,
+        "source_question_id": None,
+        "path": [int(part) for part in question_id.split(".")],
+        "depth": len(question_id.split(".")),
+        "context_only": False,
+        "source_block_index": source_index,
+        "source_preview": "Teacher-inserted missing subquestion",
+        "printed_marks": printed_marks,
+        "computed_shorthand_marks": 0,
+        "mark_points": [],
+        "mode": "additive",
+    }
+    trial.setdefault("questions", []).append(trial_question)
+    applied_marks, mark_issue = _apply_replace_mark_points(
+        trial,
+        correction_id=correction_id,
+        category=category,
+        affected_id=question_id,
+        patch=patch,
+    )
+    if mark_issue:
+        return None, mark_issue
+    trial_question = _question(trial, question_id) or trial_question
+    trial_question["teacher_marking_text"] = "\n".join(
+        str(point.get("source") or "").strip()
+        for point in trial_question.get("mark_points", [])
+        if str(point.get("source") or "").strip()
+    )
+    trial_question["correction_overlay"] = {
+        "correction_id": correction_id,
+        "operation": "insert_missing_child_question",
+        "parent_id": parent_id,
+    }
+    trial["questions"].sort(key=lambda item: qtuple(str(item.get("question_id") or "")))
+    _remove_exception(trial, category, affected_id)
+    structure.clear()
+    structure.update(trial)
+    return {
+        "correction_id": correction_id,
+        "operation": "insert_missing_child_question",
+        "category": category,
+        "affected_id": affected_id,
+        "target_id": question_id,
+        "parent_id": parent_id,
+        "mark_total": (applied_marks or {}).get("mark_total"),
+        "source_block_index": source_index,
+    }, None
+
+
 def _composite_question_ids(value: str | None) -> list[str] | None:
     parts = [part.strip() for part in str(value or "").split(",")]
     if not 2 <= len(parts) <= 20:
@@ -1330,6 +1422,17 @@ def apply_phase7_5_patch(
     if operation == "replace_item_content":
         applied, issue = _apply_replace_item_content(
             structure,
+            correction_id=correction_id,
+            category=category,
+            affected_id=affected_id,
+            patch=patch,
+        )
+        return applied, issue, True
+
+    if operation == "insert_missing_child_question":
+        applied, issue = _apply_insert_missing_child_question(
+            structure,
+            normalized,
             correction_id=correction_id,
             category=category,
             affected_id=affected_id,

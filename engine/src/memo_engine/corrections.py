@@ -56,7 +56,7 @@ def effective_correction_history(
             patch.get("candidate_id")
             if operation == "resolve_mark_semantic_conflict"
             else patch.get("target_id")
-            if operation == "replace_item_content"
+            if operation in {"replace_item_content", "insert_missing_child_question"}
             else patch.get("affected_id") or ""
         ).strip()
         correction_id = str(correction.get("id") or "")
@@ -75,6 +75,8 @@ def effective_correction_history(
                 domain = "item_total"
             elif operation == "replace_item_content":
                 domain = "item_content"
+            elif operation == "insert_missing_child_question":
+                domain = "child_insertion"
             elif (
                 operation == "resolve_mark_semantic_conflict"
                 and category == "ambiguous_mark_semantics"
@@ -152,6 +154,7 @@ def attach_correction_audit(
 
 SUPPORTED_CORRECTION_OPERATIONS = frozenset({
     "replace_item_content",
+    "insert_missing_child_question",
     "replace_mark_points",
     "set_item_total_override",
     "set_printed_marks",
@@ -166,6 +169,7 @@ CORRECTION_OPERATION_CATEGORIES = {
     # Content repair is available for every active review category. Its target
     # and payload are still validated deterministically during application.
     "replace_item_content": frozenset({"*"}),
+    "insert_missing_child_question": frozenset({"question_total_mismatch"}),
     "resolve_question_allocation_pairing": frozenset({
         "question_allocation_pairing_ambiguous"
     }),

@@ -372,6 +372,7 @@ export default {
       const allocationResolution = body.allocation_resolution;
       const parentResolution = body.parent_reconciliation;
       const childRepair = body.child_repair;
+      const missingChild = body.missing_child;
       const content = body.content_correction;
       if (parentResolution && typeof parentResolution === "object") {
         if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
@@ -386,6 +387,42 @@ export default {
         }
         proposedPatch = { schema_version: "1.0", operation: "set_question_subtotal", category: exception.category, affected_id: exception.affected_id, target_id: exception.affected_id, subtotal: computedTotal, reinterpretation_method: "deterministic_parent_ledger" };
         displayText = `Question ${exception.affected_id}: record the deterministic child total ${computedTotal} because the printed source subtotal is wrong.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (missingChild && typeof missingChild === "object") {
+        const parentId = String(exception.affected_id ?? "");
+        if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(parentId)) {
+          return Response.json({ error: "missing_child_category_mismatch" }, { status: 400 });
+        }
+        const value = missingChild as Record<string, unknown>;
+        const suppliedParent = typeof value.parent_id === "string" ? value.parent_id.trim() : "";
+        const questionId = typeof value.question_id === "string" ? value.question_id.trim() : "";
+        const markingText = typeof value.marking_text === "string" ? value.marking_text.trim() : "";
+        const printedMarks = Number(value.printed_marks);
+        const sourceBlockIndex = value.source_block_index == null ? null : Number(value.source_block_index);
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const duplicate = questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === questionId);
+        const parsed = parseMarkingScheme(markingText, ordinaryMathSemanticProfile(undefined, {}));
+        if (suppliedParent !== parentId || !QUESTION_ID_RE.test(questionId) || !questionId.startsWith(`${parentId}.`) || questionId === parentId || duplicate || !Number.isInteger(printedMarks) || printedMarks < 1 || printedMarks > 999 || !parsed || parsed.total !== printedMarks || (sourceBlockIndex !== null && (!Number.isInteger(sourceBlockIndex) || sourceBlockIndex < 0))) {
+          return Response.json({ error: duplicate ? "missing_child_identifier_conflict" : "invalid_missing_child" }, { status: 400 });
+        }
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "insert_missing_child_question",
+          category: exception.category,
+          affected_id: parentId,
+          parent_id: parentId,
+          target_id: questionId,
+          question_id: questionId,
+          printed_marks: printedMarks,
+          mark_points: parsed.points,
+          expected_total: parsed.total,
+          mark_calculation_mode: parsed.mode,
+          ...(sourceBlockIndex === null ? {} : { source_block_index: sourceBlockIndex }),
+          reconciliation_scope: "missing_child",
+          reinterpretation_method: "structured_missing_child_editor",
+        };
+        displayText = `Add Question ${questionId} to Question ${parentId} with the supplied ${parsed.total}-mark scheme.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (childRepair && typeof childRepair === "object") {
         const parentId = String(exception.affected_id ?? "");

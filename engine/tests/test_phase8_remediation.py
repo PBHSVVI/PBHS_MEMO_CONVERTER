@@ -177,7 +177,7 @@ def test_staged_child_repair_projects_parent_balance_before_revalidation():
     assert result["rows"][0]["suspicion_reasons"] == []
 
 
-def test_healthy_child_without_exception_remains_non_actionable():
+def test_healthy_child_without_exception_remains_editable_without_warning():
     result = _child_ledger({
         "major": "4",
         "structure": {"questions": [
@@ -237,11 +237,14 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     html = PAGE.read_text(encoding="utf-8")
     submit = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
     confirm = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
-    assert "Correct this item" in html
+    assert "Edit item" in html
+    assert "Add missing subquestion" in html
     assert "Review this correction" in html
     assert "SHOW-BACK — not applied yet" in html
     assert 'id="confirm"' in html
     assert 'reconciliation_scope: "suspicious_child"' in submit
+    assert 'operation: "insert_missing_child_question"' in submit
+    assert 'reconciliation_scope: "missing_child"' in submit
     assert 'exceptionStatus = "awaiting_confirmation"' in submit
     assert "parent_review_retained" in confirm
     assert "retainParentReview" in confirm

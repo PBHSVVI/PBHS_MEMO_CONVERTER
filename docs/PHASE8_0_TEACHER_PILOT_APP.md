@@ -332,6 +332,29 @@ and the ledger immediately recalculates the projected subtotal and remaining
 difference. The normal batch revalidation remains responsible for resolving or
 regenerating the parent discrepancy.
 
+#### v4.9.2 complete question workspace hotfix
+
+The active parent subtotal workspace is now authoritative for the whole major
+question. Every detected child has an optional `Edit item` action with its current
+identifier, safe printed/computed total and marking points prefilled. Warning language
+is reserved for suspicious rows, so deterministic detection helps the teacher without
+controlling which child may be corrected.
+
+When the source subtotal remains above the projected child ledger, the workspace shows
+`Possible missing or misnumbered subquestion` and offers `Add missing subquestion`.
+The teacher must provide the child identifier, total and complete marking scheme; the
+page never creates a child from arithmetic alone. Confirmation creates one auditable
+`insert_missing_child_question` patch. It is restricted to the active parent, rejects
+existing or staged identifiers, requires the marking scheme to equal the entered total,
+and applies against a trial structure before committing atomically. A staged insertion
+appears as its own ledger row and contributes immediately to the projected subtotal.
+
+If malformed numbering prevents exact child focus, the review page derives a bounded
+major-question region from known child provenance, the preceding subtotal/header and
+the following question boundary. It labels this evidence `Question-level source region
+— exact child alignment requires review` and does not include the preceding major
+question as if it belonged to the active review.
+
 ### Semantic reuse and invalidation
 
 Revalidation checks the current job's previous `internal/semantic.json` before looking
