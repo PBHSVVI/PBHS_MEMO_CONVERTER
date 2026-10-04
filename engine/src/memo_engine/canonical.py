@@ -89,6 +89,36 @@ def _collapse(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\u00a0", " ")).strip()
 
 
+def safe_source_block_index(value: Any) -> int | None:
+    """Normalize an optional immutable source position without inventing one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+        return int(value.strip())
+    return None
+
+
+def _correction_origin(qdata: dict[str, Any]) -> dict[str, Any] | None:
+    overlay = qdata.get("correction_overlay")
+    if not isinstance(overlay, dict):
+        return None
+    correction_id = str(overlay.get("correction_id") or "").strip()
+    operation = str(overlay.get("operation") or "").strip()
+    if not correction_id or not operation:
+        return None
+    origin: dict[str, Any] = {
+        "correction_id": correction_id,
+        "operation": operation,
+        "source_block_index": safe_source_block_index(qdata.get("source_block_index")),
+    }
+    source_id = str(overlay.get("source_id") or "").strip()
+    if source_id:
+        origin["source_id"] = source_id
+    return origin
+
+
 def _text_to_latex(text: str) -> str:
     text = _collapse(text)
     replacements = {
@@ -1072,6 +1102,12 @@ def _marking_points_for_alternatives(
 
     result: list[list[dict[str, Any]]] = []
     safe_qid = qid.replace(".", "_")
+    correction_origin = _correction_origin(qdata)
+    source_optional = (
+        safe_source_block_index(qdata.get("source_block_index")) is None
+        and correction_origin is not None
+        and correction_origin.get("operation") == "insert_missing_child_question"
+    )
 
     for branch_index in range(source_branch_count):
         points = (
@@ -1143,7 +1179,7 @@ def _marking_points_for_alternatives(
                         )
 
             mark_id = f"m_{safe_qid}_{branch_key}_{point_index + 1}"
-            built.append({
+            mark = {
                 "mark_id": mark_id,
                 "type": mark_type,
                 "count": int(point.get("count") or 1),
@@ -1177,8 +1213,11 @@ def _marking_points_for_alternatives(
                     ),
                 },
                 "warnings": warnings,
-            })
-            if not blocks:
+            }
+            if correction_origin is not None:
+                mark["correction_origin"] = correction_origin
+            built.append(mark)
+            if not blocks and not source_optional:
                 issues.append({
                     "level": "red",
                     "category": "mark_link_missing",
@@ -1280,7 +1319,8 @@ def _build_item_tree(
                     _blocks_from_segments(qid, "primary" if idx == 0 else f"or{idx}", branch, issues)
                     for idx, branch in enumerate(source_branches)
                 ]
-                record = record_by_block.get(int(qdata.get("source_block_index", -1)), {})
+                source_index = safe_source_block_index(qdata.get("source_block_index"))
+                record = record_by_block.get(source_index, {}) if source_index is not None else {}
                 mark_branches = _marking_points_for_alternatives(
                     qid,
                     qdata,
@@ -1313,7 +1353,7 @@ def _build_item_tree(
         elif computed:
             status = "missing_observed"
 
-        return {
+        item = {
             "item_id": item_id,
             "number": qid,
             "context_blocks": context_blocks,
@@ -1324,6 +1364,10 @@ def _build_item_tree(
             "confidence": {"score": 1.0, "band": "green", "rationale": "Question hierarchy is deterministic after Phase 3 gates."},
             "warnings": [],
         }
+        correction_origin = _correction_origin(qdata) if qdata else None
+        if correction_origin is not None:
+            item["correction_origin"] = correction_origin
+        return item
 
     top_paths = sorted(children.get((major,), []))
     return [build_path(path) for path in top_paths]
@@ -1496,6 +1540,13 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
 
             alternatives = item.get("alternatives", [])
             computed = int(item.get("marks", {}).get("computed") or 0)
+            correction_origin = item.get("correction_origin") or {}
+            source_optional = (
+                correction_origin.get("operation") == "insert_missing_child_question"
+                and bool(correction_origin.get("correction_id"))
+                and "source_block_index" in correction_origin
+                and correction_origin.get("source_block_index") is None
+            )
             if not children and computed > 0 and not alternatives:
                 issues.append({
                     "level": "red",
@@ -1648,7 +1699,7 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                         })
 
                     linked = mark.get("applies_to_block_ids") or []
-                    if not linked:
+                    if not linked and not source_optional:
                         issues.append({
                             "level": "amber",
                             "category": "mark_link_missing",
@@ -1915,7 +1966,7 @@ def build_canonical_memo(
         canonical_qids = [
             qid
             for qid, qdata in qmap.items()
-            if int(qdata.get("source_block_index", -1)) == record["block_index"]
+            if safe_source_block_index(qdata.get("source_block_index")) == record["block_index"]
         ]
         if not canonical_qids:
             continue
@@ -1943,8 +1994,9 @@ def build_canonical_memo(
 
     subtotal_by_major: dict[int, int] = {}
     question_positions = [
-        (int(q.get("source_block_index", -1)), str(q["question_id"]))
+        (source_index, str(q["question_id"]))
         for q in structure.get("questions", [])
+        if (source_index := safe_source_block_index(q.get("source_block_index"))) is not None
     ]
     for subtotal in structure.get("subtotals", []):
         block_index = int(subtotal.get("block_index", -1))
@@ -1972,7 +2024,8 @@ def build_canonical_memo(
                 _blocks_from_segments(major_qid, "primary" if idx == 0 else f"or{idx}", branch, issues)
                 for idx, branch in enumerate(source_branches)
             ]
-            record = record_by_block.get(int(qdata.get("source_block_index", -1)), {})
+            source_index = safe_source_block_index(qdata.get("source_block_index"))
+            record = record_by_block.get(source_index, {}) if source_index is not None else {}
             mark_branches = _marking_points_for_alternatives(
                 major_qid, qdata, _marking_text(qdata, record), alt_blocks, sem_lookup, issues
             )
@@ -1989,7 +2042,7 @@ def build_canonical_memo(
                 })
             computed = max([a["marks_computed"] for a in alternatives] or [0])
             observed = qdata.get("printed_marks")
-            items = [{
+            item = {
                 "item_id": f"q{major}_root",
                 "number": major_qid,
                 "context_blocks": [],
@@ -2003,7 +2056,11 @@ def build_canonical_memo(
                 "source_refs": alternatives[0].get("source_refs", []) if alternatives else [],
                 "confidence": {"score": 1.0, "band": "green", "rationale": "Standalone scored major question represented as a canonical leaf item."},
                 "warnings": [],
-            }]
+            }
+            correction_origin = _correction_origin(qdata)
+            if correction_origin is not None:
+                item["correction_origin"] = correction_origin
+            items = [item]
 
         computed_subtotal = sum(int(item.get("marks", {}).get("computed") or 0) for item in items)
         observed_subtotal = subtotal_by_major.get(major)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -765,7 +766,10 @@ def run_job(job_id: str) -> int:
             stage="semantic_provider_failed",
         )
         raise
-    except Exception:
+    except Exception as exc:
+        # Preserve the real hosted failure location for developers while the
+        # durable teacher-facing message remains deliberately generic.
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
         fail_processing_job(
             db,
             job,
