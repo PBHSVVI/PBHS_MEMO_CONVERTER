@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -340,7 +341,137 @@ def _all_math_variants(canonical: dict[str, Any]) -> list[str]:
     return values
 
 
-def _pandoc_math_bank(canonical: dict[str, Any]) -> dict[str, ET.Element]:
+def _math_bank_markers(index: int, latex: str) -> tuple[str, str]:
+    digest = hashlib.sha256(latex.encode("utf-8")).hexdigest()[:12].upper()
+    token = f"{index:04d}{digest}"
+    return f"PBHSMATHSTART{token}", f"PBHSMATHEND{token}"
+
+
+def _math_bank_markdown(latex_values: list[str]) -> str:
+    sections: list[str] = []
+    for index, latex in enumerate(latex_values):
+        start, end = _math_bank_markers(index, latex)
+        sections.extend([start, f"$${latex}$$", end])
+    return "\n\n".join(sections) + "\n"
+
+
+def _element_text(element: ET.Element) -> str:
+    return "".join(node.text or "" for node in element.iter(f"{{{W_NS}}}t"))
+
+
+def _math_mapping_error(
+    latex_values: list[str],
+    *,
+    omath_count: int,
+    omath_para_count: int,
+    container_count: int,
+    failing_index: int | None,
+) -> RenderingError:
+    details: dict[str, Any] = {
+        "expected_expression_count": len(latex_values),
+        "omml_container_count": container_count,
+        "omath_count": omath_count,
+        "omath_para_count": omath_para_count,
+        "failing_expression_index": failing_index,
+    }
+    if failing_index is not None and 0 <= failing_index < len(latex_values):
+        details["failing_expression_digest"] = hashlib.sha256(
+            latex_values[failing_index].encode("utf-8")
+        ).hexdigest()[:16]
+    return RenderingError(
+        "RENDER_MATH_MAPPING_FAILED",
+        "Native equation conversion could not map every canonical expression unambiguously.",
+        details=details,
+    )
+
+
+def _extract_pandoc_math_bank(
+    root: ET.Element,
+    latex_values: list[str],
+) -> dict[str, tuple[ET.Element, ...]]:
+    body = root.find(f".//{{{W_NS}}}body")
+    all_equations = root.findall(f".//{{{M_NS}}}oMath")
+    all_paragraphs = root.findall(f".//{{{M_NS}}}oMathPara")
+    if body is None:
+        raise _math_mapping_error(
+            latex_values,
+            omath_count=len(all_equations),
+            omath_para_count=len(all_paragraphs),
+            container_count=0,
+            failing_index=0 if latex_values else None,
+        )
+
+    starts: dict[str, int] = {}
+    ends: dict[str, int] = {}
+    for index, latex in enumerate(latex_values):
+        start, end = _math_bank_markers(index, latex)
+        starts[start] = index
+        ends[end] = index
+
+    groups: dict[int, list[ET.Element]] = {}
+    active_index: int | None = None
+    ambiguous_index: int | None = None
+    equations_outside_container = 0
+
+    for child in body:
+        text = _element_text(child).strip()
+        if text in starts:
+            next_index = starts[text]
+            if active_index is not None or next_index in groups:
+                ambiguous_index = next_index
+                break
+            active_index = next_index
+            groups[next_index] = []
+            continue
+        if text in ends:
+            closing_index = ends[text]
+            if active_index != closing_index:
+                ambiguous_index = closing_index
+                break
+            active_index = None
+            continue
+
+        equations = child.findall(f".//{{{M_NS}}}oMath")
+        if not equations:
+            continue
+        if active_index is None:
+            equations_outside_container += len(equations)
+            continue
+        groups[active_index].extend(equations)
+
+    failing_index = ambiguous_index
+    if failing_index is None and active_index is not None:
+        failing_index = active_index
+    if failing_index is None:
+        failing_index = next(
+            (
+                index
+                for index in range(len(latex_values))
+                if index not in groups or not groups[index]
+            ),
+            None,
+        )
+
+    if (
+        failing_index is not None
+        or equations_outside_container
+        or len(groups) != len(latex_values)
+    ):
+        raise _math_mapping_error(
+            latex_values,
+            omath_count=len(all_equations),
+            omath_para_count=len(all_paragraphs),
+            container_count=len(groups),
+            failing_index=failing_index,
+        )
+
+    return {
+        latex: tuple(groups[index])
+        for index, latex in enumerate(latex_values)
+    }
+
+
+def _pandoc_math_bank(canonical: dict[str, Any]) -> dict[str, tuple[ET.Element, ...]]:
     latex_values = _all_math_variants(canonical)
     if not latex_values:
         return {}
@@ -355,10 +486,7 @@ def _pandoc_math_bank(canonical: dict[str, Any]) -> dict[str, ET.Element]:
         td_path = Path(td)
         md_path = td_path / "math.md"
         docx_path = td_path / "math.docx"
-        md_path.write_text(
-            "\n\n".join(f"$${value}$$" for value in latex_values),
-            encoding="utf-8",
-        )
+        md_path.write_text(_math_bank_markdown(latex_values), encoding="utf-8")
         result = subprocess.run(
             [pandoc, str(md_path), "-o", str(docx_path)],
             stdout=subprocess.PIPE,
@@ -373,34 +501,33 @@ def _pandoc_math_bank(canonical: dict[str, Any]) -> dict[str, ET.Element]:
             )
         with zipfile.ZipFile(docx_path) as archive:
             root = ET.fromstring(archive.read("word/document.xml"))
-        equations = root.findall(f".//{{{M_NS}}}oMath")
-        if len(equations) != len(latex_values):
-            raise RenderingError(
-                "RENDER_MATH_COUNT_MISMATCH",
-                "Native equation conversion did not preserve one equation per canonical expression.",
-            )
-        return {latex: equation for latex, equation in zip(latex_values, equations)}
+        return _extract_pandoc_math_bank(root, latex_values)
 
 
-def _append_omml(paragraph, latex: str, bank: dict[str, ET.Element]) -> None:
-    equation = bank.get(latex)
-    if equation is None:
+def _append_omml(
+    paragraph,
+    latex: str,
+    bank: dict[str, tuple[ET.Element, ...]],
+) -> None:
+    equations = bank.get(latex)
+    if not equations:
         raise RenderingError(
             "RENDER_MATH_LOOKUP_MISSING",
             "A canonical equation was missing from the native Word math bank.",
         )
-    element = parse_xml(ET.tostring(equation, encoding="unicode"))
-    # The approved PBHS gold files use body text at 9 pt with mathematical
-    # expressions visually one step larger. Explicit 10 pt math also avoids
-    # Linux font-substitution compressing equations too aggressively.
-    for rPr in element.iter(qn("w:rPr")):
-        for tag in ("w:sz", "w:szCs"):
-            node = rPr.find(qn(tag))
-            if node is None:
-                node = OxmlElement(tag)
-                rPr.append(node)
-            node.set(qn("w:val"), "20")
-    paragraph._p.append(element)
+    for equation in equations:
+        element = parse_xml(ET.tostring(equation, encoding="unicode"))
+        # The approved PBHS gold files use body text at 9 pt with mathematical
+        # expressions visually one step larger. Explicit 10 pt math also avoids
+        # Linux font-substitution compressing equations too aggressively.
+        for rPr in element.iter(qn("w:rPr")):
+            for tag in ("w:sz", "w:szCs"):
+                node = rPr.find(qn(tag))
+                if node is None:
+                    node = OxmlElement(tag)
+                    rPr.append(node)
+                node.set(qn("w:val"), "20")
+        paragraph._p.append(element)
 
 
 def _add_text(paragraph, text: str, *, bold=False, italic=False, size=9) -> None:

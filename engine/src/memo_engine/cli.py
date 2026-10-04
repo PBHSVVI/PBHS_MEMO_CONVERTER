@@ -45,6 +45,7 @@ def fail_processing_job(
     code: str,
     message: str,
     stage: str,
+    diagnostics: dict[str, Any] | None = None,
 ) -> None:
     try:
         failed = db.patch_job(
@@ -58,7 +59,10 @@ def fail_processing_job(
                 "updated_at": utc_now(),
             },
         )
-        db.add_event(failed, "worker_failed", stage, {"error_code": code})
+        payload: dict[str, Any] = {"error_code": code}
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        db.add_event(failed, "worker_failed", stage, payload)
     except Exception:
         pass
 
@@ -740,12 +744,19 @@ def run_job(job_id: str) -> int:
         )
         raise
     except RenderingError as exc:
+        if exc.details:
+            print(
+                "Phase 6 rendering diagnostics: "
+                + json.dumps(exc.details, sort_keys=True, separators=(",", ":")),
+                file=sys.stderr,
+            )
         fail_processing_job(
             db,
             job,
             code=f"PHASE6_{exc.code}",
             message=exc.public_message,
             stage="rendering_failed",
+            diagnostics=exc.details,
         )
         raise
     except CanonicalizationError as exc:
