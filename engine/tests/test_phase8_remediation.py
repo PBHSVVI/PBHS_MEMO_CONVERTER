@@ -89,7 +89,7 @@ def test_long_processing_has_no_fixed_timeout_and_remains_resumable():
     html = PAGE.read_text(encoding="utf-8")
     assert "for(let i=0;i<300" not in html
     assert "Timed out waiting for Phase 7.5 revalidation" not in html
-    assert "Still processing — you can leave this page and return later." in html
+    assert "Taking a little longer than usual — still working" in html
     assert "You can close this page. Your work is saved." in html
     assert "['failed','failed_retryable'].includes(j.status)" in html
     assert "monitorProcessing()" in html
@@ -105,8 +105,8 @@ def test_source_focus_prefers_structural_block_provenance():
 def test_parent_total_reconciliation_is_ledger_driven():
     html = PAGE.read_text(encoding="utf-8")
     edge = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
-    assert "Source subtotal is wrong" in html
-    assert "Source subtotal is correct — inspect/correct a child" in html
+    assert "The memo total is wrong" in html
+    assert "The memo total is correct — check a subquestion" in html
     assert "deterministic_parent_ledger" in edge
     assert "invalid_parent_reconciliation" in edge
 
@@ -115,8 +115,8 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
     html = PAGE.read_text(encoding="utf-8")
     edge = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
     assert 'id="questionWorkspace"' in html
-    assert "Projected after staged corrections" in html
-    assert "Each confirmed child correction keeps its own audit identity" in html
+    assert "Total after your changes" in html
+    assert "Saved changes keep their own audit history" in html
     assert "Review this item" in html
     assert 'id="applyBatch"' in html
     assert "defer_revalidation:!applyNow" in html
@@ -237,8 +237,8 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     html = PAGE.read_text(encoding="utf-8")
     submit = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
     confirm = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
-    assert "Edit item" in html
-    assert "Add missing subquestion" in html
+    assert ">Edit</button>" in html
+    assert "Add a missing subquestion" in html
     assert "Review this correction" in html
     assert "SHOW-BACK — not applied yet" in html
     assert 'id="confirm"' in html

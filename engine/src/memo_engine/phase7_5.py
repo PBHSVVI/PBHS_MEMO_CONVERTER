@@ -884,7 +884,6 @@ def _apply_insert_missing_child_question(
         or not QUESTION_ID_RE.fullmatch(question_id)
         or not question_id.startswith(f"{parent_id}.")
         or question_id == parent_id
-        or not _exception_exists(structure, category, affected_id)
     ):
         return None, _issue(
             "correction_target_invalid", question_id or affected_id,
@@ -1439,6 +1438,19 @@ def apply_phase7_5_patch(
             patch=patch,
         )
         return applied, issue, True
+
+    if operation == "withdraw_confirmed_correction":
+        predecessor = str(patch.get("supersedes_correction_id") or "").strip()
+        if not predecessor:
+            return None, _issue("correction_target_invalid", affected_id, "The withdrawal does not identify the prior correction."), True
+        return {
+            "correction_id": correction_id,
+            "operation": operation,
+            "category": category,
+            "affected_id": affected_id,
+            "supersedes_correction_id": predecessor,
+            "withdrawn": True,
+        }, None, True
 
     if (
         category == "ambiguous_mark_semantics"

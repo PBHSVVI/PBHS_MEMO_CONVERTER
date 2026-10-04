@@ -24,6 +24,20 @@ M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 NS = {"w": W_NS, "m": M_NS, "a": A_NS}
 
+VERIFIED_CHECK_SYMBOLS = {
+    ("wingdings", "F0FC"), ("wingdings", "00FC"),
+    ("wingdings 2", "F050"), ("wingdings 2", "0050"),
+    ("segoe ui symbol", "2713"), ("segoe ui symbol", "2714"),
+}
+
+
+def _symbol_record(node: ET.Element) -> dict[str, Any]:
+    font = str(node.get(_attr(W_NS, "font")) or "unknown")
+    char = str(node.get(_attr(W_NS, "char")) or "").upper()
+    canonical = "✓" if (font.lower(), char) in VERIFIED_CHECK_SYMBOLS else None
+    visible = canonical or f"⟦SYM font={font} char={char or 'unknown'}⟧"
+    return {"type": "symbol", "text": visible, "font": font, "char": char, "canonical": canonical, "unresolved": canonical is None}
+
 
 def _attr(ns: str, name: str) -> str:
     return f"{{{ns}}}{name}"
@@ -63,6 +77,9 @@ def _paragraph_segments(p: ET.Element) -> list[dict[str, Any]]:
             return
         if node.tag == _attr(W_NS, "t"):
             add_text(node.text or "")
+            return
+        if node.tag == _attr(W_NS, "sym"):
+            segments.append(_symbol_record(node))
             return
         if node.tag == _attr(W_NS, "tab"):
             add_text("\t")

@@ -373,8 +373,43 @@ export default {
       const parentResolution = body.parent_reconciliation;
       const childRepair = body.child_repair;
       const missingChild = body.missing_child;
+      const correctionRevision = body.correction_revision;
       const content = body.content_correction;
-      if (parentResolution && typeof parentResolution === "object") {
+      if (correctionRevision && typeof correctionRevision === "object") {
+        if (!String(exception.category ?? "").startsWith("correction_")) {
+          return Response.json({ error: "correction_revision_category_mismatch" }, { status: 400 });
+        }
+        const value = correctionRevision as Record<string, unknown>;
+        const priorId = typeof value.supersedes_correction_id === "string" ? value.supersedes_correction_id.trim() : "";
+        const action = String(value.action ?? "");
+        const { data: prior } = await ctx.supabase.from("corrections")
+          .select("id,job_id,user_id,proposed_patch,confirmation_status,applied_at")
+          .eq("id", priorId).eq("job_id", jobId).maybeSingle();
+        const oldPatch = prior?.proposed_patch && typeof prior.proposed_patch === "object" ? prior.proposed_patch as Record<string, unknown> : null;
+        if (!UUID_RE.test(priorId) || !prior || prior.confirmation_status !== "confirmed" || prior.applied_at || oldPatch?.operation !== "insert_missing_child_question") {
+          return Response.json({ error: "prior_correction_not_revisable" }, { status: 400 });
+        }
+        if (action === "withdraw") {
+          proposedPatch = { schema_version: "1.0", operation: "withdraw_confirmed_correction", category: exception.category, affected_id: exception.affected_id, target_id: oldPatch.target_id, supersedes_correction_id: priorId, supersession_reason: "teacher_withdrew_previous_change", reinterpretation_method: "structured_correction_withdrawal" };
+          displayText = `Withdraw the previous request to add Question ${String(oldPatch.question_id ?? oldPatch.target_id ?? "")}. The original decision remains in the audit history.`;
+          exceptionStatus = "awaiting_confirmation";
+        } else if (action === "amend") {
+          const parentId = String(oldPatch.parent_id ?? oldPatch.affected_id ?? "");
+          const questionId = typeof value.question_id === "string" ? value.question_id.trim() : "";
+          const markingText = typeof value.marking_text === "string" ? value.marking_text.trim() : "";
+          const printedMarks = Number(value.printed_marks);
+          const structure = await loadStructure(ctx, job.user_id, jobId);
+          const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+          const duplicate = questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === questionId);
+          const parsed = parseMarkingScheme(markingText, ordinaryMathSemanticProfile(undefined, {}));
+          if (!QUESTION_ID_RE.test(parentId) || !QUESTION_ID_RE.test(questionId) || !questionId.startsWith(`${parentId}.`) || questionId === parentId || duplicate || !Number.isInteger(printedMarks) || printedMarks < 1 || printedMarks > 999 || !parsed || parsed.total !== printedMarks) {
+            return Response.json({ error: duplicate ? "missing_child_identifier_conflict" : "invalid_correction_amendment" }, { status: 400 });
+          }
+          proposedPatch = { schema_version: "1.0", operation: "insert_missing_child_question", category: "question_total_mismatch", affected_id: parentId, parent_id: parentId, target_id: questionId, question_id: questionId, printed_marks: printedMarks, mark_points: parsed.points, expected_total: parsed.total, mark_calculation_mode: parsed.mode, supersedes_correction_id: priorId, supersession_reason: "teacher_amended_previous_change", reconciliation_scope: "missing_child", reinterpretation_method: "structured_correction_amendment" };
+          displayText = `Replace the previous request with: add Question ${questionId} to Question ${parentId} using the supplied ${parsed.total}-mark scheme. The earlier request remains in the audit history.`;
+          exceptionStatus = "awaiting_confirmation";
+        } else return Response.json({ error: "invalid_correction_revision_action" }, { status: 400 });
+      } else if (parentResolution && typeof parentResolution === "object") {
         if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
           return Response.json({ error: "parent_reconciliation_category_mismatch" }, { status: 400 });
         }

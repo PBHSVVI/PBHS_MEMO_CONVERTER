@@ -44,6 +44,15 @@ def effective_correction_history(
         ((i, c) for i, c in enumerate(corrections)
          if c.get("confirmation_status") == "confirmed"), key=order,
     )]
+    positions = {str(c.get("id") or ""): i for i, c in enumerate(ordered)}
+    explicit_successors: dict[str, tuple[str, str]] = {}
+    for i, correction in enumerate(ordered):
+        patch = correction.get("proposed_patch") if isinstance(correction.get("proposed_patch"), dict) else {}
+        predecessor = str(patch.get("supersedes_correction_id") or "")
+        successor = str(correction.get("id") or "")
+        if predecessor and successor and positions.get(predecessor, i) < i:
+            reason = "teacher_withdrew_previous_change" if patch.get("operation") == "withdraw_confirmed_correction" else "teacher_amended_previous_change"
+            explicit_successors[predecessor] = (successor, reason)
     newer: dict[tuple[str, str], str] = {}
     history: list[dict[str, Any]] = []
     effective: list[dict[str, Any]] = []
@@ -87,7 +96,8 @@ def effective_correction_history(
                 and category == "question_allocation_pairing_ambiguous"
             ):
                 domain = "allocation_pairing"
-        successor = newer.get((target, domain)) if domain else None
+        explicit = explicit_successors.get(correction_id)
+        successor = explicit[0] if explicit else (newer.get((target, domain)) if domain else None)
         history.append({
             "correction_id": correction_id,
             "operation": operation,
@@ -95,7 +105,7 @@ def effective_correction_history(
             "domain": domain,
             "effective": successor is None,
             "superseded_by": successor,
-            "supersession_reason": "newer_confirmed_marking_decision" if successor else None,
+            "supersession_reason": explicit[1] if explicit else ("newer_confirmed_marking_decision" if successor else None),
         })
         if successor is not None:
             continue
@@ -155,6 +165,7 @@ def attach_correction_audit(
 SUPPORTED_CORRECTION_OPERATIONS = frozenset({
     "replace_item_content",
     "insert_missing_child_question",
+    "withdraw_confirmed_correction",
     "replace_mark_points",
     "set_item_total_override",
     "set_printed_marks",
@@ -170,6 +181,7 @@ CORRECTION_OPERATION_CATEGORIES = {
     # and payload are still validated deterministically during application.
     "replace_item_content": frozenset({"*"}),
     "insert_missing_child_question": frozenset({"question_total_mismatch"}),
+    "withdraw_confirmed_correction": frozenset({"correction_target_invalid", "correction_evidence_unresolved", "correction_mark_total_invalid"}),
     "resolve_question_allocation_pairing": frozenset({
         "question_allocation_pairing_ambiguous"
     }),

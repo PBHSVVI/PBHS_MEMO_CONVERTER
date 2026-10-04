@@ -106,12 +106,21 @@ def extract_docx_text(data: bytes) -> dict[str, Any]:
             "The DOCX document XML could not be parsed.",
         ) from exc
 
+    verified = {("wingdings", "F0FC"), ("wingdings", "00FC"), ("wingdings 2", "F050"), ("wingdings 2", "0050"), ("segoe ui symbol", "2713"), ("segoe ui symbol", "2714")}
+    symbols: list[dict[str, Any]] = []
     paragraphs: list[str] = []
     for paragraph in root.findall(".//w:p", ns):
         pieces: list[str] = []
         for node in paragraph.iter():
             if node.tag == f"{{{ns['w']}}}t":
                 pieces.append(node.text or "")
+            elif node.tag == f"{{{ns['w']}}}sym":
+                font = str(node.get(f"{{{ns['w']}}}font") or "unknown")
+                char = str(node.get(f"{{{ns['w']}}}char") or "").upper()
+                canonical = "✓" if (font.lower(), char) in verified else None
+                visible = canonical or f"⟦SYM font={font} char={char or 'unknown'}⟧"
+                pieces.append(visible)
+                symbols.append({"font": font, "char": char, "canonical": canonical, "unresolved": canonical is None})
             elif node.tag == f"{{{ns['w']}}}tab":
                 pieces.append("\t")
             elif node.tag in {f"{{{ns['w']}}}br", f"{{{ns['w']}}}cr"}:
@@ -128,6 +137,7 @@ def extract_docx_text(data: bytes) -> dict[str, Any]:
         "text_length": len(joined),
         "text_sha256": sha256_hex(joined.encode("utf-8")),
         "has_digital_text": bool(joined.strip()),
+        "symbols": symbols,
     }
 
 

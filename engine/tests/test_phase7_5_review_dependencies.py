@@ -304,7 +304,7 @@ def test_every_review_exposes_content_editor_and_guide():
     assert 'id="contentSolution"' in html
     assert 'id="contentMarking"' in html
     assert 'id="submitContent"' in html
-    assert "Correction guide — examples and punctuation" in html
+    assert "Help with corrections" in html
     assert "It does not depend on punctuation or AI interpretation" in html
 
 

@@ -15,7 +15,7 @@ PAREN_NUMBER_RE = re.compile(r"\((\d{1,2})\)")
 MARK_TOKEN_RE = re.compile(r"(?i)^\s*(\d+)\s*(.*)$")
 CODE_RE = re.compile(r"(?i)^(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)\b")
 INLINE_CODE_RE = re.compile(r"(?i)(?:^|[;|])\s*(\d+)\s*(S\s*[/\-]?\s*R|CA|SF|AO|M|A|F|S|R)\b")
-CHECK_RE = re.compile(r"^\s*(✓+)\s*(.*)$")
+CHECK_RE = re.compile(r"([✓✔☑]+)")
 
 MARK_DESCRIPTOR_PREFIXES = (
     "isol", "square", "squar", "fac", "fact", "rej", "interval", "bracket",
@@ -104,6 +104,8 @@ def semantic_for_code(code: str | None, descriptor: str) -> str:
         return "answer"
     if "answer" in d or "ans" in d:
         return "answer"
+    if "method" in d:
+        return "method"
     if "deriv" in d:
         return "method"
     if "simpl" in d:
@@ -187,25 +189,30 @@ def parse_mark_points(text: str) -> list[dict[str, Any]]:
         if not stripped:
             continue
 
-        check = CHECK_RE.match(stripped)
+        primary = _parse_numeric_mark(stripped)
+        inline_codes = list(INLINE_CODE_RE.finditer(stripped))
+        # Explicit numeric shorthand already carries the count. Decorative
+        # ticks on the same line must not duplicate it.
+        check = None if primary or inline_codes else CHECK_RE.search(stripped)
         if check:
             marks = check.group(1)
-            descriptor = check.group(2).strip()
+            descriptor = stripped[check.end():].strip(" ;:-") or stripped[:check.start()].strip(" ;:-")
+            explicit_ca = bool(re.search(r"\(\s*C\.?A\.?\s*\)", descriptor, re.I))
+            code = "CA" if explicit_ca else None
             points.append({
                 "count": len(marks),
-                "code": None,
+                "code": code,
                 "descriptor": descriptor,
-                "semantic": semantic_for_code(None, descriptor),
+                "semantic": semantic_for_code(code, descriptor),
                 "source": stripped,
                 "notation": "tick",
             })
             continue
 
-        primary = _parse_numeric_mark(stripped)
         if primary:
             points.append(primary)
 
-        for m in INLINE_CODE_RE.finditer(stripped):
+        for m in inline_codes:
             if m.start() == 0:
                 continue
             descriptor = stripped[m.end():].strip()

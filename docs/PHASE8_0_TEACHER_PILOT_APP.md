@@ -355,6 +355,38 @@ the following question boundary. It labels this evidence `Question-level source 
 — exact child alignment requires review` and does not include the preceding major
 question as if it belonged to the active review.
 
+#### v4.10 confirmed-change recovery and tick preservation
+
+If a confirmed change cannot be applied, the teacher now sees the earlier instruction
+in plain language and may edit it, withdraw it, or leave it for later. Editing creates
+a new correction with `supersedes_correction_id`; withdrawal creates an auditable
+no-op decision. The original confirmed row is never overwritten or deleted. Explicit
+supersession works across an identifier amendment such as `6.1.1` to `6.1`, with the
+history reason recorded as `teacher_amended_previous_change` or
+`teacher_withdrew_previous_change`. No database migration is required because this
+metadata lives in the existing structured patch.
+
+The review page now presents one selected correction tool at a time, moves examples
+and technical identifiers behind collapsed details, supports Enter in the sign-in
+form, and allows the only queue item to be deferred without pretending its dependent
+parent is resolved. An authenticated processing reload opens a dedicated status view
+with real elapsed time. Recent recheck durations for the same job supply a broad ETA
+range when available; otherwise the page says `Estimating…`, and exceeding the range
+does not create a failure.
+
+Mark parsing recognises Unicode check variants anywhere on a marking line. A run of
+one, two, or three ticks contributes one, two, or three marks even when its semantic
+type still needs review; a numeric shorthand on the same line prevents double-counting.
+DOCX ingestion and normalization preserve verified Wingdings/Wingdings 2 and Segoe UI
+Symbol check glyphs as `✓`, including their font and character code. Unknown `w:sym`
+glyphs remain explicit unresolved symbol evidence rather than being guessed or dropped.
+Full DBE Euclidean-reason lexicon integration remains a later, separate increment.
+
+For the current pilot, open the v4.10 review URL, choose **Edit previous change** on
+the failed `6.1.1` instruction, change only the identifier to `6.1`, review the
+show-back, confirm it, then apply the saved changes and check again. The six-mark scheme
+is prefilled and the historical `6.1.1` correction remains auditable.
+
 ### Semantic reuse and invalidation
 
 Revalidation checks the current job's previous `internal/semantic.json` before looking

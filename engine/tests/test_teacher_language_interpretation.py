@@ -136,6 +136,9 @@ def test_response_schema_is_closed_and_operation_allowlisted():
     assert SUPPORTED_CORRECTION_OPERATIONS == {
         "replace_item_content",
         "insert_missing_child_question",
+        "withdraw_confirmed_correction",
+        "withdraw_confirmed_correction",
+        "withdraw_confirmed_correction",
         "replace_mark_points",
         "set_item_total_override",
         "set_printed_marks",

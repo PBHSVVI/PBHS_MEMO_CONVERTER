@@ -11,6 +11,7 @@ function stagedTarget(patch: Record<string, unknown> | null): string | null {
     const ids = Array.isArray(patch.allocations) ? patch.allocations.map((item: any) => String(item?.question_id ?? "")).sort() : [];
     return ids.length ? `allocation:${ids.join(",")}` : null;
   }
+  if (operation === "withdraw_confirmed_correction") return `revision:${String(patch.supersedes_correction_id ?? "")}`;
   const target = String(patch.target_id ?? patch.affected_id ?? "");
   return target ? `question:${target}` : null;
 }
@@ -93,7 +94,7 @@ export default {
     }
 
     const { data: exception } = await ctx.supabase
-      .from("exceptions").select("id,status")
+      .from("exceptions").select("id,status,category")
       .eq("id", correction.exception_id).eq("job_id", correction.job_id).maybeSingle();
     if (!exception || exception.status !== "awaiting_confirmation") {
       return Response.json({ error: "exception_not_confirmable" }, { status: 409 });
@@ -101,7 +102,7 @@ export default {
 
     const deferRevalidation = body.defer_revalidation === true;
     const patch = correction.proposed_patch as Record<string, unknown>;
-    const retainParentReview = deferRevalidation && (
+    const retainParentReview = deferRevalidation && exception.category === "question_total_mismatch" && (
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
       (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child")
     );
@@ -115,7 +116,8 @@ export default {
       const { data: staged, error: stagedError } = await stagedQuery;
       if (stagedError) return Response.json({ error: "staged_correction_lookup_failed" }, { status: 502 });
       const target = stagedTarget(correction.proposed_patch);
-      if (target && (staged ?? []).some((item: any) => stagedTarget(item.proposed_patch) === target)) {
+      const supersedes = String(patch.supersedes_correction_id ?? "");
+      if (target && (staged ?? []).some((item: any) => String(item.id ?? "") !== supersedes && stagedTarget(item.proposed_patch) === target)) {
         return Response.json({ error: "conflicting_staged_correction", target }, { status: 409 });
       }
     }
