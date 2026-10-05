@@ -295,10 +295,10 @@ def _math_display_parts(block: dict[str, Any]) -> list[tuple[str, str]]:
     # Long English reasons embedded inside a Word equation do not wrap safely
     # in a narrow memo column. Split only the explanatory parenthetical; the
     # mathematical expression itself remains native OMML.
-    m = re.match(r"^(.*?)(\s*\(([^()]*(?:[A-Za-z]{3,})[^()]*)\))\s*$", source)
+    m = re.match(r"^(.*?)(\s+\(([^()]*(?:[A-Za-z]{3,})[^()]*)\))\s*$", source)
     if m and m.group(1).strip():
         prefix_source = m.group(1).strip()
-        prefix_latex = latex.split("(", 1)[0].strip()
+        prefix_latex = latex.rsplit("(", 1)[0].strip()
         if prefix_latex:
             return [("math", _prepare_latex(prefix_latex)), ("text", " " + m.group(2).strip())]
 

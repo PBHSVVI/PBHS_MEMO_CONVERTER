@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -231,6 +232,50 @@ class Phase6RendererTests(unittest.TestCase):
             [("math", "n=3"), ("text", " years 2 months")],
         )
 
+    def test_explanatory_parenthetical_remains_wrappable_prose(self) -> None:
+        block = {
+            "math": {
+                "source_text": "x=2 (correct answer)",
+                "canonical_latex": r"x=2(correct answer)",
+            }
+        }
+        self.assertEqual(
+            _math_display_parts(block),
+            [("math", "x=2"), ("text", " (correct answer)")],
+        )
+
+    def test_q7_2_trigonometric_parentheses_remain_native_math(self) -> None:
+        cases = [
+            (
+                "=3k4(sin120cosθ-sinθcos120)",
+                r"=\frac{3k}{4(sin120cos\theta{}-sin\theta{}cos120)}",
+                r"\frac{3k}{4(sin120cos\theta{}-sin\theta{}cos120)}",
+            ),
+            (
+                "=3k4(sin60cosθ+sinθcos60)",
+                r"=\frac{3k}{4(sin60cos\theta{}+sin\theta{}cos60)}",
+                r"\frac{3k}{4(sin60cos\theta{}+sin\theta{}cos60)}",
+            ),
+            (
+                "=3k4(32cosθ+sinθ12)",
+                r"=\frac{3k}{4(\frac{\sqrt{3}}{2}cos\theta{}+sin\theta{}\frac{1}{2})}",
+                r"\frac{3k}{4(\frac{\sqrt{3}}{2}cos\theta{}+sin\theta{}\frac{1}{2})}",
+            ),
+            (
+                "=3k4×12(3cosθ+sinθ)",
+                r"=\frac{3k}{4\times{}\frac{1}{2}(\sqrt{3}cos\theta{}+sin\theta{})}",
+                r"\frac{3k}{4\times{}\frac{1}{2}(\sqrt{3}cos\theta{}+sin\theta{})}",
+            ),
+        ]
+        for source, latex, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    _math_display_parts(
+                        {"math": {"source_text": source, "canonical_latex": latex}}
+                    ),
+                    [("text", "= "), ("math", expected)],
+                )
+
     def test_leading_equals_remains_plain_text_before_native_math(self) -> None:
         block = {"math": {"source_text": "=x+1", "canonical_latex": "=x+1"}}
         self.assertEqual(_math_display_parts(block), [("text", "= "), ("math", "x+1")])
@@ -265,6 +310,23 @@ class Phase6RendererTests(unittest.TestCase):
         self.assertEqual(cm.exception.details["expected_expression_count"], 1)
         self.assertEqual(cm.exception.details["omath_count"], 2)
         self.assertNotIn("x=1", str(cm.exception.details))
+
+    def test_zero_omml_group_fails_closed(self) -> None:
+        latex_values = [r"\frac{3k}{4"]
+        with self.assertRaises(RenderingError) as cm:
+            _extract_pandoc_math_bank(
+                _pandoc_xml_fixture(latex_values, [0]),
+                latex_values,
+            )
+        self.assertEqual(cm.exception.code, "RENDER_MATH_MAPPING_FAILED")
+        self.assertEqual(cm.exception.details["expected_expression_count"], 1)
+        self.assertEqual(cm.exception.details["omml_container_count"], 1)
+        self.assertEqual(cm.exception.details["omath_count"], 0)
+        self.assertEqual(cm.exception.details["failing_expression_index"], 0)
+        self.assertEqual(
+            cm.exception.details["failing_expression_digest"],
+            hashlib.sha256(latex_values[0].encode("utf-8")).hexdigest()[:16],
+        )
 
     def test_rendering_diagnostics_are_recorded_without_changing_public_message(self) -> None:
         class FakeDatabase:
@@ -318,6 +380,53 @@ class Phase6RendererTests(unittest.TestCase):
         bank = _pandoc_math_bank(canonical)
         self.assertEqual(len(bank["x=1$$ $$y=2"]), 2)
         self.assertEqual(len(bank["z=3"]), 1)
+
+    @unittest.skipUnless(shutil.which("pandoc"), "Pandoc is required for OMML integration")
+    def test_pandoc_q7_2_expressions_all_emit_native_omml(self) -> None:
+        canonical = _canonical()
+        blocks = canonical["questions"][0]["items"][0]["alternatives"][0]["blocks"]
+        cases = [
+            (
+                "=3k4(sin120cosθ-sinθcos120)",
+                r"=\frac{3k}{4(sin120cos\theta{}-sin\theta{}cos120)}",
+            ),
+            (
+                "=3k4(sin60cosθ+sinθcos60)",
+                r"=\frac{3k}{4(sin60cos\theta{}+sin\theta{}cos60)}",
+            ),
+            (
+                "=3k4(32cosθ+sinθ12)",
+                r"=\frac{3k}{4(\frac{\sqrt{3}}{2}cos\theta{}+sin\theta{}\frac{1}{2})}",
+            ),
+            (
+                "=3k4×12(3cosθ+sinθ)",
+                r"=\frac{3k}{4\times{}\frac{1}{2}(\sqrt{3}cos\theta{}+sin\theta{})}",
+            ),
+        ]
+        blocks.clear()
+        for index, (source, latex) in enumerate(cases, start=1):
+            blocks.append(
+                {
+                    "block_id": f"b{index}",
+                    "type": "math",
+                    "semantic_role": "working",
+                    "math": {
+                        "source_text": source,
+                        "canonical_latex": latex,
+                        "presentation_mathml": None,
+                        "plain_text": source,
+                        "display_mode": "display",
+                    },
+                    "source_refs": [],
+                    "confidence": {"score": 1.0, "band": "green", "rationale": "fixture"},
+                    "warnings": [],
+                }
+            )
+        values = _all_math_variants(canonical)
+        bank = _pandoc_math_bank(canonical)
+        self.assertEqual(len(values), 4)
+        self.assertEqual(list(bank), values)
+        self.assertTrue(all(len(bank[value]) == 1 for value in values))
 
     @unittest.skipUnless(
         shutil.which("pandoc") and (shutil.which("libreoffice") or shutil.which("soffice")),
