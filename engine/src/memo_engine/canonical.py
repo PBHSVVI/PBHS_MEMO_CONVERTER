@@ -8,6 +8,7 @@ import zipfile
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from .geometry_validation import geometry_consistency_issues
 from .structure import find_question_ids, parse_mark_points
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -2072,6 +2073,8 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                     "affected_id": str(correction.get("correction_id") or ""),
                     "message": "A correction was applied before user confirmation.",
                 })
+
+    issues.extend(geometry_consistency_issues(memo))
 
     issues = _dedupe_issues(issues)
     open_red = sum(
