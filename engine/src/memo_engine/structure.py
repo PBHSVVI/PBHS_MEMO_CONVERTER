@@ -321,11 +321,18 @@ def flatten_units(normalized: dict[str, Any]) -> list[dict[str, Any]]:
             })
         return result
 
+    media_by_row: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    for entity in content.get("media_entities", []):
+        media_by_row.setdefault(
+            (int(entity.get("source_unit_index") or 0), entity.get("table_row_index")), []
+        ).append(entity)
+
     blocks: list[dict[str, Any]] = []
     for unit_index, unit in enumerate(units):
         if unit.get("type") == "paragraph":
             text = unit.get("text", "")
-            if text.strip():
+            media = media_by_row.get((unit_index, None), [])
+            if text.strip() or media:
                 blocks.append({
                     "kind": "paragraph",
                     "source": text,
@@ -333,11 +340,13 @@ def flatten_units(normalized: dict[str, Any]) -> list[dict[str, Any]]:
                     "allocation": "",
                     "cells": [text],
                     "unit_index": unit_index,
+                    "media": media,
                 })
         elif unit.get("type") == "table":
             for row_index, row in enumerate(unit.get("rows", [])):
                 cells = [cell.get("text", "") for cell in row]
-                if not any(c.strip() for c in cells):
+                media = media_by_row.get((unit_index, row_index), [])
+                if not any(c.strip() for c in cells) and not media:
                     continue
 
                 if len(cells) == 1:
@@ -365,6 +374,7 @@ def flatten_units(normalized: dict[str, Any]) -> list[dict[str, Any]]:
                     "cells": cells,
                     "unit_index": unit_index,
                     "row_index": row_index,
+                    "media": media,
                 })
     return blocks
 

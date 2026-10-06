@@ -469,14 +469,47 @@ def _source_records(
         return records, max([p.get("page", 1) for p in content.get("pages", [])] or [1]), []
 
     page_map, page_count = _docx_page_map(source_bytes)
-    drawing_map, assets = _docx_asset_map(source_bytes)
+    media_entities = list(content.get("media_entities") or [])
+    drawing_map: dict[tuple[int, int | None, int | None, int], list[str]] = {}
+    row_media: dict[tuple[int, int | None], list[str]] = {}
+    assets_by_id: dict[str, dict[str, Any]] = {}
+    for entity in media_entities:
+        asset_id = str(entity.get("asset_id") or "")
+        if not asset_id:
+            continue
+        unit_index = int(entity.get("source_unit_index") or 0)
+        row_index = entity.get("table_row_index")
+        cell_index = entity.get("cell_index")
+        paragraph_index = int(entity.get("paragraph_index") or 0)
+        anchor = (unit_index, row_index, cell_index, paragraph_index)
+        drawing_map.setdefault(anchor, []).append(asset_id)
+        row_media.setdefault((unit_index, row_index), []).append(asset_id)
+        page = page_map.get(anchor, 1)
+        raw_anchor = dict(entity.get("raw_anchor") or {})
+        assets_by_id.setdefault(asset_id, {
+            "asset_id": asset_id,
+            "source_file_id": "source_1",
+            "relationship_id": entity.get("relationship_id"),
+            "package_path": entity.get("package_path"),
+            "sha256": entity.get("sha256"),
+            "size_bytes": entity.get("size_bytes"),
+            "mime_type": entity.get("mime_type"),
+            "pixel_width": entity.get("pixel_width"),
+            "pixel_height": entity.get("pixel_height"),
+            "media_class": entity.get("media_class") or "unresolved_media",
+            "cell_role": entity.get("cell_role"),
+            "source_block_index": entity.get("source_block_index"),
+            "source_anchor": {**raw_anchor, "page": page},
+        })
+    assets = list(assets_by_id.values())
     records: list[dict[str, Any]] = []
     block_index = 0
 
     for unit_index, unit in enumerate(units):
         if unit.get("type") == "paragraph":
             text = unit.get("text", "")
-            if text.strip():
+            media_assets = row_media.get((unit_index, None), [])
+            if text.strip() or media_assets:
                 records.append({
                     "block_index": block_index,
                     "source_text": text,
@@ -493,6 +526,9 @@ def _source_records(
                             "docx_anchor": {"unit_index": unit_index, "paragraph_index": 0},
                         },
                     }],
+                    "media_assets": media_assets,
+                    "unit_index": unit_index,
+                    "row_index": None,
                 })
                 block_index += 1
             continue
@@ -502,7 +538,8 @@ def _source_records(
 
         for row_index, row in enumerate(unit.get("rows", [])):
             cells = [cell.get("text", "") for cell in row]
-            if not any(cell.strip() for cell in cells):
+            media_assets = row_media.get((unit_index, row_index), [])
+            if not any(cell.strip() for cell in cells) and not media_assets:
                 continue
 
             if len(cells) == 1:
@@ -553,6 +590,9 @@ def _source_records(
                 "marking_text": marking_text,
                 "allocation_text": allocation_text,
                 "paragraphs": paragraphs,
+                "media_assets": media_assets,
+                "unit_index": unit_index,
+                "row_index": row_index,
             })
             block_index += 1
 
@@ -1388,6 +1428,164 @@ def _iter_blocks(items: list[dict[str, Any]]):
                 yield block
 
 
+def _find_item(items: list[dict[str, Any]], qid: str) -> dict[str, Any] | None:
+    for item in _iter_items(items):
+        if str(item.get("number")) == qid:
+            return item
+    return None
+
+
+def _media_precedes_first_source_qid(
+    record: dict[str, Any],
+    asset: dict[str, Any],
+    qids: list[str],
+) -> bool:
+    if asset.get("cell_role") != "source":
+        return False
+    anchor = asset.get("source_anchor") or {}
+    asset_cell = anchor.get("cell_index")
+    asset_paragraph = anchor.get("paragraph_index")
+    if asset_cell is None or asset_paragraph is None:
+        return False
+    qid_set = set(qids)
+    for paragraph in record.get("paragraphs", []):
+        if not qid_set.intersection(find_question_ids(str(paragraph.get("text") or ""))):
+            continue
+        source_anchor = (paragraph.get("source_ref") or {}).get("docx_anchor") or {}
+        return (
+            source_anchor.get("cell_index") == asset_cell
+            and int(asset_paragraph) < int(source_anchor.get("paragraph_index") or 0)
+        )
+    return False
+
+
+def _single_correction_created_predecessor(
+    first_source_qid: str,
+    qmap: dict[str, dict[str, Any]],
+) -> str | None:
+    parts = tuple(int(part) for part in first_source_qid.split("."))
+    if len(parts) < 2 or parts[-1] <= 1:
+        return None
+    parent = parts[:-1]
+    inserted_siblings: list[str] = []
+    for qid, qdata in qmap.items():
+        candidate = tuple(int(part) for part in qid.split("."))
+        if len(candidate) != len(parts) or candidate[:-1] != parent:
+            continue
+        origin = _correction_origin(qdata)
+        if (
+            origin is not None
+            and origin.get("operation") == "insert_missing_child_question"
+            and origin.get("source_block_index") is None
+            and candidate[-1] < parts[-1]
+        ):
+            inserted_siblings.append(qid)
+    expected = ".".join(map(str, (*parent, parts[-1] - 1)))
+    return expected if inserted_siblings == [expected] else None
+
+
+def _attach_unassigned_media_context(
+    questions: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    qmap: dict[str, dict[str, Any]],
+    assets: list[dict[str, Any]],
+) -> None:
+    """Attach still-unowned source media through bounded row/question context."""
+    used = {
+        str((block.get("figure") or {}).get("asset_id"))
+        for question in questions
+        for block in (
+            list(question.get("context_blocks", []))
+            + list(_iter_blocks(question.get("items", [])))
+        )
+        if block.get("type") == "figure"
+    }
+    asset_map = {str(asset.get("asset_id")): asset for asset in assets}
+    record_qids: dict[int, list[str]] = {}
+    for record in records:
+        block_index = int(record["block_index"])
+        record_qids[block_index] = sorted(
+            [
+                qid for qid, qdata in qmap.items()
+                if safe_source_block_index(qdata.get("source_block_index")) == block_index
+            ],
+            key=lambda value: tuple(int(part) for part in value.split(".")),
+        )
+
+    ordered_blocks = sorted(record_qids)
+    for record in records:
+        block_index = int(record["block_index"])
+        qids = record_qids.get(block_index, [])
+        for asset_id in record.get("media_assets", []):
+            asset_id = str(asset_id)
+            if asset_id in used or asset_id not in asset_map:
+                continue
+            asset = asset_map[asset_id]
+            target_qid: str | None = None
+            target_major: str | None = None
+
+            if qids:
+                majors = {qid.split(".")[0] for qid in qids}
+                if len(majors) == 1:
+                    target_major = next(iter(majors))
+                    first_qid = qids[0]
+                    if (
+                        _media_precedes_first_source_qid(record, asset, qids)
+                    ):
+                        target_qid = _single_correction_created_predecessor(first_qid, qmap)
+            else:
+                for candidate_block in ordered_blocks:
+                    if candidate_block <= block_index:
+                        continue
+                    following = record_qids.get(candidate_block, [])
+                    if following:
+                        target_major = following[0].split(".")[0]
+                        break
+
+            if target_major is None:
+                continue
+            question = next(
+                (entry for entry in questions if str(entry.get("number")) == target_major),
+                None,
+            )
+            if question is None:
+                continue
+            target_blocks = question.setdefault("context_blocks", [])
+            affected = target_major
+            if target_qid:
+                item = _find_item(question.get("items", []), target_qid)
+                if item is not None:
+                    target_blocks = item.setdefault("context_blocks", [])
+                    affected = target_qid
+
+            anchor = dict(asset.get("source_anchor") or {})
+            page = int(anchor.pop("page", 1) or 1)
+            target_blocks.append({
+                "block_id": f"b_{affected.replace('.', '_')}_context_media_{len(target_blocks) + 1}",
+                "type": "figure",
+                "semantic_role": (
+                    "source_context" if asset.get("media_class") == "substantive_figure"
+                    else "unresolved_source_raster"
+                ),
+                "figure": {
+                    "asset_id": asset_id,
+                    "media_class": asset.get("media_class") or "unresolved_media",
+                },
+                "source_refs": [{
+                    "file_id": "source_1",
+                    "page": page,
+                    "docx_anchor": anchor,
+                }],
+                "confidence": {
+                    "score": 1.0,
+                    "band": "green",
+                    "rationale": "Media ownership derived from the same source row or the immediately following question context.",
+                },
+                "warnings": (["UNRESOLVED_SOURCE_RASTER"] if asset.get("media_class") != "substantive_figure" else []),
+            })
+            used.add(asset_id)
+
+
 def _iter_marks(items: list[dict[str, Any]]):
     for item in _iter_items(items):
         for alt in item.get("alternatives", []):
@@ -1498,6 +1696,20 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
         question_number = str(question["number"])
         ids.append(question_id)
         validate_source_refs(question.get("source_refs"), affected_id=question_number)
+        for block in question.get("context_blocks", []):
+            block_id = str(block.get("block_id") or "")
+            if block_id:
+                ids.append(block_id)
+            validate_source_refs(block.get("source_refs"), affected_id=question_number)
+            if block.get("type") == "figure":
+                asset_id = (block.get("figure") or {}).get("asset_id")
+                if asset_id not in asset_ids:
+                    issues.append({
+                        "level": "red",
+                        "category": "asset_unresolved",
+                        "affected_id": question_number,
+                        "message": f"Figure block {block_id} references an unknown asset.",
+                    })
 
         try:
             major_number = int(question_number)
@@ -2080,6 +2292,22 @@ def build_canonical_memo(
             "confidence": {"score": 1.0, "band": "green", "rationale": "Major question grouping is deterministic."},
             "warnings": [],
         })
+
+    _attach_unassigned_media_context(questions, records, qmap, assets)
+    asset_metadata = {str(asset.get("asset_id")): asset for asset in assets}
+    for question in questions:
+        all_question_blocks = list(question.get("context_blocks", [])) + list(
+            _iter_blocks(question.get("items", []))
+        )
+        for block in all_question_blocks:
+            if block.get("type") != "figure":
+                continue
+            figure = block.setdefault("figure", {})
+            metadata = asset_metadata.get(str(figure.get("asset_id")), {})
+            figure.setdefault("media_class", metadata.get("media_class") or "unresolved_media")
+        context_blocks = question.get("context_blocks", [])
+        if context_blocks:
+            question["source_refs"] = context_blocks[0].get("source_refs", [])
 
     all_text = _all_normalized_text(normalized)
     totals_found = [

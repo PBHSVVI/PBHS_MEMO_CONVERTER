@@ -9,6 +9,8 @@ import zipfile
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from PIL import Image
+
 from .ingestion import IngestionError, sha256_hex
 
 
@@ -22,7 +24,8 @@ class NormalizationError(RuntimeError):
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-NS = {"w": W_NS, "m": M_NS, "a": A_NS}
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+NS = {"w": W_NS, "m": M_NS, "a": A_NS, "r": R_NS}
 
 VERIFIED_CHECK_SYMBOLS = {
     ("wingdings", "F0FC"), ("wingdings", "00FC"),
@@ -158,21 +161,169 @@ def _table_record(tbl: ET.Element) -> dict[str, Any]:
     return {"type": "table", "rows": rows}
 
 
+def _cell_role(cell_index: int, cell_count: int) -> str:
+    if cell_count <= 1:
+        return "source"
+    if cell_count == 2:
+        return "source" if cell_index == 0 else "marking_allocation"
+    if cell_count == 3:
+        return "source" if cell_index < 2 else "marking_allocation"
+    if cell_index < cell_count - 2:
+        return "source"
+    return "marking" if cell_index == cell_count - 2 else "allocation"
+
+
+def _media_type(path: str) -> str:
+    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else "bin"
+    return {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "bmp": "image/bmp", "tif": "image/tiff",
+        "tiff": "image/tiff", "emf": "image/emf", "wmf": "image/wmf",
+    }.get(suffix, "application/octet-stream")
+
+
+def _pixel_dimensions(blob: bytes) -> tuple[int | None, int | None]:
+    try:
+        with Image.open(io.BytesIO(blob)) as image:
+            return int(image.width), int(image.height)
+    except Exception:
+        return None, None
+
+
+def _media_class(width: int | None, height: int | None) -> str:
+    if width and height and height <= 64 and width / max(height, 1) >= 4:
+        return "contextual_raster"
+    if width and height:
+        return "substantive_figure"
+    return "unresolved_media"
+
+
+def _docx_media_entities(
+    archive: zipfile.ZipFile,
+    root: ET.Element,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    try:
+        rel_root = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+    except KeyError:
+        rel_root = None
+    rel_map = (
+        {
+            rel.get("Id"): rel.get("Target")
+            for rel in list(rel_root)
+            if rel.get("Id") and rel.get("Target")
+        }
+        if rel_root is not None else {}
+    )
+    package_media: dict[str, dict[str, Any]] = {}
+    for name in sorted(archive.namelist()):
+        if not name.startswith("word/media/") or name.endswith("/"):
+            continue
+        blob = archive.read(name)
+        width, height = _pixel_dimensions(blob)
+        package_media[name] = {
+            "path": name,
+            "size_bytes": len(blob),
+            "sha256": sha256_hex(blob),
+            "mime_type": _media_type(name),
+            "pixel_width": width,
+            "pixel_height": height,
+        }
+
+    entities: list[dict[str, Any]] = []
+    body = root.find("w:body", NS)
+    if body is None:
+        return list(package_media.values()), entities
+
+    unit_index = 0
+    for child in list(body):
+        if child.tag == _attr(W_NS, "p"):
+            anchors = [(None, None, 0, "body", child)]
+        elif child.tag == _attr(W_NS, "tbl"):
+            anchors = []
+            for row_index, row in enumerate(child.findall("./w:tr", NS)):
+                cells = row.findall("./w:tc", NS)
+                for cell_index, cell in enumerate(cells):
+                    role = _cell_role(cell_index, len(cells))
+                    for paragraph_index, paragraph in enumerate(cell.findall("./w:p", NS)):
+                        anchors.append((row_index, cell_index, paragraph_index, role, paragraph))
+        else:
+            continue
+
+        for row_index, cell_index, paragraph_index, role, paragraph in anchors:
+            for drawing_order, blip in enumerate(paragraph.findall(f".//{{{A_NS}}}blip")):
+                relationship_id = blip.get(_attr(R_NS, "embed"))
+                target = rel_map.get(relationship_id)
+                if not relationship_id or not target:
+                    continue
+                package_path = "word/" + target.lstrip("/")
+                meta = package_media.get(package_path)
+                if meta is None:
+                    continue
+                anchor = {
+                    "unit_index": unit_index,
+                    "row_index": row_index,
+                    "cell_index": cell_index,
+                    "paragraph_index": paragraph_index,
+                    "drawing_order": drawing_order,
+                }
+                entities.append({
+                    "asset_id": "asset_" + str(meta["sha256"])[:16],
+                    "relationship_id": relationship_id,
+                    "package_path": package_path,
+                    "sha256": meta["sha256"],
+                    "size_bytes": meta["size_bytes"],
+                    "mime_type": meta["mime_type"],
+                    "pixel_width": meta["pixel_width"],
+                    "pixel_height": meta["pixel_height"],
+                    "media_class": _media_class(meta["pixel_width"], meta["pixel_height"]),
+                    "source_unit_index": unit_index,
+                    "table_row_index": row_index,
+                    "cell_index": cell_index,
+                    "paragraph_index": paragraph_index,
+                    "drawing_order": drawing_order,
+                    "cell_role": role,
+                    "source_block_index": None,
+                    "raw_anchor": anchor,
+                })
+        unit_index += 1
+    return list(package_media.values()), entities
+
+
+def _assign_media_source_blocks(
+    units: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+) -> None:
+    by_row: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    for entity in entities:
+        by_row.setdefault(
+            (int(entity["source_unit_index"]), entity.get("table_row_index")), []
+        ).append(entity)
+
+    block_index = 0
+    for unit_index, unit in enumerate(units):
+        if unit.get("type") == "paragraph":
+            media = by_row.get((unit_index, None), [])
+            if str(unit.get("text") or "").strip() or media:
+                for entity in media:
+                    entity["source_block_index"] = block_index
+                block_index += 1
+            continue
+        if unit.get("type") != "table":
+            continue
+        for row_index, row in enumerate(unit.get("rows", [])):
+            media = by_row.get((unit_index, row_index), [])
+            if any(str(cell.get("text") or "").strip() for cell in row) or media:
+                for entity in media:
+                    entity["source_block_index"] = block_index
+                block_index += 1
+
+
 def normalize_docx(data: bytes) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             document_xml = archive.read("word/document.xml")
-            media: list[dict[str, Any]] = []
-            for name in sorted(archive.namelist()):
-                if name.startswith("word/media/") and not name.endswith("/"):
-                    blob = archive.read(name)
-                    media.append(
-                        {
-                            "path": name,
-                            "size_bytes": len(blob),
-                            "sha256": sha256_hex(blob),
-                        }
-                    )
+            root = ET.fromstring(document_xml)
+            media, media_entities = _docx_media_entities(archive, root)
     except (zipfile.BadZipFile, KeyError) as exc:
         raise NormalizationError(
             "NORMALIZATION_DOCX_INVALID",
@@ -218,6 +369,8 @@ def normalize_docx(data: bytes) -> dict[str, Any]:
                         drawing_count += paragraph["drawing_count"]
             units.append(record)
 
+    _assign_media_source_blocks(units, media_entities)
+
     return {
         "kind": "docx",
         "units": units,
@@ -230,6 +383,7 @@ def normalize_docx(data: bytes) -> dict[str, Any]:
             "embedded_media_count": len(media),
         },
         "embedded_media": media,
+        "media_entities": media_entities,
         "ocr": {
             "engine": None,
             "attempted": 0,

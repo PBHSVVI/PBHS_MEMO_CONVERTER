@@ -21,6 +21,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Inches, Mm, Pt
+from PIL import Image
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -53,6 +54,8 @@ def _iter_items(items: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
 
 def _iter_blocks(canonical: dict[str, Any]) -> Iterable[dict[str, Any]]:
     for question in canonical.get("questions", []):
+        for block in question.get("context_blocks", []):
+            yield block
         for item in _iter_items(question.get("items", [])):
             for block in item.get("context_blocks", []):
                 yield block
@@ -572,7 +575,25 @@ def _add_figure(paragraph, block: dict[str, Any], assets: dict[str, tuple[bytes,
     try:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = paragraph.add_run()
-        run.add_picture(temp_path, width=Inches(3.35))
+        width_inches = 3.35
+        height_inches: float | None = None
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                natural_width = max(0.25, float(image.width) / 150.0)
+                natural_height = max(0.25, float(image.height) / 150.0)
+                scale = min(1.0, 4.2 / natural_width, 4.5 / natural_height)
+                width_inches = natural_width * scale
+                height_inches = natural_height * scale
+        except Exception:
+            pass
+        if height_inches is None:
+            run.add_picture(temp_path, width=Inches(width_inches))
+        else:
+            run.add_picture(
+                temp_path,
+                width=Inches(width_inches),
+                height=Inches(height_inches),
+            )
     finally:
         try:
             os.unlink(temp_path)
@@ -667,8 +688,17 @@ def _render_marks(cell, alternatives: list[dict[str, Any]]) -> None:
             _add_text(p, " " + _descriptor(mark))
 
 
-def _render_working(cell, alternatives: list[dict[str, Any]], bank, assets) -> None:
+def _render_working(
+    cell,
+    alternatives: list[dict[str, Any]],
+    bank,
+    assets,
+    *,
+    context_blocks: list[dict[str, Any]] | None = None,
+) -> None:
     _clear_cell(cell)
+    for group in _group_blocks(context_blocks or []):
+        _render_block_group(cell, group, bank, assets)
     first_alt = True
     for alt_index, alt in enumerate(alternatives):
         if alt_index > 0:
@@ -732,7 +762,10 @@ def _add_item_rows(table, item: dict[str, Any], bank, assets) -> None:
             _set_cell_margins(cell)
         _clear_cell(row.cells[0])
         _add_text(row.cells[0].paragraphs[0], str(item.get("number") or ""))
-        _render_working(row.cells[1], alternatives, bank, assets)
+        _render_working(
+            row.cells[1], alternatives, bank, assets,
+            context_blocks=context_blocks,
+        )
         _render_marks(row.cells[2], alternatives)
         _clear_cell(row.cells[3])
         p = row.cells[3].paragraphs[0]
@@ -812,6 +845,17 @@ def _question_table(document: Document, question: dict[str, Any], bank, assets, 
     p = merged.paragraphs[0]
     _format_paragraph(p, keep_next=True)
     _add_text(p, str(question.get("heading") or f"QUESTION {question.get('number')}"), bold=True)
+
+    question_context = question.get("context_blocks", [])
+    if question_context:
+        row = table.add_row()
+        for cell in row.cells:
+            _set_cell_borders(cell)
+            _set_cell_margins(cell)
+        _clear_cell(row.cells[0])
+        _render_context(row.cells[1], question_context, bank, assets)
+        _clear_cell(row.cells[2])
+        _clear_cell(row.cells[3])
 
     for item in question.get("items", []):
         _add_item_rows(table, item, bank, assets)
