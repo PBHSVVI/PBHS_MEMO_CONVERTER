@@ -483,6 +483,44 @@ def _snapshot(client: ReadOnlySupabase, job_id: str) -> dict[str, Any]:
     }
 
 
+def _correction_counts(
+    confirmed_corrections: list[dict[str, Any]],
+    snapshot: dict[str, Any],
+) -> dict[str, int]:
+    all_rows = list(snapshot.get("corrections") or [])
+    snapshot_confirmed = sum(
+        1 for row in all_rows
+        if row.get("confirmation_status") == "confirmed"
+    )
+    confirmed_count = len(confirmed_corrections)
+    _require(confirmed_count == 39, "LIVE_CONFIRMED_CORRECTION_COUNT_MISMATCH")
+    _require(
+        snapshot_confirmed == confirmed_count,
+        "LIVE_CONFIRMED_CORRECTION_SNAPSHOT_MISMATCH",
+    )
+    return {
+        "confirmed": confirmed_count,
+        "total": len(all_rows),
+    }
+
+
+def _confirmed_replay_rows(
+    client: ReadOnlySupabase,
+    job_id: str,
+    snapshot: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    queried = client.get_confirmed_corrections(job_id)
+    confirmed = [
+        row for row in queried
+        if row.get("confirmation_status") == "confirmed"
+    ]
+    _require(
+        len(confirmed) == len(queried),
+        "CONFIRMED_CORRECTION_QUERY_CONTAINED_NON_CONFIRMED_ROW",
+    )
+    return confirmed, _correction_counts(confirmed, snapshot)
+
+
 def _assert_sanitized_report(report: dict[str, Any]) -> None:
     forbidden_keys = {
         "text", "source_text", "typed_text", "display_text", "proposed_patch",
@@ -531,9 +569,9 @@ def run_phase81a_acceptance(
     _require(job.get("status") == "complete" and job.get("stage") == "complete", "SOURCE_JOB_NOT_COMPLETE")
     source_path = validate_source_path(job)
     source_bytes = readonly.download_object(BUCKET, source_path)
-    corrections = readonly.get_confirmed_corrections(source_job_id)
-    all_correction_count = len(before["corrections"])
-    _require(all_correction_count == 39, "LIVE_CORRECTION_COUNT_MISMATCH")
+    corrections, before_correction_counts = _confirmed_replay_rows(
+        readonly, source_job_id, before
+    )
     semantic_path = f"{job['user_id']}/{source_job_id}/internal/semantic.json"
     cached_semantic = readonly.download_json(BUCKET, semantic_path)
 
@@ -619,11 +657,19 @@ def run_phase81a_acceptance(
 
     after = _snapshot(readonly, source_job_id)
     _require(before == after, "LIVE_SOURCE_MUTATION_DETECTED")
+    after_correction_counts = {
+        "confirmed": sum(
+            1 for row in after["corrections"]
+            if row.get("confirmation_status") == "confirmed"
+        ),
+        "total": len(after["corrections"]),
+    }
 
     report = {
         "source_job_id": source_job_id,
         "source_mutated": False,
-        "live_correction_count": all_correction_count,
+        "live_confirmed_correction_count": before_correction_counts["confirmed"],
+        "live_total_correction_row_count": before_correction_counts["total"],
         "pass1": {
             "review_required": True,
             "geometry_conflicts": 1,
@@ -651,6 +697,10 @@ def run_phase81a_acceptance(
             "correction_state_unchanged": True,
             "event_state_unchanged": True,
             "output_hashes_unchanged": True,
+            "confirmed_correction_count_before": before_correction_counts["confirmed"],
+            "confirmed_correction_count_after": after_correction_counts["confirmed"],
+            "total_correction_row_count_before": before_correction_counts["total"],
+            "total_correction_row_count_after": after_correction_counts["total"],
         },
     }
     _assert_sanitized_report(report)

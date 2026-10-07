@@ -11,6 +11,8 @@ from engine.src.memo_engine.acceptance import (
     AcceptanceFailure,
     ReadOnlySupabase,
     _assert_sanitized_report,
+    _confirmed_replay_rows,
+    _correction_counts,
     _ephemeral_geometry_correction,
     _media_acceptance,
     _open_exceptions,
@@ -121,6 +123,62 @@ def test_real_confirmed_correction_replays_only_in_memory():
     assert len(applied) == 1
     assert replayed["questions"][0]["content_override"]["solution_lines"] == ["BC perpendicular AB"]
     assert structure == original
+
+
+def test_confirmed_baseline_is_distinct_from_complete_immutable_history():
+    confirmed = [
+        {"id": f"confirmed-{index}", "confirmation_status": "confirmed"}
+        for index in range(39)
+    ]
+    rejected = [
+        {"id": f"rejected-{index}", "confirmation_status": "rejected"}
+        for index in range(3)
+    ]
+    snapshot = {"corrections": [*confirmed, *rejected]}
+
+    class Client:
+        def get_confirmed_corrections(self, job_id):
+            assert job_id == JOB_ID
+            return confirmed
+
+    replay_rows, counts = _confirmed_replay_rows(Client(), JOB_ID, snapshot)
+
+    assert counts == {"confirmed": 39, "total": 42}
+    assert [row["id"] for row in replay_rows] == [
+        f"confirmed-{index}" for index in range(39)
+    ]
+    assert len(snapshot["corrections"]) == 42
+
+
+def test_non_confirmed_history_change_is_still_detected_as_mutation():
+    confirmed = [
+        {"id": f"confirmed-{index}", "confirmation_status": "confirmed"}
+        for index in range(39)
+    ]
+    before = {
+        "corrections": [
+            *confirmed,
+            {"id": "rejected-history", "confirmation_status": "rejected", "updated_at": "before"},
+        ]
+    }
+    after = copy.deepcopy(before)
+    after["corrections"][-1]["updated_at"] = "after"
+
+    assert _correction_counts(confirmed, before) == {"confirmed": 39, "total": 40}
+    with pytest.raises(AcceptanceFailure, match="LIVE_SOURCE_MUTATION_DETECTED"):
+        _require(before == after, "LIVE_SOURCE_MUTATION_DETECTED")
+
+
+def test_confirmed_count_change_is_rejected():
+    confirmed = [
+        {"id": f"confirmed-{index}", "confirmation_status": "confirmed"}
+        for index in range(39)
+    ]
+    snapshot = {"corrections": copy.deepcopy(confirmed)}
+    snapshot["corrections"][-1]["confirmation_status"] = "rejected"
+
+    with pytest.raises(AcceptanceFailure, match="LIVE_CONFIRMED_CORRECTION_SNAPSHOT_MISMATCH"):
+        _correction_counts(confirmed, snapshot)
 
 
 def test_pass1_geometry_review_is_bounded_to_q32():
