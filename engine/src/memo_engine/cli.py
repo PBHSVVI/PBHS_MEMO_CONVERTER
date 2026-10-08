@@ -488,7 +488,20 @@ def run_job(job_id: str) -> int:
 
         if review_required:
             final_status = "needs_review"
-            if confirmed_corrections:
+            metadata_review = next(
+                (
+                    item for item in canonical_exceptions
+                    if item.get("category") == "missing_document_metadata"
+                ),
+                None,
+            )
+            if metadata_review:
+                final_stage = "phase8_1b_metadata_review"
+                error_code = "PHASE81B_METADATA_REQUIRED"
+                error_message = (
+                    "Document details require a teacher decision before final rendering."
+                )
+            elif confirmed_corrections:
                 final_stage = "phase7_review"
                 error_code = "PHASE7_REVIEW_REQUIRED"
                 error_message = (

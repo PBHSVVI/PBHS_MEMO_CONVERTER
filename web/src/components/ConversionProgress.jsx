@@ -7,15 +7,26 @@ import {
   teacherStage,
   teacherStatus,
 } from "../lib/jobContracts";
-import { fetchOutput, getJob, retryJob, saveBlob } from "../lib/memoService";
+import {
+  fetchCanonicalMetadata,
+  fetchOutput,
+  getJob,
+  retryJob,
+  saveBlob,
+  submitTeacherMetadata,
+} from "../lib/memoService";
 import { reviewUrl } from "../lib/urls";
+import { DocumentDetails } from "./DocumentDetails";
 
 const POLL_MS = 6000;
 
 export function ConversionProgress({ client, user, initialJob, onBack }) {
   const [job, setJob] = useState(initialJob);
   const [state, setState] = useState({ busy: "", error: "" });
+  const [metadataDetails, setMetadataDetails] = useState(null);
   const status = teacherStatus(job);
+  const metadataReview = job?.status === "needs_review" &&
+    job?.stage === "phase8_1b_metadata_review";
 
   const refresh = useCallback(async () => {
     try {
@@ -32,6 +43,19 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
     return () => window.clearInterval(timer);
   }, [job?.status, refresh]);
 
+  useEffect(() => {
+    if (!metadataReview && job?.status !== "complete") return undefined;
+    let active = true;
+    fetchCanonicalMetadata(client, user.id, job.id)
+      .then((details) => { if (active) setMetadataDetails(details); })
+      .catch((error) => {
+        if (active && metadataReview) {
+          setState((current) => ({ ...current, error: error.message }));
+        }
+      });
+    return () => { active = false; };
+  }, [client, job?.id, job?.status, metadataReview, user.id]);
+
   async function retry() {
     setState({ busy: "retry", error: "" });
     try {
@@ -44,6 +68,17 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
     setState({ busy: "", error: "" });
   }
 
+  async function applyMetadata(teacherMetadata) {
+    setState({ busy: "metadata", error: "" });
+    try {
+      await submitTeacherMetadata(client, job.id, teacherMetadata);
+      await refresh();
+      setState({ busy: "", error: "" });
+    } catch (error) {
+      setState({ busy: "", error: error.message });
+    }
+  }
+
   async function download(format) {
     setState({ busy: format, error: "" });
     try {
@@ -54,6 +89,13 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
     }
     setState({ busy: "", error: "" });
   }
+
+  const missingMetadata = metadataDetails
+    ? ["grade_label", "duration_minutes"].filter(
+      (field) => metadataDetails.effective?.[field] == null &&
+        !metadataDetails.provenance?.[field]?.confirmed_absent
+    )
+    : [];
 
   return (
     <main className="page-shell narrow">
@@ -73,7 +115,25 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
 
         {state.error && <p className="notice danger" role="alert">{state.error}</p>}
 
-        {canReview(job) && (
+        {metadataReview && (
+          <div className="action-card review-card">
+            <h2>Document details need attention</h2>
+            <p>The source does not state one or more cover details. Enter only what you know, or deliberately leave a field blank.</p>
+            {metadataDetails ? (
+              <DocumentDetails
+                mode="review"
+                teacherMetadata={job.teacher_metadata}
+                effectiveMetadata={metadataDetails.effective}
+                provenance={metadataDetails.provenance}
+                missingFields={missingMetadata}
+                onSubmit={applyMetadata}
+                busy={state.busy === "metadata"}
+              />
+            ) : <p>Loading document details…</p>}
+          </div>
+        )}
+
+        {canReview(job) && !metadataReview && (
           <div className="action-card review-card">
             <h2>Your judgement is needed</h2>
             <p>The converter found one or more items that a teacher should confirm.</p>
@@ -93,6 +153,16 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
                 {state.busy === "pdf" ? "Downloading…" : "Download PDF"}
               </button>
             </div>
+            <details className="completed-metadata">
+              <summary>Document details</summary>
+              {metadataDetails ? (
+                <DocumentDetails
+                  mode="readonly"
+                  effectiveMetadata={metadataDetails.effective}
+                  provenance={metadataDetails.provenance}
+                />
+              ) : <p>Loading document details…</p>}
+            </details>
           </div>
         )}
 

@@ -9,6 +9,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from .geometry_validation import geometry_consistency_issues
+from .metadata import MetadataValidationError, resolve_document_metadata
 from .structure import find_question_ids, parse_mark_points
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -59,10 +60,6 @@ QUESTION_TOKEN_RE = re.compile(
 )
 OR_LINE_RE = re.compile(r"(?im)^\s*OR\s*$")
 TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
-YEAR_RE = re.compile(r"\b(20\d{2})\b")
-PAPER_RE = re.compile(r"(?i)\bPAPER\s*([12])\b")
-GRADE_RE = re.compile(r"(?i)\b(?:FORM|GRADE)\s*([0-9]{1,2})\b")
-DURATION_RE = re.compile(r"(?i)\bTIME\s*[:=-]?\s*(\d+(?:[.,]\d+)?)\s*HOURS?\b")
 
 
 class CanonicalizationError(RuntimeError):
@@ -2324,15 +2321,39 @@ def build_canonical_memo(
     source = ingestion.get("source", {})
     document_id = "memo_" + str(source.get("sha256", normalized.get("job_id", "unknown")))[:24]
 
-    year_match = YEAR_RE.search(all_text)
-    paper_match = PAPER_RE.search(all_text)
-    grade_match = GRADE_RE.search(all_text)
-    duration_match = DURATION_RE.search(all_text)
+    try:
+        metadata = resolve_document_metadata(
+            all_text,
+            job.get("teacher_metadata"),
+            teacher_metadata_revision=int(job.get("teacher_metadata_revision") or 0),
+            require_missing_review="teacher_metadata" in job,
+        )
+    except MetadataValidationError as exc:
+        raise CanonicalizationError(
+            "TEACHER_METADATA_INVALID",
+            "Stored teacher document metadata is invalid and cannot be applied.",
+        ) from exc
 
     inherited_exceptions = (
         structure.get("exceptions", []) + semantic.get("exceptions", [])
     )
     new_issues = _dedupe_issues(issues)
+    if metadata["missing_fields"]:
+        new_issues.append({
+            "level": "amber",
+            "category": "missing_document_metadata",
+            "affected_id": None,
+            "message": "Document details are missing and require a teacher decision.",
+            "suggestions": [{"missing_fields": metadata["missing_fields"]}],
+        })
+    if metadata["source_conflicts"]:
+        new_issues.append({
+            "level": "amber",
+            "category": "document_metadata_source_conflict",
+            "affected_id": None,
+            "message": "The source contains contradictory document metadata.",
+            "suggestions": [{"conflicting_fields": sorted(metadata["source_conflicts"])}],
+        })
 
     memo: dict[str, Any] = {
         "schema_version": "1.0",
@@ -2350,18 +2371,15 @@ def build_canonical_memo(
             "assets": assets,
         },
         "document_metadata": {
-            "exam_type": "PREPARATORY EXAMINATION" if "PREPARATORY" in all_text.upper() else None,
-            "year": int(year_match.group(1)) if year_match else None,
-            "subject": "MATHEMATICS",
-            "paper": f"PAPER {paper_match.group(1)}" if paper_match else None,
-            "grade_label": f"FORM {grade_match.group(1)}" if grade_match and "FORM" in grade_match.group(0).upper() else (f"GRADE {grade_match.group(1)}" if grade_match else None),
-            "language": "en-ZA",
+            "exam_type": metadata["effective"]["exam_type"],
+            "year": metadata["effective"]["year"],
+            "subject": metadata["effective"]["subject"],
+            "paper": metadata["effective"]["paper"],
+            "grade_label": metadata["effective"]["grade_label"],
+            "language": None,
             "exam_code": None,
             "expected_total_marks": expected_final,
-            "duration_minutes": (
-                int(round(float(duration_match.group(1).replace(",", ".")) * 60))
-                if duration_match else None
-            ),
+            "duration_minutes": metadata["effective"]["duration_minutes"],
             "observed_page_count_text": None,
         },
         "render_profile": os.environ.get("MEMO_RENDER_PROFILE", "PBHS_GDE_INTERNAL_V1"),
@@ -2377,6 +2395,7 @@ def build_canonical_memo(
         "corrections": [],
         "audit": {
             "job_id": normalized["job_id"],
+            "metadata_resolution": metadata["audit"],
             "interpreter_runs": semantic.get("interpreter_runs", []),
             "validation_runs": [],
             "decisions": [],

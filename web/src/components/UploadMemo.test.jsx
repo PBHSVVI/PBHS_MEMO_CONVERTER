@@ -46,6 +46,28 @@ describe("memo upload drag and drop", () => {
     expect(screen.getByText("Choose a different file")).toBeInTheDocument();
   });
 
+
+
+  it("keeps document details optional and submits supplied values", async () => {
+    createAndDispatchJob.mockResolvedValue({ id: "job" });
+    render(<UploadMemo {...props()} />);
+    expect(screen.getByText("Document details (optional)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Document details (optional)"));
+    fireEvent.change(screen.getByPlaceholderText("Form 5"), { target: { value: "Form 5" } });
+    fireEvent.change(screen.getByLabelText("Time allocation value"), { target: { value: "3" } });
+    fireEvent.drop(zone(), { dataTransfer: { files: [memo()] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload and convert" }));
+    await waitFor(() => expect(createAndDispatchJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teacherMetadata: {
+          schema_version: "1.0",
+          values: { grade_label: "Form 5", duration_minutes: 180 },
+          confirmed_absent: [],
+        },
+      }),
+    ));
+  });
+
   it("preserves click-to-choose behavior", () => {
     const { container } = render(<UploadMemo {...props()} />);
     const file = memo("clicked.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");

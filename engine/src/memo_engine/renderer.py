@@ -776,37 +776,50 @@ def _add_item_rows(table, item: dict[str, Any], bank, assets) -> None:
         _add_item_rows(table, child, bank, assets)
 
 
+def _format_duration(duration_minutes: int) -> str:
+    minutes = int(duration_minutes)
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} HOUR" if hours == 1 else f"{hours} HOURS"
+    if minutes % 30 == 0:
+        whole, half = divmod(minutes, 60)
+        if half == 30:
+            return f"{whole}½ HOURS" if whole else "½ HOUR"
+    return f"{minutes} MINUTES"
+
+
 def _cover(document: Document, canonical: dict[str, Any], page_count: int | None) -> None:
     meta = canonical.get("document_metadata", {})
-    paper = str(meta.get("paper") or "PAPER 1")
-    year = str(meta.get("year") or "")
-    grade = str(meta.get("grade_label") or "")
     marks = canonical.get("totals", {}).get("computed")
     duration = meta.get("duration_minutes")
+    subject_line = " ".join(
+        str(value).strip()
+        for value in (meta.get("subject"), meta.get("paper"))
+        if value
+    )
 
-    for text, size in [
-        (str(meta.get("exam_type") or "PREPARATORY EXAMINATION"), 13),
-        (year, 13),
+    cover_lines = [
+        (meta.get("exam_type"), 13),
+        (str(meta["year"]) if meta.get("year") is not None else None, 13),
         ("MARKING GUIDELINES", 13),
-        (f"MATHEMATICS {paper}", 13),
-        (grade, 11),
-    ]:
+        (subject_line or None, 13),
+        (meta.get("grade_label"), 11),
+    ]
+    for text, size in cover_lines:
+        if not text:
+            continue
         p = document.add_paragraph()
         _format_paragraph(p, align=WD_ALIGN_PARAGRAPH.CENTER, after=2)
-        _add_text(p, text.upper(), bold=True, size=size)
+        _add_text(p, str(text).upper(), bold=True, size=size)
 
     for _ in range(8):
         document.add_paragraph()
 
     p = document.add_paragraph(); _format_paragraph(p, after=1)
     _add_text(p, f"MARKS: {marks}", bold=True, size=10)
-    p = document.add_paragraph(); _format_paragraph(p, after=1)
-    if duration:
-        hours = float(duration) / 60.0
-        label = str(int(hours)) if hours.is_integer() else str(hours).rstrip("0").rstrip(".")
-        _add_text(p, f"TIME: {label} HOURS", bold=True, size=10)
-    else:
-        _add_text(p, "TIME:", bold=True, size=10)
+    if duration is not None:
+        p = document.add_paragraph(); _format_paragraph(p, after=1)
+        _add_text(p, f"TIME: {_format_duration(int(duration))}", bold=True, size=10)
     p = document.add_paragraph(); _format_paragraph(p, after=0)
     extent = str(page_count) if page_count else "__PAGECOUNT__"
     _add_text(p, f"This marking guideline consists of {extent} pages including the cover page.", bold=True, size=10)
@@ -901,13 +914,18 @@ def _configure_section(document: Document, canonical: dict[str, Any]) -> None:
     section.different_first_page_header_footer = True
 
     meta = canonical.get("document_metadata", {})
-    paper = str(meta.get("paper") or "PAPER 1").replace("PAPER ", "P")
-    year = str(meta.get("year") or "2026")[-2:]
+    subject = str(meta.get("subject") or "").strip()
+    paper = str(meta.get("paper") or "").replace("PAPER ", "P").strip()
+    year = str(meta.get("year"))[-2:] if meta.get("year") is not None else ""
+    header_text = " ".join(value for value in (subject, paper) if value)
+    if year:
+        header_text = f"{header_text}/{year}" if header_text else year
 
     header = section.header
     p = header.paragraphs[0]
     _format_paragraph(p, align=WD_ALIGN_PARAGRAPH.RIGHT)
-    _add_text(p, f"MATHEMATICS {paper}/{year}", bold=True, size=9)
+    if header_text:
+        _add_text(p, header_text, bold=True, size=9)
 
     footer = section.footer
     _append_page_field(footer.paragraphs[0])

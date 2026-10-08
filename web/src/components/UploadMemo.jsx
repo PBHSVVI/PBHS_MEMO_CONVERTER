@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { createAndDispatchJob } from "../lib/memoService";
 import { validateMemoFile } from "../lib/jobContracts";
+import { EMPTY_TEACHER_METADATA } from "../lib/documentMetadata";
+import { DocumentDetails } from "./DocumentDetails";
 
 const STEP_COPY = {
   creating: "Creating conversion…",
@@ -12,6 +14,7 @@ const STEP_COPY = {
 export function UploadMemo({ client, user, onBack, onCreated }) {
   const [file, setFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
+  const [teacherMetadata, setTeacherMetadata] = useState(EMPTY_TEACHER_METADATA);
   const [state, setState] = useState({ busy: false, message: "", error: "" });
   const dragDepth = useRef(0);
 
@@ -80,6 +83,7 @@ export function UploadMemo({ client, user, onBack, onCreated }) {
         client,
         user,
         file,
+        teacherMetadata,
         onStep: (step) => setState({ busy: true, message: STEP_COPY[step], error: "" }),
       });
       onCreated(job);
@@ -114,6 +118,16 @@ export function UploadMemo({ client, user, onBack, onCreated }) {
               disabled={state.busy}
             />
           </label>
+          <details className="metadata-optional">
+            <summary>Document details (optional)</summary>
+            <p>Supply details only when you know them. Information printed in the memo remains authoritative.</p>
+            <DocumentDetails
+              mode="upload"
+              teacherMetadata={teacherMetadata}
+              onChange={setTeacherMetadata}
+              busy={state.busy}
+            />
+          </details>
           {state.message && <p className="notice info" aria-live="polite">{state.message}</p>}
           {state.error && <p className="notice danger" role="alert">{state.error}</p>}
           <div className="button-row">

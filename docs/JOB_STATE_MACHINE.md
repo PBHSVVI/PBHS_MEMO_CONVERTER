@@ -30,7 +30,8 @@ processing
   |  +--> failed_retryable --> dispatched
   |
   +--> needs_review
-  |       |
+  |       |\
+  |       | +--> phase8_1b_metadata_review --> dispatched
   |       v
   |   correction_pending
   |       |
@@ -59,7 +60,10 @@ complete
 8. Rendering/glyph preflight must pass before `complete`.
 9. Every transition creates an audit event.
 10. Duplicate workflow dispatch must not create duplicate processing.
+11. Missing required cover details use one `phase8_1b_metadata_review` stage.
+12. Authenticated metadata submission may resume only that dedicated review stage.
+13. Completed jobs remain immutable; document-detail changes require a revised conversion.
 
 ## Retry model
 
-Retries preserve the same `job_id`, increment `attempt_count`, reuse cached successful work and never overwrite a confirmed teacher correction silently.
+Retries preserve the same `job_id`, increment `attempt_count`, reuse cached successful work and never overwrite a confirmed teacher correction silently. Stored teacher metadata and its revision are also reused; explicit source metadata is re-extracted and remains authoritative.

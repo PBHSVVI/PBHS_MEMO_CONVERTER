@@ -56,7 +56,10 @@ describe("conversion creation", () => {
       expect.objectContaining({ upsert: false, contentType: "application/pdf" }),
     );
     expect(client.spies.invoke).toHaveBeenCalledWith("dispatch-memo", {
-      body: { job_id: job.id },
+      body: {
+        job_id: job.id,
+        teacher_metadata: { schema_version: "1.0", values: {}, confirmed_absent: [] },
+      },
     });
     expect(result.status).toBe("dispatched");
   });

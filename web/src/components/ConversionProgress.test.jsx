@@ -36,6 +36,53 @@ describe("conversion outcomes", () => {
     expect(link.href).toContain(`job_id=${job.id}`);
   });
 
+
+
+  it("shows one metadata review card and submits normalized teacher details", async () => {
+    const canonical = {
+      document_metadata: { paper: "PAPER 2", grade_label: null, duration_minutes: null },
+      audit: {
+        metadata_resolution: {
+          fields: {
+            paper: { selected_provenance: "source" },
+            grade_label: { selected_provenance: "absent", confirmed_absent: false },
+            duration_minutes: { selected_provenance: "absent", confirmed_absent: false },
+          },
+        },
+      },
+    };
+    const job = {
+      ...base,
+      status: "needs_review",
+      stage: "phase8_1b_metadata_review",
+      teacher_metadata: { schema_version: "1.0", values: {}, confirmed_absent: [] },
+    };
+    const client = clientFor(job);
+    client.storage.from = vi.fn(() => ({
+      download: vi.fn(async () => ({
+        data: new Blob([JSON.stringify(canonical)], { type: "application/json" }),
+        error: null,
+      })),
+    }));
+    render(<ConversionProgress client={client} user={user} initialJob={job} onBack={() => {}} />);
+    expect(await screen.findByRole("heading", { name: "Document details need attention" })).toBeInTheDocument();
+    expect(screen.getByText("PAPER 2")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Form 5"), { target: { value: "Form 5" } });
+    fireEvent.change(screen.getByLabelText("Time allocation value"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply details" }));
+    await waitFor(() => expect(client.functions.invoke).toHaveBeenCalledWith("dispatch-memo", {
+      body: {
+        job_id: job.id,
+        teacher_metadata: {
+          schema_version: "1.0",
+          values: { grade_label: "Form 5", duration_minutes: 180 },
+          confirmed_absent: [],
+        },
+      },
+    }));
+    expect(screen.queryByRole("link", { name: "Review memo" })).not.toBeInTheDocument();
+  });
+
   it("shows both private download actions for a complete job", async () => {
     const job = { ...base, status: "complete" };
     render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} />);

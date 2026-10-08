@@ -18,6 +18,9 @@ from engine.src.memo_engine.renderer import (
     RenderingError,
     _all_math_variants,
     _append_omml,
+    _configure_section,
+    _cover,
+    _format_duration,
     _extract_pandoc_math_bank,
     _math_bank_markers,
     _math_display_parts,
@@ -157,6 +160,33 @@ def _pandoc_xml_fixture(
 
 
 class Phase6RendererTests(unittest.TestCase):
+    def test_duration_formatting_is_deterministic(self) -> None:
+        self.assertEqual(_format_duration(60), "1 HOUR")
+        self.assertEqual(_format_duration(90), "1½ HOURS")
+        self.assertEqual(_format_duration(120), "2 HOURS")
+        self.assertEqual(_format_duration(180), "3 HOURS")
+
+    def test_null_metadata_does_not_invent_cover_or_header_values(self) -> None:
+        canonical = _canonical()
+        canonical["document_metadata"].update({
+            "exam_type": None,
+            "year": None,
+            "subject": None,
+            "paper": None,
+            "grade_label": None,
+            "duration_minutes": None,
+        })
+        document = Document()
+        _configure_section(document, canonical)
+        _cover(document, canonical, 2)
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        header = "\n".join(paragraph.text for paragraph in document.sections[0].header.paragraphs)
+        self.assertNotIn("PAPER 1", text + header)
+        self.assertNotIn("PREPARATORY EXAMINATION", text + header)
+        self.assertNotIn("2026", text + header)
+        self.assertNotIn("TIME:", text)
+        self.assertIn("MARKS: 1", text)
+
     def test_rejects_non_render_ready(self) -> None:
         with self.assertRaises(RenderingError) as cm:
             render_outputs(_canonical("blocked"), b"", tempfile.mkdtemp())

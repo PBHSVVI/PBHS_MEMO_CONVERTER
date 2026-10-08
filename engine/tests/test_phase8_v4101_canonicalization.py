@@ -32,13 +32,15 @@ def _question(qid: str, marks: int, source_block_index: int | str | None) -> dic
     }
 
 
-def _build(structure: dict, pages: list[str]):
+def _build(structure: dict, pages: list[str], job_overrides: dict | None = None):
+    job = {
+        "id": "pilot-job",
+        "source_filename": "pilot.pdf",
+        "source_mime": "application/pdf",
+    }
+    job.update(job_overrides or {})
     return build_canonical_memo(
-        {
-            "id": "pilot-job",
-            "source_filename": "pilot.pdf",
-            "source_mime": "application/pdf",
-        },
+        job,
         {"source": {"sha256": "a" * 64, "detected_mime": "application/pdf"}},
         {
             "job_id": "pilot-job",
@@ -139,3 +141,52 @@ def test_source_backed_and_renamed_questions_keep_source_segmentation():
     assert normal_item["alternatives"][0]["blocks"][0]["source_refs"]
     assert renamed_item["alternatives"][0]["blocks"][0]["source_refs"]
     assert "Original source working" in renamed_item["alternatives"][0]["blocks"][0]["text"]
+
+
+def test_paper2_missing_metadata_uses_one_review_then_teacher_fallback():
+    structure = {
+        "questions": [_question("1.1", 1, 0)],
+        "subtotals": [{"block_index": 0, "value": 1}],
+        "exceptions": [],
+    }
+    pages = ["PREPARATORY EXAMINATION MATHEMATICS PAPER 2 2026\n1.1 Answer [1]\nTOTAL: 1"]
+    empty_metadata = {
+        "teacher_metadata": {
+            "schema_version": "1.0",
+            "values": {},
+            "confirmed_absent": [],
+        },
+        "teacher_metadata_revision": 1,
+    }
+
+    memo, _, issues = _build(structure, pages, empty_metadata)
+    metadata_issues = [
+        issue for issue in issues
+        if issue["category"] == "missing_document_metadata"
+    ]
+    assert len(metadata_issues) == 1
+    assert metadata_issues[0]["suggestions"] == [{
+        "missing_fields": ["grade_label", "duration_minutes"],
+    }]
+    assert memo["document_metadata"]["grade_label"] is None
+    assert memo["document_metadata"]["duration_minutes"] is None
+    assert memo["totals"]["computed"] == 1
+
+    supplied = {
+        "teacher_metadata": {
+            "schema_version": "1.0",
+            "values": {"grade_label": "FORM 5", "duration_minutes": 180},
+            "confirmed_absent": [],
+        },
+        "teacher_metadata_revision": 2,
+    }
+    memo, _, issues = _build(structure, pages, supplied)
+    assert not any(issue["category"] == "missing_document_metadata" for issue in issues)
+    assert memo["document_metadata"]["grade_label"] == "FORM 5"
+    assert memo["document_metadata"]["duration_minutes"] == 180
+    audit = memo["audit"]["metadata_resolution"]["fields"]
+    assert audit["grade_label"]["selected_provenance"] == "teacher"
+    assert audit["duration_minutes"]["selected_provenance"] == "teacher"
+    assert audit["paper"]["selected_provenance"] == "source"
+    assert audit["year"]["selected_provenance"] == "source"
+    assert memo["totals"]["computed"] == 1

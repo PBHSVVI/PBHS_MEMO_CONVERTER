@@ -83,6 +83,83 @@
     "updated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "teacher_metadata": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "values",
+        "confirmed_absent"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "values": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "paper": {
+              "type": "string",
+              "enum": [
+                "PAPER 1",
+                "PAPER 2"
+              ]
+            },
+            "exam_type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "year": {
+              "type": "integer",
+              "minimum": 2000,
+              "maximum": 2100
+            },
+            "grade_label": {
+              "type": "string",
+              "pattern": "^(FORM|GRADE) ([1-9]|1[0-3])$"
+            },
+            "duration_minutes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 720
+            }
+          },
+          "additionalProperties": false
+        },
+        "confirmed_absent": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "subject",
+              "paper",
+              "exam_type",
+              "year",
+              "grade_label",
+              "duration_minutes"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "teacher_metadata_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "teacher_metadata_updated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
     }
   },
   "additionalProperties": true
