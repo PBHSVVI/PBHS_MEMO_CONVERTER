@@ -36,6 +36,20 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class AcceptanceFailure(RuntimeError):
     """A sanitized acceptance failure safe for a public workflow log."""
 
+    def __init__(
+        self,
+        code: str,
+        *,
+        phase: str = "acceptance",
+        diagnostics: dict[str, Any] | None = None,
+        report: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.phase = phase
+        self.diagnostics = diagnostics or {}
+        self.report = report
+
 
 class ReadOnlySupabase:
     """Minimum private-read client for hosted acceptance.
@@ -122,9 +136,15 @@ class ReadOnlySupabase:
         return rows if isinstance(rows, list) else []
 
 
-def _require(condition: bool, code: str) -> None:
+def _require(
+    condition: bool,
+    code: str,
+    *,
+    phase: str = "acceptance",
+    diagnostics: dict[str, Any] | None = None,
+) -> None:
     if not condition:
-        raise AcceptanceFailure(code)
+        raise AcceptanceFailure(code, phase=phase, diagnostics=diagnostics)
 
 
 def _semantic_signature(structure: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
@@ -525,6 +545,7 @@ def _assert_sanitized_report(report: dict[str, Any]) -> None:
     forbidden_keys = {
         "text", "source_text", "typed_text", "display_text", "proposed_patch",
         "message", "suggestions", "secret", "token", "correction_bodies",
+        "canonical",
     }
     secret_markers = (
         "sb_secret_", "service_role", "github_token", "groq_api_key",
@@ -552,19 +573,164 @@ def _assert_sanitized_report(report: dict[str, Any]) -> None:
     inspect(report)
 
 
-def run_phase81a_acceptance(
+def _safe_open_exception_summary(canonical: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the only exception fields permitted in public acceptance logs."""
+    return [
+        {
+            "category": item.get("category"),
+            "level": item.get("level"),
+            "affected_ids": [str(value) for value in (item.get("affected_ids") or [])],
+            "status": item.get("status"),
+        }
+        for item in _open_exceptions(canonical)
+    ]
+
+
+def _safe_media_diagnostics(
+    normalized: dict[str, Any], canonical: dict[str, Any]
+) -> dict[str, Any]:
+    """Summarize media without source metadata, object names, or binary details."""
+    entities = list((normalized.get("content") or {}).get("media_entities") or [])
+    figures = _figure_ownership(canonical)
+    substantive = [
+        item for item in figures if item.get("media_class") == "substantive_figure"
+    ]
+    contextual = [
+        item for item in figures if item.get("media_class") == "contextual_raster"
+    ]
+    return {
+        "normalized_media_count": len(entities),
+        "canonical_figure_count": len(figures),
+        "substantive_figure_count": len(substantive),
+        "contextual_raster_count": len(contextual),
+        "owner_identifiers": sorted({str(item.get("owner")) for item in figures}),
+    }
+
+
+def _pass1_failure_diagnostics(pass1: dict[str, Any]) -> dict[str, Any]:
+    canonical = pass1["canonical"]
+    validation = pass1["validation"]
+    open_exceptions = _safe_open_exception_summary(canonical)
+    return {
+        "pass1": {
+            "canonical_status": canonical.get("status"),
+            "validation_passed": validation.get("passed") is True,
+            "validation_core_invariants_passed": (
+                validation.get("core_invariants_passed") is True
+            ),
+            "validation_error_codes": list(validation.get("error_codes") or []),
+            "computed_total": (canonical.get("totals") or {}).get("computed"),
+            "semantic_cache_mode": pass1.get("cache_mode"),
+            "interpreter_run_count": len(
+                (pass1.get("semantic") or {}).get("interpreter_runs") or []
+            ),
+            "open_exception_count": len(open_exceptions),
+            "open_exceptions": open_exceptions,
+            "media": _safe_media_diagnostics(pass1["normalized"], canonical),
+        }
+    }
+
+
+def _snapshot_counts(snapshot: dict[str, Any]) -> dict[str, int]:
+    corrections = list(snapshot.get("corrections") or [])
+    return {
+        "confirmed": sum(
+            1 for row in corrections
+            if row.get("confirmation_status") == "confirmed"
+        ),
+        "total": len(corrections),
+        "events": len(snapshot.get("events") or []),
+    }
+
+
+def _immutability_report(
+    before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    before_counts = _snapshot_counts(before)
+    after_counts = _snapshot_counts(after)
+    return {
+        "job_state_unchanged": before.get("job") == after.get("job"),
+        "correction_state_unchanged": (
+            before.get("corrections") == after.get("corrections")
+        ),
+        "event_state_unchanged": before.get("events") == after.get("events"),
+        "output_hashes_unchanged": (
+            before.get("output_hashes") == after.get("output_hashes")
+        ),
+        "confirmed_correction_count_before": before_counts["confirmed"],
+        "confirmed_correction_count_after": after_counts["confirmed"],
+        "total_correction_row_count_before": before_counts["total"],
+        "total_correction_row_count_after": after_counts["total"],
+        "event_count_before": before_counts["events"],
+        "event_count_after": after_counts["events"],
+    }
+
+
+def _failure_report(
+    failure: AcceptanceFailure,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    report = {
+        "acceptance": "failed",
+        "failure_code": failure.code,
+        "phase": failure.phase,
+        "source_mutated": before != after,
+        **copy.deepcopy(failure.diagnostics),
+        "immutability": _immutability_report(before, after),
+    }
+    _assert_sanitized_report(report)
+    return report
+
+
+def _run_with_immutability(
+    client: ReadOnlySupabase,
+    source_job_id: str,
+    operation: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    """Run acceptance and always compare a fresh snapshot after execution starts."""
+    before = _snapshot(client, source_job_id)
+    result: dict[str, Any] | None = None
+    failure: AcceptanceFailure | None = None
+    try:
+        result = operation(before)
+    except AcceptanceFailure as exc:
+        failure = exc
+    except Exception as exc:
+        failure = AcceptanceFailure("ACCEPTANCE_RUNTIME_FAILURE")
+        failure.__cause__ = exc
+
+    try:
+        after = _snapshot(client, source_job_id)
+    except Exception as exc:
+        snapshot_failure = AcceptanceFailure("POST_RUN_SNAPSHOT_FAILED")
+        snapshot_failure.__cause__ = exc
+        raise snapshot_failure
+
+    if before != after:
+        failure = AcceptanceFailure(
+            "LIVE_SOURCE_MUTATION_DETECTED", phase="immutability"
+        )
+
+    if failure is not None:
+        failure.report = _failure_report(failure, before, after)
+        raise failure
+
+    assert result is not None
+    result["acceptance"] = "passed"
+    result["source_mutated"] = False
+    result["immutability"] = _immutability_report(before, after)
+    _assert_sanitized_report(result)
+    return result
+
+
+def _execute_phase81a_acceptance(
     source_job_id: str,
     *,
-    client: ReadOnlySupabase | None = None,
+    readonly: ReadOnlySupabase,
+    before: dict[str, Any],
     renderer: Callable[[dict[str, Any], bytes, str | Path], dict[str, Any]] = render_outputs,
 ) -> dict[str, Any]:
-    try:
-        uuid.UUID(source_job_id)
-    except ValueError as exc:
-        raise AcceptanceFailure("SOURCE_JOB_ID_INVALID") from exc
-
-    readonly = client or ReadOnlySupabase()
-    before = _snapshot(readonly, source_job_id)
     job = readonly.get_job(source_job_id)
     _require(job.get("status") == "complete" and job.get("stage") == "complete", "SOURCE_JOB_NOT_COMPLETE")
     source_path = validate_source_path(job)
@@ -576,98 +742,149 @@ def run_phase81a_acceptance(
     cached_semantic = readonly.download_json(BUCKET, semantic_path)
 
     pass1 = _run_replay(job, source_bytes, corrections, cached_semantic)
-    _require(not pass1["application_issues"], "PASS1_CORRECTION_APPLICATION_ISSUE")
-    pass1_corrections = _validate_correction_overlay(
-        pass1["structure"], len(corrections)
+    pass1_diagnostics = _pass1_failure_diagnostics(pass1)
+    _require(
+        not pass1["application_issues"],
+        "PASS1_CORRECTION_APPLICATION_ISSUE",
+        phase="pass1",
+        diagnostics=pass1_diagnostics,
     )
+    try:
+        pass1_corrections = _validate_correction_overlay(
+            pass1["structure"], len(corrections)
+        )
+    except AcceptanceFailure as exc:
+        exc.phase = "pass1"
+        exc.diagnostics = pass1_diagnostics
+        raise
     pass1_open = _open_exceptions(pass1["canonical"])
     geometry = [
         item for item in pass1_open
         if item.get("category") == GEOMETRY_CATEGORY
         and GEOMETRY_AFFECTED_ID in (item.get("affected_ids") or [])
     ]
-    _require(len(pass1_open) == 1 and len(geometry) == 1, "PASS1_REVIEW_SET_UNEXPECTED")
-    _require(pass1["canonical"].get("status") == "needs_review", "PASS1_NOT_REVIEW_REQUIRED")
-    _require(pass1["canonical"].get("totals", {}).get("computed") == 150, "PASS1_TOTAL_MISMATCH")
-    media = _media_acceptance(pass1["normalized"], pass1["canonical"])
+    _require(
+        len(pass1_open) == 1 and len(geometry) == 1,
+        "PASS1_REVIEW_SET_UNEXPECTED",
+        phase="pass1",
+        diagnostics=pass1_diagnostics,
+    )
+    _require(
+        pass1["canonical"].get("status") == "needs_review",
+        "PASS1_NOT_REVIEW_REQUIRED",
+        phase="pass1",
+        diagnostics=pass1_diagnostics,
+    )
+    _require(
+        pass1["canonical"].get("totals", {}).get("computed") == 150,
+        "PASS1_TOTAL_MISMATCH",
+        phase="pass1",
+        diagnostics=pass1_diagnostics,
+    )
+    try:
+        media = _media_acceptance(pass1["normalized"], pass1["canonical"])
+    except AcceptanceFailure as exc:
+        exc.phase = "pass1"
+        exc.diagnostics = pass1_diagnostics
+        raise
 
     ephemeral = _ephemeral_geometry_correction(pass1["canonical"])
     pass2 = _run_replay(
         job, source_bytes, [*corrections, ephemeral], cached_semantic
     )
-    _require(not pass2["application_issues"], "PASS2_CORRECTION_APPLICATION_ISSUE")
-    pass2_corrections = _validate_correction_overlay(
-        pass2["structure"], len(corrections) + 1
+    _require(
+        not pass2["application_issues"],
+        "PASS2_CORRECTION_APPLICATION_ISSUE",
+        phase="pass2",
     )
-    _require(not _open_exceptions(pass2["canonical"]), "PASS2_REVIEW_REMAINS")
-    _require(pass2["canonical"].get("status") == "render_ready", "PASS2_NOT_RENDER_READY")
-    _require(pass2["validation"].get("passed") is True, "PASS2_VALIDATION_FAILED")
-    _require(pass2["canonical"].get("totals", {}).get("computed") == 150, "PASS2_TOTAL_MISMATCH")
+    try:
+        pass2_corrections = _validate_correction_overlay(
+            pass2["structure"], len(corrections) + 1
+        )
+    except AcceptanceFailure as exc:
+        exc.phase = "pass2"
+        raise
+    _require(
+        not _open_exceptions(pass2["canonical"]),
+        "PASS2_REVIEW_REMAINS",
+        phase="pass2",
+    )
+    _require(
+        pass2["canonical"].get("status") == "render_ready",
+        "PASS2_NOT_RENDER_READY",
+        phase="pass2",
+    )
+    _require(
+        pass2["validation"].get("passed") is True,
+        "PASS2_VALIDATION_FAILED",
+        phase="pass2",
+    )
+    _require(
+        pass2["canonical"].get("totals", {}).get("computed") == 150,
+        "PASS2_TOTAL_MISMATCH",
+        phase="pass2",
+    )
     _require(
         _non_target_content_fingerprint(pass1["canonical"], GEOMETRY_AFFECTED_ID)
         == _non_target_content_fingerprint(pass2["canonical"], GEOMETRY_AFFECTED_ID),
         "PASS2_CHANGED_UNRELATED_CONTENT",
+        phase="pass2",
     )
 
-    with tempfile.TemporaryDirectory(prefix="phase81a-readonly-") as temp_dir:
-        rendered = renderer(pass2["canonical"], source_bytes, temp_dir)
-        docx_path = Path(rendered["docx_path"])
-        pdf_path = Path(rendered["pdf_path"])
-        media_counts = _rendered_source_media(docx_path, pass2["canonical"])
-        substantive_ids = {
-            item["asset_id"] for item in _figure_ownership(pass2["canonical"])
-            if item.get("media_class") == "substantive_figure"
-        }
-        contextual_ids = {
-            item["asset_id"] for item in _figure_ownership(pass2["canonical"])
-            if item.get("media_class") == "contextual_raster"
-        }
-        _require(all(media_counts.get(asset_id) == 1 for asset_id in substantive_ids), "RENDERED_SUBSTANTIVE_MEDIA_MISMATCH")
-        _require(all(media_counts.get(asset_id) == 1 for asset_id in contextual_ids), "RENDERED_CONTEXTUAL_MEDIA_MISMATCH")
-        _require(rendered["docx_preflight"].get("passed") is True, "DOCX_PREFLIGHT_FAILED")
-        _require(rendered["pdf_preflight"].get("passed") is True, "PDF_PREFLIGHT_FAILED")
-        _require(_cover_page_count_matches(docx_path, int(rendered["page_count"])), "COVER_PAGE_COUNT_MISMATCH")
-        q72 = _find_item(pass2["canonical"], "7.2")
-        q72_math_count = sum(
-            1 for block in _iter_blocks([q72] if q72 else [])
-            if block.get("type") == "math"
-        )
-        _require(q72_math_count > 0, "Q72_NATIVE_MATH_MISSING")
-        _require(
-            int(rendered["docx_preflight"].get("native_math_elements") or 0)
-            >= int(rendered["docx_preflight"].get("expected_math_blocks") or 0),
-            "NATIVE_MATH_COUNT_MISMATCH",
-        )
-        render_summary = {
-            "docx_generated": docx_path.exists() and docx_path.stat().st_size > 0,
-            "pdf_generated": pdf_path.exists() and pdf_path.stat().st_size > 0,
-            "docx_size_bytes": docx_path.stat().st_size,
-            "pdf_size_bytes": pdf_path.stat().st_size,
-            "docx_preflight_passed": True,
-            "pdf_preflight_passed": True,
-            "native_math_elements": rendered["docx_preflight"].get("native_math_elements"),
-            "expected_math_blocks": rendered["docx_preflight"].get("expected_math_blocks"),
-            "page_count": int(rendered["page_count"]),
-            "cover_page_count_matches": True,
-            "substantive_figures_rendered": len(substantive_ids),
-            "contextual_rasters_rendered": len(contextual_ids),
-            "duplicate_figure_emission": False,
-            "q72_native_math_preserved": True,
-        }
-
-    after = _snapshot(readonly, source_job_id)
-    _require(before == after, "LIVE_SOURCE_MUTATION_DETECTED")
-    after_correction_counts = {
-        "confirmed": sum(
-            1 for row in after["corrections"]
-            if row.get("confirmation_status") == "confirmed"
-        ),
-        "total": len(after["corrections"]),
-    }
+    try:
+        with tempfile.TemporaryDirectory(prefix="phase81a-readonly-") as temp_dir:
+            rendered = renderer(pass2["canonical"], source_bytes, temp_dir)
+            docx_path = Path(rendered["docx_path"])
+            pdf_path = Path(rendered["pdf_path"])
+            media_counts = _rendered_source_media(docx_path, pass2["canonical"])
+            substantive_ids = {
+                item["asset_id"] for item in _figure_ownership(pass2["canonical"])
+                if item.get("media_class") == "substantive_figure"
+            }
+            contextual_ids = {
+                item["asset_id"] for item in _figure_ownership(pass2["canonical"])
+                if item.get("media_class") == "contextual_raster"
+            }
+            _require(all(media_counts.get(asset_id) == 1 for asset_id in substantive_ids), "RENDERED_SUBSTANTIVE_MEDIA_MISMATCH", phase="render")
+            _require(all(media_counts.get(asset_id) == 1 for asset_id in contextual_ids), "RENDERED_CONTEXTUAL_MEDIA_MISMATCH", phase="render")
+            _require(rendered["docx_preflight"].get("passed") is True, "DOCX_PREFLIGHT_FAILED", phase="render")
+            _require(rendered["pdf_preflight"].get("passed") is True, "PDF_PREFLIGHT_FAILED", phase="render")
+            _require(_cover_page_count_matches(docx_path, int(rendered["page_count"])), "COVER_PAGE_COUNT_MISMATCH", phase="render")
+            q72 = _find_item(pass2["canonical"], "7.2")
+            q72_math_count = sum(
+                1 for block in _iter_blocks([q72] if q72 else [])
+                if block.get("type") == "math"
+            )
+            _require(q72_math_count > 0, "Q72_NATIVE_MATH_MISSING", phase="render")
+            _require(
+                int(rendered["docx_preflight"].get("native_math_elements") or 0)
+                >= int(rendered["docx_preflight"].get("expected_math_blocks") or 0),
+                "NATIVE_MATH_COUNT_MISMATCH",
+                phase="render",
+            )
+            render_summary = {
+                "docx_generated": docx_path.exists() and docx_path.stat().st_size > 0,
+                "pdf_generated": pdf_path.exists() and pdf_path.stat().st_size > 0,
+                "docx_size_bytes": docx_path.stat().st_size,
+                "pdf_size_bytes": pdf_path.stat().st_size,
+                "docx_preflight_passed": True,
+                "pdf_preflight_passed": True,
+                "native_math_elements": rendered["docx_preflight"].get("native_math_elements"),
+                "expected_math_blocks": rendered["docx_preflight"].get("expected_math_blocks"),
+                "page_count": int(rendered["page_count"]),
+                "cover_page_count_matches": True,
+                "substantive_figures_rendered": len(substantive_ids),
+                "contextual_rasters_rendered": len(contextual_ids),
+                "duplicate_figure_emission": False,
+                "q72_native_math_preserved": True,
+            }
+    except AcceptanceFailure:
+        raise
+    except Exception as exc:
+        raise AcceptanceFailure("RENDER_EXECUTION_FAILED", phase="render") from exc
 
     report = {
         "source_job_id": source_job_id,
-        "source_mutated": False,
         "live_confirmed_correction_count": before_correction_counts["confirmed"],
         "live_total_correction_row_count": before_correction_counts["total"],
         "pass1": {
@@ -692,19 +909,32 @@ def run_phase81a_acceptance(
             "correction_history": pass2_corrections,
             **render_summary,
         },
-        "immutability": {
-            "job_state_unchanged": True,
-            "correction_state_unchanged": True,
-            "event_state_unchanged": True,
-            "output_hashes_unchanged": True,
-            "confirmed_correction_count_before": before_correction_counts["confirmed"],
-            "confirmed_correction_count_after": after_correction_counts["confirmed"],
-            "total_correction_row_count_before": before_correction_counts["total"],
-            "total_correction_row_count_after": after_correction_counts["total"],
-        },
     }
-    _assert_sanitized_report(report)
     return report
+
+
+def run_phase81a_acceptance(
+    source_job_id: str,
+    *,
+    client: ReadOnlySupabase | None = None,
+    renderer: Callable[[dict[str, Any], bytes, str | Path], dict[str, Any]] = render_outputs,
+) -> dict[str, Any]:
+    try:
+        uuid.UUID(source_job_id)
+    except ValueError as exc:
+        raise AcceptanceFailure("SOURCE_JOB_ID_INVALID") from exc
+
+    readonly = client or ReadOnlySupabase()
+    return _run_with_immutability(
+        readonly,
+        source_job_id,
+        lambda before: _execute_phase81a_acceptance(
+            source_job_id,
+            readonly=readonly,
+            before=before,
+            renderer=renderer,
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -715,7 +945,17 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             "Usage: python -m engine.src.memo_engine.acceptance phase81a-replay <source_job_id>"
         )
-    report = run_phase81a_acceptance(args[1])
+    try:
+        report = run_phase81a_acceptance(args[1])
+    except AcceptanceFailure as exc:
+        report = exc.report or {
+            "acceptance": "failed",
+            "failure_code": exc.code,
+            "phase": exc.phase,
+        }
+        _assert_sanitized_report(report)
+        print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+        return 1
     print(json.dumps(report, sort_keys=True, separators=(",", ":")))
     return 0
 

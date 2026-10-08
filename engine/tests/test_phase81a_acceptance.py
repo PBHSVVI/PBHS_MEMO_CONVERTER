@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,13 @@ from engine.src.memo_engine.acceptance import (
     _confirmed_replay_rows,
     _correction_counts,
     _ephemeral_geometry_correction,
+    _failure_report,
+    _immutability_report,
     _media_acceptance,
     _open_exceptions,
+    _pass1_failure_diagnostics,
     _require,
+    _run_with_immutability,
 )
 from engine.src.memo_engine.corrections import apply_confirmed_corrections
 
@@ -285,6 +290,197 @@ def test_sanitized_report_rejects_source_text_and_secret_markers():
         _assert_sanitized_report({"source_text": "learner content"})
     with pytest.raises(AcceptanceFailure, match="SANITIZED_REPORT_SECRET_MARKER"):
         _assert_sanitized_report({"value": "sb_secret_example"})
+
+
+def _immutable_snapshot() -> dict:
+    return {
+        "job": {"status": "complete", "stage": "complete"},
+        "corrections": [
+            {"id": "confirmed", "confirmation_status": "confirmed"},
+            {"id": "rejected", "confirmation_status": "rejected"},
+        ],
+        "events": [{"id": "event-1"}],
+        "output_hashes": {"docx": "docx-hash", "pdf": "pdf-hash"},
+    }
+
+
+def test_pass1_failure_diagnostics_are_bounded_and_teacher_content_free(monkeypatch):
+    canonical = {
+        "status": "needs_review",
+        "totals": {"computed": 150},
+        "exceptions": [{
+            **_exception(),
+            "message": "private source wording",
+            "suggestions": [{"proposed_patch": {"typed_text": "private"}}],
+        }],
+        "questions": [],
+    }
+    pass1 = {
+        "canonical": canonical,
+        "validation": {
+            "passed": False,
+            "core_invariants_passed": True,
+            "error_codes": ["pending_review"],
+        },
+        "semantic": {"interpreter_runs": []},
+        "cache_mode": "exact",
+        "normalized": {"content": {"media_entities": [{}, {}]}},
+    }
+    monkeypatch.setattr(
+        acceptance,
+        "_figure_ownership",
+        lambda value: [
+            {"owner": "Q3", "media_class": "substantive_figure"},
+            {"owner": "Q5", "media_class": "contextual_raster"},
+        ],
+    )
+
+    diagnostics = _pass1_failure_diagnostics(pass1)
+    report = _failure_report(
+        AcceptanceFailure(
+            "PASS1_REVIEW_SET_UNEXPECTED",
+            phase="pass1",
+            diagnostics=diagnostics,
+        ),
+        _immutable_snapshot(),
+        _immutable_snapshot(),
+    )
+
+    assert report["acceptance"] == "failed"
+    assert report["failure_code"] == "PASS1_REVIEW_SET_UNEXPECTED"
+    assert report["phase"] == "pass1"
+    assert report["pass1"]["canonical_status"] == "needs_review"
+    assert report["pass1"]["validation_core_invariants_passed"] is True
+    assert report["pass1"]["validation_error_codes"] == ["pending_review"]
+    assert report["pass1"]["semantic_cache_mode"] == "exact"
+    assert report["pass1"]["open_exception_count"] == 1
+    assert report["pass1"]["open_exceptions"] == [_exception()]
+    assert report["pass1"]["media"] == {
+        "normalized_media_count": 2,
+        "canonical_figure_count": 2,
+        "substantive_figure_count": 1,
+        "contextual_raster_count": 1,
+        "owner_identifiers": ["Q3", "Q5"],
+    }
+    rendered = str(report).lower()
+    for forbidden in (
+        "private source wording", "proposed_patch", "typed_text", "suggestions"
+    ):
+        assert forbidden not in rendered
+
+
+def test_failure_reports_are_checked_by_sanitized_report_guard():
+    failure = AcceptanceFailure(
+        "PASS1_REVIEW_SET_UNEXPECTED",
+        phase="pass1",
+        diagnostics={"pass1": {"proposed_patch": {"value": "unsafe"}}},
+    )
+    with pytest.raises(AcceptanceFailure, match="SANITIZED_REPORT_FORBIDDEN_FIELD"):
+        _failure_report(failure, _immutable_snapshot(), _immutable_snapshot())
+    with pytest.raises(AcceptanceFailure, match="SANITIZED_REPORT_FORBIDDEN_FIELD"):
+        _assert_sanitized_report({"canonical": {"questions": []}})
+
+
+@pytest.mark.parametrize("phase", ["pass1", "pass2", "render"])
+def test_every_post_snapshot_phase_failure_takes_final_snapshot(
+    phase, monkeypatch
+):
+    snapshot = _immutable_snapshot()
+    snapshots = [copy.deepcopy(snapshot), copy.deepcopy(snapshot)]
+    calls = []
+
+    def take_snapshot(client, job_id):
+        calls.append(job_id)
+        return snapshots.pop(0)
+
+    monkeypatch.setattr(acceptance, "_snapshot", take_snapshot)
+
+    def fail(before):
+        raise AcceptanceFailure(f"{phase.upper()}_FAILED", phase=phase)
+
+    with pytest.raises(AcceptanceFailure) as caught:
+        _run_with_immutability(object(), JOB_ID, fail)
+
+    assert calls == [JOB_ID, JOB_ID]
+    assert caught.value.code == f"{phase.upper()}_FAILED"
+    assert caught.value.report["source_mutated"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["job"].update({"stage": "changed"}),
+        lambda value: value["corrections"].append({"id": "new"}),
+        lambda value: value["events"].append({"id": "new"}),
+        lambda value: value["output_hashes"].update({"pdf": "changed"}),
+    ],
+    ids=["job", "correction", "event", "output-hash"],
+)
+def test_live_mutation_outranks_original_acceptance_failure(mutate, monkeypatch):
+    before = _immutable_snapshot()
+    after = copy.deepcopy(before)
+    mutate(after)
+    snapshots = [before, after]
+    monkeypatch.setattr(
+        acceptance, "_snapshot", lambda client, job_id: snapshots.pop(0)
+    )
+
+    with pytest.raises(AcceptanceFailure) as caught:
+        _run_with_immutability(
+            object(),
+            JOB_ID,
+            lambda snapshot: (_ for _ in ()).throw(
+                AcceptanceFailure("PASS1_REVIEW_SET_UNEXPECTED", phase="pass1")
+            ),
+        )
+
+    assert caught.value.code == "LIVE_SOURCE_MUTATION_DETECTED"
+    assert caught.value.report["failure_code"] == "LIVE_SOURCE_MUTATION_DETECTED"
+    assert caught.value.report["phase"] == "immutability"
+    assert caught.value.report["source_mutated"] is True
+
+
+def test_immutability_counts_are_reported_for_success_and_failure(monkeypatch):
+    snapshot = _immutable_snapshot()
+    summary = _immutability_report(snapshot, copy.deepcopy(snapshot))
+    assert summary["confirmed_correction_count_before"] == 1
+    assert summary["confirmed_correction_count_after"] == 1
+    assert summary["total_correction_row_count_before"] == 2
+    assert summary["total_correction_row_count_after"] == 2
+    assert summary["event_count_before"] == 1
+    assert summary["event_count_after"] == 1
+
+    snapshots = [copy.deepcopy(snapshot), copy.deepcopy(snapshot)]
+    monkeypatch.setattr(
+        acceptance, "_snapshot", lambda client, job_id: snapshots.pop(0)
+    )
+    report = _run_with_immutability(
+        object(), JOB_ID, lambda before: {"source_job_id": JOB_ID}
+    )
+    assert report["acceptance"] == "passed"
+    assert report["immutability"] == summary
+
+
+def test_cli_prints_sanitized_failure_report_before_nonzero_exit(
+    monkeypatch, capsys
+):
+    report = {
+        "acceptance": "failed",
+        "failure_code": "PASS1_REVIEW_SET_UNEXPECTED",
+        "phase": "pass1",
+        "source_mutated": False,
+    }
+    failure = AcceptanceFailure(
+        "PASS1_REVIEW_SET_UNEXPECTED", phase="pass1", report=report
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "run_phase81a_acceptance",
+        lambda job_id: (_ for _ in ()).throw(failure),
+    )
+
+    assert acceptance.main(["phase81a-replay", JOB_ID]) == 1
+    assert json.loads(capsys.readouterr().out) == report
 
 
 def test_post_run_immutability_comparison_detects_mutation():
