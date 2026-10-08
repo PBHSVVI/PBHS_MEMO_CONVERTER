@@ -12,6 +12,7 @@ from engine.src.memo_engine.acceptance import (
     AcceptanceFailure,
     ReadOnlySupabase,
     _assert_sanitized_report,
+    _canonical_item_id,
     _confirmed_replay_rows,
     _correction_counts,
     _ephemeral_geometry_correction,
@@ -22,6 +23,7 @@ from engine.src.memo_engine.acceptance import (
     _pass1_failure_diagnostics,
     _require,
     _run_with_immutability,
+    _validate_expected_geometry_review,
 )
 from engine.src.memo_engine.corrections import apply_confirmed_corrections
 
@@ -35,7 +37,7 @@ def _exception() -> dict:
         "status": "open",
         "level": "amber",
         "category": "geometry_line_relationship_conflict",
-        "affected_ids": ["3.2"],
+        "affected_ids": ["q3_2"],
     }
 
 
@@ -46,6 +48,7 @@ def _q32_canonical() -> dict:
             "number": "3",
             "items": [{
                 "number": "3.2",
+                "item_id": "q3_2",
                 "children": [],
                 "alternatives": [{"blocks": [
                     {"type": "math", "math": {"plain_text": "mBC × mAB = -1"}},
@@ -187,11 +190,88 @@ def test_confirmed_count_change_is_rejected():
 
 
 def test_pass1_geometry_review_is_bounded_to_q32():
-    canonical = {"status": "needs_review", "exceptions": [_exception()]}
+    canonical = _q32_canonical()
+    canonical["status"] = "needs_review"
+    canonical["exceptions"] = [_exception()]
     found = _open_exceptions(canonical)
     assert len(found) == 1
     assert found[0]["category"] == "geometry_line_relationship_conflict"
-    assert found[0]["affected_ids"] == ["3.2"]
+    assert found[0]["affected_ids"] == ["q3_2"]
+    assert _canonical_item_id(canonical, "3.2") == "q3_2"
+    assert _validate_expected_geometry_review(canonical, "3.2") == "q3_2"
+
+
+def test_display_identifier_is_not_accepted_as_canonical_affected_id():
+    canonical = _q32_canonical()
+    canonical["exceptions"] = [{
+        **_exception(),
+        "affected_ids": ["3.2"],
+    }]
+    with pytest.raises(AcceptanceFailure, match="PASS1_REVIEW_SET_UNEXPECTED"):
+        _validate_expected_geometry_review(canonical, "3.2")
+
+
+def test_wrong_canonical_affected_id_fails_closed():
+    canonical = _q32_canonical()
+    canonical["exceptions"] = [{
+        **_exception(),
+        "affected_ids": ["q9_9"],
+    }]
+    with pytest.raises(AcceptanceFailure, match="PASS1_REVIEW_SET_UNEXPECTED"):
+        _validate_expected_geometry_review(canonical, "3.2")
+
+
+def test_missing_canonical_target_item_fails_safely():
+    canonical = {"questions": [], "exceptions": [_exception()]}
+    with pytest.raises(AcceptanceFailure, match="PASS1_GEOMETRY_TARGET_MISSING"):
+        _validate_expected_geometry_review(canonical, "3.2")
+
+
+@pytest.mark.parametrize("exception_count", [0, 2])
+def test_exactly_one_geometry_exception_is_required(exception_count):
+    canonical = _q32_canonical()
+    canonical["exceptions"] = [
+        {**_exception(), "id": f"geometry-{index}"}
+        for index in range(exception_count)
+    ]
+    with pytest.raises(AcceptanceFailure, match="PASS1_REVIEW_SET_UNEXPECTED"):
+        _validate_expected_geometry_review(canonical, "3.2")
+
+
+def test_extra_unrelated_open_exception_still_fails_review_set():
+    canonical = _q32_canonical()
+    canonical["exceptions"] = [
+        _exception(),
+        {
+            "status": "open",
+            "level": "amber",
+            "category": "unrelated_review",
+            "affected_ids": ["q9_1"],
+        },
+    ]
+    with pytest.raises(AcceptanceFailure, match="PASS1_REVIEW_SET_UNEXPECTED"):
+        _validate_expected_geometry_review(canonical, "3.2")
+
+
+def test_canonical_target_resolution_is_generic_for_synthetic_item():
+    canonical = {
+        "questions": [{
+            "number": "12",
+            "items": [{
+                "number": "12.1",
+                "item_id": "q12_1",
+                "children": [],
+            }],
+        }],
+        "exceptions": [{
+            "status": "open",
+            "level": "amber",
+            "category": "geometry_line_relationship_conflict",
+            "affected_ids": ["q12_1"],
+        }],
+    }
+    assert _canonical_item_id(canonical, "12.1") == "q12_1"
+    assert _validate_expected_geometry_review(canonical, "12.1") == "q12_1"
 
 
 def test_ephemeral_fix_uses_replace_item_content_and_preserves_other_lines():
@@ -200,6 +280,7 @@ def test_ephemeral_fix_uses_replace_item_content_and_preserves_other_lines():
     assert correction["confirmation_status"] == "confirmed"
     assert patch["operation"] == "replace_item_content"
     assert patch["affected_id"] == "3.2"
+    assert patch["target_id"] == "3.2"
     assert patch["solution_lines"] == [
         "mBC × mAB = -1", "BC perpendicular AB", "Unchanged explanation"
     ]

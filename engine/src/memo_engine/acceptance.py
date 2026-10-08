@@ -29,7 +29,7 @@ from .structure import extract_structure
 BUCKET = "memo-files"
 EXPECTED_PROJECT_REF = "njrqiurqljwtuqrvguhj"
 GEOMETRY_CATEGORY = "geometry_line_relationship_conflict"
-GEOMETRY_AFFECTED_ID = "3.2"
+GEOMETRY_TARGET_NUMBER = "3.2"
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
@@ -254,6 +254,50 @@ def _find_item(canonical: dict[str, Any], number: str) -> dict[str, Any] | None:
     return None
 
 
+def _canonical_item_id(canonical: dict[str, Any], number: str) -> str:
+    """Resolve a display question number to its canonical item identifier."""
+    item = _find_item(canonical, number)
+    _require(
+        item is not None,
+        "PASS1_GEOMETRY_TARGET_MISSING",
+        phase="pass1",
+    )
+    item_id = str(item.get("item_id") or "")
+    _require(
+        bool(item_id),
+        "PASS1_GEOMETRY_TARGET_CANONICAL_ID_MISSING",
+        phase="pass1",
+    )
+    return item_id
+
+
+def _validate_expected_geometry_review(
+    canonical: dict[str, Any],
+    target_number: str,
+    *,
+    diagnostics: dict[str, Any] | None = None,
+) -> str:
+    """Require one bounded geometry review using the canonical ID namespace."""
+    expected_affected_id = _canonical_item_id(canonical, target_number)
+    if diagnostics is not None:
+        pass1 = diagnostics.setdefault("pass1", {})
+        pass1["geometry_target_number"] = target_number
+        pass1["geometry_target_canonical_id"] = expected_affected_id
+    open_exceptions = _open_exceptions(canonical)
+    geometry = [
+        item for item in open_exceptions
+        if item.get("category") == GEOMETRY_CATEGORY
+        and expected_affected_id in (item.get("affected_ids") or [])
+    ]
+    _require(
+        len(open_exceptions) == 1 and len(geometry) == 1,
+        "PASS1_REVIEW_SET_UNEXPECTED",
+        phase="pass1",
+        diagnostics=diagnostics,
+    )
+    return expected_affected_id
+
+
 def _figure_ownership(canonical: dict[str, Any]) -> list[dict[str, Any]]:
     figures: list[dict[str, Any]] = []
 
@@ -385,7 +429,7 @@ def _non_target_content_fingerprint(
 
 
 def _ephemeral_geometry_correction(canonical: dict[str, Any]) -> dict[str, Any]:
-    item = _find_item(canonical, GEOMETRY_AFFECTED_ID)
+    item = _find_item(canonical, GEOMETRY_TARGET_NUMBER)
     _require(item is not None, "Q32_ITEM_MISSING")
     alternatives = item.get("alternatives", [])
     _require(len(alternatives) == 1, "Q32_ALTERNATIVE_COUNT_UNEXPECTED")
@@ -413,8 +457,8 @@ def _ephemeral_geometry_correction(canonical: dict[str, Any]) -> dict[str, Any]:
         "proposed_patch": {
             "operation": "replace_item_content",
             "category": GEOMETRY_CATEGORY,
-            "affected_id": GEOMETRY_AFFECTED_ID,
-            "target_id": GEOMETRY_AFFECTED_ID,
+            "affected_id": GEOMETRY_TARGET_NUMBER,
+            "target_id": GEOMETRY_TARGET_NUMBER,
             "question_text": None,
             "solution_lines": corrected,
         },
@@ -743,6 +787,9 @@ def _execute_phase81a_acceptance(
 
     pass1 = _run_replay(job, source_bytes, corrections, cached_semantic)
     pass1_diagnostics = _pass1_failure_diagnostics(pass1)
+    pass1_diagnostics["pass1"]["geometry_target_number"] = (
+        GEOMETRY_TARGET_NUMBER
+    )
     _require(
         not pass1["application_issues"],
         "PASS1_CORRECTION_APPLICATION_ISSUE",
@@ -757,16 +804,9 @@ def _execute_phase81a_acceptance(
         exc.phase = "pass1"
         exc.diagnostics = pass1_diagnostics
         raise
-    pass1_open = _open_exceptions(pass1["canonical"])
-    geometry = [
-        item for item in pass1_open
-        if item.get("category") == GEOMETRY_CATEGORY
-        and GEOMETRY_AFFECTED_ID in (item.get("affected_ids") or [])
-    ]
-    _require(
-        len(pass1_open) == 1 and len(geometry) == 1,
-        "PASS1_REVIEW_SET_UNEXPECTED",
-        phase="pass1",
+    geometry_target_canonical_id = _validate_expected_geometry_review(
+        pass1["canonical"],
+        GEOMETRY_TARGET_NUMBER,
         diagnostics=pass1_diagnostics,
     )
     _require(
@@ -825,8 +865,8 @@ def _execute_phase81a_acceptance(
         phase="pass2",
     )
     _require(
-        _non_target_content_fingerprint(pass1["canonical"], GEOMETRY_AFFECTED_ID)
-        == _non_target_content_fingerprint(pass2["canonical"], GEOMETRY_AFFECTED_ID),
+        _non_target_content_fingerprint(pass1["canonical"], GEOMETRY_TARGET_NUMBER)
+        == _non_target_content_fingerprint(pass2["canonical"], GEOMETRY_TARGET_NUMBER),
         "PASS2_CHANGED_UNRELATED_CONTENT",
         phase="pass2",
     )
@@ -891,7 +931,9 @@ def _execute_phase81a_acceptance(
             "review_required": True,
             "geometry_conflicts": 1,
             "exception_categories": [GEOMETRY_CATEGORY],
-            "affected_ids": [GEOMETRY_AFFECTED_ID],
+            "geometry_target_number": GEOMETRY_TARGET_NUMBER,
+            "geometry_target_canonical_id": geometry_target_canonical_id,
+            "affected_ids": [geometry_target_canonical_id],
             "cache_mode": pass1["cache_mode"],
             "interpreter_run_count": len(pass1["semantic"].get("interpreter_runs", [])),
             "computed_total": 150,
