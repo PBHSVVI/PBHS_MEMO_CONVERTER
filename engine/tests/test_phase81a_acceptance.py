@@ -19,6 +19,7 @@ from engine.src.memo_engine.acceptance import (
     _failure_report,
     _immutability_report,
     _media_acceptance,
+    _non_target_content_fingerprint,
     _open_exceptions,
     _pass1_failure_diagnostics,
     _require,
@@ -26,6 +27,10 @@ from engine.src.memo_engine.acceptance import (
     _validate_expected_geometry_review,
 )
 from engine.src.memo_engine.corrections import apply_confirmed_corrections
+from engine.src.memo_engine.geometry_validation import (
+    PERPENDICULAR_RE,
+    geometry_consistency_issues,
+)
 
 
 JOB_ID = "bc6201e2-eecf-4d95-94f4-36eeca62defe"
@@ -272,6 +277,217 @@ def test_canonical_target_resolution_is_generic_for_synthetic_item():
     }
     assert _canonical_item_id(canonical, "12.1") == "q12_1"
     assert _validate_expected_geometry_review(canonical, "12.1") == "q12_1"
+
+
+def _geometry_canonical(
+    block_texts: list[str],
+    *,
+    number: str = "3.2",
+    item_id: str = "q3_2",
+    unrelated_items: list[dict] | None = None,
+) -> dict:
+    return {
+        "audit": {"job_id": JOB_ID},
+        "questions": [{
+            "number": number.split(".")[0],
+            "items": [{
+                "number": number,
+                "item_id": item_id,
+                "children": [],
+                "alternatives": [{
+                    "blocks": [
+                        {
+                            "type": "prose",
+                            "text": value,
+                            "source_refs": [],
+                        }
+                        for value in block_texts
+                    ],
+                }],
+            }, *(unrelated_items or [])],
+        }],
+    }
+
+
+def _ephemeral_solution_lines(canonical: dict, **kwargs) -> list[str]:
+    correction = _ephemeral_geometry_correction(canonical, **kwargs)
+    return correction["proposed_patch"]["solution_lines"]
+
+
+def test_ephemeral_correction_replaces_whole_relation_inside_one_block():
+    lines = _ephemeral_solution_lines(
+        _geometry_canonical([
+            "mAB × mCD = -1",
+            "AB perpendicular AB",
+            "Unchanged",
+        ])
+    )
+    assert lines == ["mAB × mCD = -1", "AB perpendicular CD", "Unchanged"]
+
+
+def test_ephemeral_correction_spans_two_blocks_with_generic_identifiers():
+    diagnostics = {"pass1": {}}
+    lines = _ephemeral_solution_lines(
+        _geometry_canonical([
+            "mPQ × mRS = -1",
+            "∴ PQ ⊥",
+            "PQ",
+            "Unchanged",
+        ]),
+        diagnostics=diagnostics,
+    )
+    assert lines == ["mPQ × mRS = -1", "∴ PQ perpendicular RS", "Unchanged"]
+    assert diagnostics["pass1"]["individual_block_contradiction_match_count"] == 0
+    assert diagnostics["pass1"]["contradiction_match_count"] == 1
+    assert diagnostics["pass1"]["contradiction_spans_block_count"] == 2
+    assert diagnostics["pass1"]["evidence_pair_count"] == 1
+
+
+def test_ephemeral_correction_spans_three_blocks_minimally():
+    diagnostics = {"pass1": {}}
+    lines = _ephemeral_solution_lines(
+        _geometry_canonical([
+            "mPQ × mRS = -1",
+            "Before",
+            "PQ",
+            "perpendicular",
+            "PQ",
+            "After",
+        ]),
+        diagnostics=diagnostics,
+    )
+    assert lines == [
+        "mPQ × mRS = -1",
+        "Before",
+        "PQ perpendicular RS",
+        "After",
+    ]
+    assert diagnostics["pass1"]["contradiction_spans_block_count"] == 3
+    assert diagnostics["pass1"]["ephemeral_target_block_count"] == 6
+    assert diagnostics["pass1"]["ephemeral_target_block_types"] == ["prose"] * 6
+
+
+def test_ephemeral_correction_handles_reverse_side_self_contradiction():
+    lines = _ephemeral_solution_lines(
+        _geometry_canonical([
+            "mAB × mCD = -1",
+            "CD perpendicular CD",
+        ])
+    )
+    assert lines[-1] == "CD perpendicular AB"
+
+
+def test_ephemeral_correction_replaces_exactly_one_relation():
+    canonical = _geometry_canonical([
+        "mPQ × mRS = -1",
+        "PQ perpendicular PQ",
+        "Unchanged",
+    ])
+    lines = _ephemeral_solution_lines(canonical)
+    relations = list(PERPENDICULAR_RE.finditer(" ".join(lines)))
+    assert len(relations) == 1
+    assert relations[0].group(1).upper() == "PQ"
+    assert relations[0].group(2).upper() == "RS"
+
+
+def test_ephemeral_correction_fails_for_multiple_contradictions():
+    canonical = _geometry_canonical([
+        "mPQ × mRS = -1",
+        "PQ perpendicular PQ",
+        "RS perpendicular RS",
+    ])
+    with pytest.raises(AcceptanceFailure, match="Q32_EPHEMERAL_TARGET_NOT_UNIQUE"):
+        _ephemeral_geometry_correction(canonical)
+
+
+def test_ephemeral_correction_requires_exactly_one_target_item():
+    canonical = _geometry_canonical([
+        "mPQ × mRS = -1",
+        "PQ perpendicular PQ",
+    ])
+    canonical["questions"][0]["items"].append(
+        copy.deepcopy(canonical["questions"][0]["items"][0])
+    )
+    with pytest.raises(AcceptanceFailure, match="Q32_ITEM_NOT_UNIQUE"):
+        _ephemeral_geometry_correction(canonical)
+
+
+def test_ephemeral_correction_fails_for_self_gradient_evidence():
+    canonical = _geometry_canonical([
+        "mPQ × mPQ = -1",
+        "PQ perpendicular PQ",
+    ])
+    with pytest.raises(AcceptanceFailure, match="Q32_EPHEMERAL_EVIDENCE_NOT_UNIQUE"):
+        _ephemeral_geometry_correction(canonical)
+
+
+def test_ephemeral_correction_fails_without_gradient_evidence():
+    canonical = _geometry_canonical(["PQ perpendicular PQ"])
+    with pytest.raises(AcceptanceFailure, match="Q32_EPHEMERAL_EVIDENCE_NOT_UNIQUE"):
+        _ephemeral_geometry_correction(canonical)
+
+
+def test_ephemeral_correction_fails_for_ambiguous_gradient_evidence():
+    canonical = _geometry_canonical([
+        "mPQ × mRS = -1",
+        "mPQ × mTU = -1",
+        "PQ perpendicular PQ",
+    ])
+    with pytest.raises(AcceptanceFailure, match="Q32_EPHEMERAL_EVIDENCE_NOT_UNIQUE"):
+        _ephemeral_geometry_correction(canonical)
+
+
+def test_ephemeral_correction_preserves_unrelated_components_and_input():
+    canonical = _geometry_canonical([
+        "Opening",
+        "mPQ × mRS = -1",
+        "∴ PQ ⊥",
+        "PQ",
+        "Closing",
+    ])
+    original = copy.deepcopy(canonical)
+    lines = _ephemeral_solution_lines(canonical)
+    assert lines[0] == "Opening"
+    assert lines[-1] == "Closing"
+    assert lines[1] == "mPQ × mRS = -1"
+    assert canonical == original
+
+
+def test_ephemeral_solution_resolves_geometry_fixture_through_content_operation():
+    canonical = _geometry_canonical([
+        "mPQ × mRS = -1",
+        "PQ perpendicular PQ",
+    ])
+    correction = _ephemeral_geometry_correction(canonical)
+    patch = correction["proposed_patch"]
+    corrected = _geometry_canonical(patch["solution_lines"])
+    assert patch["operation"] == "replace_item_content"
+    assert patch["affected_id"] == "3.2"
+    assert patch["target_id"] == "3.2"
+    assert geometry_consistency_issues(corrected) == []
+
+
+def test_ephemeral_generation_preserves_non_target_fingerprint():
+    unrelated = {
+        "number": "9.1",
+        "item_id": "q9_1",
+        "children": [],
+        "alternatives": [{"blocks": [{"type": "prose", "text": "Untouched"}]}],
+    }
+    canonical = _geometry_canonical(
+        ["mPQ × mRS = -1", "PQ perpendicular PQ"],
+        unrelated_items=[unrelated],
+    )
+    before = _non_target_content_fingerprint(canonical, "3.2")
+    _ephemeral_geometry_correction(canonical)
+    after = _non_target_content_fingerprint(canonical, "3.2")
+    assert before == after
+
+
+def test_ephemeral_matcher_contains_no_benchmark_line_names():
+    source = inspect.getsource(_ephemeral_geometry_correction)
+    assert "BC" not in source
+    assert "AB" not in source
 
 
 def test_ephemeral_fix_uses_replace_item_content_and_preserves_other_lines():

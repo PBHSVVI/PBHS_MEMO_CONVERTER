@@ -18,6 +18,7 @@ from docx import Document
 
 from .canonical import _iter_blocks, build_canonical_memo, validate_canonical
 from .corrections import apply_confirmed_corrections, attach_correction_audit
+from .geometry_validation import GRADIENT_PRODUCT_RE, PERPENDICULAR_RE
 from .ingestion import ingest_bytes, validate_source_path
 from .normalization import normalize_source
 from .phase7_5 import enrich_structure_phase7_5
@@ -237,32 +238,39 @@ def _validate_correction_overlay(
     }
 
 
-def _find_item(canonical: dict[str, Any], number: str) -> dict[str, Any] | None:
-    def visit(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _find_items(canonical: dict[str, Any], number: str) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+
+    def visit(items: list[dict[str, Any]]) -> None:
         for item in items:
             if str(item.get("number")) == number:
-                return item
-            match = visit(item.get("children", []))
-            if match is not None:
-                return match
-        return None
+                matches.append(item)
+            visit(item.get("children", []))
 
     for question in canonical.get("questions", []):
-        match = visit(question.get("items", []))
-        if match is not None:
-            return match
-    return None
+        visit(question.get("items", []))
+    return matches
+
+
+def _find_item(canonical: dict[str, Any], number: str) -> dict[str, Any] | None:
+    matches = _find_items(canonical, number)
+    return matches[0] if matches else None
 
 
 def _canonical_item_id(canonical: dict[str, Any], number: str) -> str:
     """Resolve a display question number to its canonical item identifier."""
-    item = _find_item(canonical, number)
+    matches = _find_items(canonical, number)
     _require(
-        item is not None,
+        bool(matches),
         "PASS1_GEOMETRY_TARGET_MISSING",
         phase="pass1",
     )
-    item_id = str(item.get("item_id") or "")
+    _require(
+        len(matches) == 1,
+        "PASS1_GEOMETRY_TARGET_NOT_UNIQUE",
+        phase="pass1",
+    )
+    item_id = str(matches[0].get("item_id") or "")
     _require(
         bool(item_id),
         "PASS1_GEOMETRY_TARGET_CANONICAL_ID_MISSING",
@@ -428,23 +436,207 @@ def _non_target_content_fingerprint(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _ephemeral_geometry_correction(canonical: dict[str, Any]) -> dict[str, Any]:
-    item = _find_item(canonical, GEOMETRY_TARGET_NUMBER)
-    _require(item is not None, "Q32_ITEM_MISSING")
+def _ephemeral_geometry_correction(
+    canonical: dict[str, Any],
+    *,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    matching_items = _find_items(canonical, GEOMETRY_TARGET_NUMBER)
+    _require(
+        bool(matching_items),
+        "Q32_ITEM_MISSING",
+        phase="ephemeral_correction",
+        diagnostics=diagnostics,
+    )
+    _require(
+        len(matching_items) == 1,
+        "Q32_ITEM_NOT_UNIQUE",
+        phase="ephemeral_correction",
+        diagnostics=diagnostics,
+    )
+    item = matching_items[0]
     alternatives = item.get("alternatives", [])
-    _require(len(alternatives) == 1, "Q32_ALTERNATIVE_COUNT_UNEXPECTED")
-    lines = [
-        text for block in alternatives[0].get("blocks", [])
-        if (text := _canonical_block_text(block))
+    _require(
+        len(alternatives) == 1,
+        "Q32_ALTERNATIVE_COUNT_UNEXPECTED",
+        phase="ephemeral_correction",
+        diagnostics=diagnostics,
+    )
+    blocks = list(alternatives[0].get("blocks", []))
+    logical_blocks = [
+        {
+            "type": str(block.get("type") or "unknown"),
+            "text": value,
+        }
+        for block in blocks
+        if (value := _canonical_block_text(block))
     ]
-    pattern = re.compile(r"(?i)\bBC\s*(?:is\s+)?(?:perpendicular(?:\s+to)?|⊥)\s*BC\b")
-    changed = 0
-    corrected: list[str] = []
+    block_types = [str(block.get("type") or "unknown") for block in blocks]
+    lines = [block["text"] for block in logical_blocks]
+
+    starts: list[int] = []
+    joined_parts: list[str] = []
+    cursor = 0
     for line in lines:
-        replacement, count = pattern.subn("BC perpendicular AB", line)
-        corrected.append(replacement)
-        changed += count
-    _require(changed == 1, "Q32_EPHEMERAL_TARGET_NOT_UNIQUE")
+        if joined_parts:
+            cursor += 1
+        starts.append(cursor)
+        joined_parts.append(line)
+        cursor += len(line)
+    joined = " ".join(joined_parts)
+    ends = [start + len(line) for start, line in zip(starts, lines)]
+
+    def self_relations(value: str) -> list[re.Match[str]]:
+        return [
+            match for match in PERPENDICULAR_RE.finditer(value)
+            if match.group(1).upper() == match.group(2).upper()
+        ]
+
+    individual_match_count = sum(len(self_relations(line)) for line in lines)
+    contradictions = self_relations(joined)
+    ephemeral_diagnostics = {
+        "ephemeral_target_block_count": len(blocks),
+        "ephemeral_target_block_types": block_types,
+        "individual_block_contradiction_match_count": individual_match_count,
+        "contradiction_match_count": len(contradictions),
+        "contradiction_spans_block_count": 0,
+        "evidence_pair_count": 0,
+    }
+    if diagnostics is not None:
+        diagnostics.setdefault("pass1", {}).update(ephemeral_diagnostics)
+
+    _require(
+        len(contradictions) == 1,
+        "Q32_EPHEMERAL_TARGET_NOT_UNIQUE",
+        phase="ephemeral_correction",
+        diagnostics=diagnostics or {"ephemeral": ephemeral_diagnostics},
+    )
+    contradiction = contradictions[0]
+    self_line = contradiction.group(1).upper()
+
+    covered = [
+        index for index, (block_start, block_end) in enumerate(zip(starts, ends))
+        if block_start < contradiction.end() and block_end > contradiction.start()
+    ]
+    _require(
+        bool(covered) and covered == list(range(covered[0], covered[-1] + 1)),
+        "Q32_EPHEMERAL_TARGET_SPAN_INVALID",
+        phase="ephemeral_correction",
+        diagnostics=diagnostics or {"ephemeral": ephemeral_diagnostics},
+    )
+    first_block, last_block = covered[0], covered[-1]
+    ephemeral_diagnostics["contradiction_spans_block_count"] = len(covered)
+
+    evidence_matches = [
+        match for match in GRADIENT_PRODUCT_RE.finditer(joined)
+        if match.end() <= contradiction.start()
+        and contradiction.start() - match.end() <= 180
+        and match.group(1).upper() != match.group(2).upper()
+        and self_line in {
+            match.group(1).upper(),
+            match.group(2).upper(),
+        }
+    ]
+    ephemeral_diagnostics["evidence_pair_count"] = len(evidence_matches)
+    if diagnostics is not None:
+        diagnostics["pass1"].update(ephemeral_diagnostics)
+    safe_diagnostics = diagnostics or {"ephemeral": ephemeral_diagnostics}
+    _require(
+        len(evidence_matches) == 1,
+        "Q32_EPHEMERAL_EVIDENCE_NOT_UNIQUE",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+    evidence = evidence_matches[0]
+    evidence_pair = (evidence.group(1).upper(), evidence.group(2).upper())
+    _require(
+        evidence_pair[0] != evidence_pair[1],
+        "Q32_EPHEMERAL_EVIDENCE_SELF_PAIR",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+    other_line = (
+        evidence_pair[1] if self_line == evidence_pair[0] else evidence_pair[0]
+    )
+
+    range_start = starts[first_block]
+    range_end = ends[last_block]
+    range_text = joined[range_start:range_end]
+    relative_start = contradiction.start() - range_start
+    relative_end = contradiction.end() - range_start
+    corrected_range = (
+        range_text[:relative_start]
+        + f"{self_line} perpendicular {other_line}"
+        + range_text[relative_end:]
+    )
+    corrected = [
+        *lines[:first_block],
+        corrected_range,
+        *lines[last_block + 1:],
+    ]
+    corrected_joined = " ".join(corrected)
+
+    original_evidence = [
+        (match.group(1).upper(), match.group(2).upper(), match.group(0))
+        for match in GRADIENT_PRODUCT_RE.finditer(joined)
+    ]
+    corrected_evidence = [
+        (match.group(1).upper(), match.group(2).upper(), match.group(0))
+        for match in GRADIENT_PRODUCT_RE.finditer(corrected_joined)
+    ]
+    _require(
+        original_evidence == corrected_evidence,
+        "Q32_EPHEMERAL_EVIDENCE_CHANGED",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+    _require(
+        len(self_relations(corrected_joined)) == 0,
+        "Q32_EPHEMERAL_CONTRADICTION_REMAINS",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+    corrected_relations = [
+        match for match in PERPENDICULAR_RE.finditer(corrected_joined)
+        if match.group(1).upper() != match.group(2).upper()
+        and {
+            match.group(1).upper(),
+            match.group(2).upper(),
+        } == set(evidence_pair)
+    ]
+    _require(
+        len(corrected_relations) == 1,
+        "Q32_EPHEMERAL_CORRECTED_RELATION_NOT_UNIQUE",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+
+    original_masked = (
+        joined[:contradiction.start()]
+        + "<RELATION>"
+        + joined[contradiction.end():]
+    )
+    corrected_relation = corrected_relations[0]
+    corrected_masked = (
+        corrected_joined[:corrected_relation.start()]
+        + "<RELATION>"
+        + corrected_joined[corrected_relation.end():]
+    )
+    normalize = lambda value: re.sub(r"\s+", " ", value).strip()
+    _require(
+        normalize(original_masked) == normalize(corrected_masked),
+        "Q32_EPHEMERAL_UNRELATED_CONTENT_CHANGED",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+    _require(
+        corrected[:first_block] == lines[:first_block]
+        and corrected[first_block + 1:] == lines[last_block + 1:],
+        "Q32_EPHEMERAL_COMPONENT_ORDER_CHANGED",
+        phase="ephemeral_correction",
+        diagnostics=safe_diagnostics,
+    )
+
     return {
         "id": "phase81a-ephemeral-q32",
         "job_id": canonical.get("audit", {}).get("job_id"),
@@ -828,7 +1020,9 @@ def _execute_phase81a_acceptance(
         exc.diagnostics = pass1_diagnostics
         raise
 
-    ephemeral = _ephemeral_geometry_correction(pass1["canonical"])
+    ephemeral = _ephemeral_geometry_correction(
+        pass1["canonical"], diagnostics=pass1_diagnostics
+    )
     pass2 = _run_replay(
         job, source_bytes, [*corrections, ephemeral], cached_semantic
     )
