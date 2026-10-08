@@ -6,6 +6,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any
 
 
@@ -211,6 +212,57 @@ class SupabaseRest:
                     "status": "superseded",
                     "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 },
+                prefer="return=minimal",
+            )
+
+    def replace_unresolved_exception_generation(
+        self,
+        job: dict[str, Any],
+        exceptions: list[dict[str, Any]],
+    ) -> None:
+        """Publish one computed review generation without risking an empty queue.
+
+        New rows are inserted first. Only after that succeeds are older active
+        rows superseded. If publication fails, the previous usable generation
+        remains active; if supersession fails, both generations remain
+        recoverable and the logical UI key still deduplicates them.
+        """
+        rows: list[dict[str, Any]] = []
+        new_ids: list[str] = []
+        for item in exceptions:
+            exception_id = str(uuid.uuid4())
+            new_ids.append(exception_id)
+            rows.append({
+                "id": exception_id,
+                "job_id": job["id"],
+                "user_id": job["user_id"],
+                "level": item["level"],
+                "category": item["category"],
+                "affected_id": item.get("affected_id"),
+                "message": item["message"],
+                "suggestions": item.get("suggestions", []),
+                "status": "open",
+            })
+
+        if rows:
+            self._request_json("POST", "/rest/v1/exceptions", body=rows)
+
+        job_q = urllib.parse.quote(str(job["id"]), safe="")
+        exclude = ""
+        if new_ids:
+            exclude = "&id=not.in.(" + ",".join(
+                urllib.parse.quote(value, safe="-") for value in new_ids
+            ) + ")"
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        for status_value in ("open", "awaiting_reinterpretation", "awaiting_confirmation"):
+            status_q = urllib.parse.quote(status_value, safe="")
+            self._request_json(
+                "PATCH",
+                (
+                    f"/rest/v1/exceptions?job_id=eq.{job_q}"
+                    f"&status=eq.{status_q}{exclude}"
+                ),
+                body={"status": "superseded", "updated_at": now},
                 prefer="return=minimal",
             )
 

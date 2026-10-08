@@ -274,10 +274,6 @@ def run_job(job_id: str) -> int:
                 )
             )
 
-            # Replace only unresolved findings from the previous analysis pass.
-            # Resolved/correction-linked rows remain immutable audit evidence.
-            db.supersede_unresolved_exceptions(job_id)
-
             if applied_corrections:
                 applied_at = utc_now()
                 db.mark_corrections_applied(
@@ -304,7 +300,6 @@ def run_job(job_id: str) -> int:
         db.upload_json(BUCKET, structure_path, structure)
 
         structural_exceptions = structure["exceptions"]
-        db.add_exceptions(job, structural_exceptions)
 
         job = db.patch_job(
             job_id,
@@ -362,7 +357,6 @@ def run_job(job_id: str) -> int:
         db.upload_json(BUCKET, semantic_path, semantic)
 
         semantic_exceptions = semantic["exceptions"]
-        db.add_exceptions(job, semantic_exceptions)
 
         for run in semantic["interpreter_runs"]:
             db.add_event(
@@ -448,9 +442,16 @@ def run_job(job_id: str) -> int:
         db.upload_json(BUCKET, canonical_path, canonical)
         db.upload_json(BUCKET, validation_path, validation)
 
-        # Structural and semantic exceptions were already persisted at their
-        # respective stages. Persist only Phase 5 canonical/validation findings.
-        db.add_exceptions(job, canonical_exceptions)
+        # Publish a complete replacement review generation only after every
+        # validation stage has computed successfully. The REST client inserts
+        # the new rows before superseding the prior active generation, so a
+        # failed computation or insert preserves the last usable review state.
+        generation_exceptions = [
+            *structural_exceptions,
+            *semantic_exceptions,
+            *canonical_exceptions,
+        ]
+        db.replace_unresolved_exception_generation(job, generation_exceptions)
 
         math_block_count = sum(
             1

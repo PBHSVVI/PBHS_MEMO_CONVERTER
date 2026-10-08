@@ -36,7 +36,7 @@ describe("client security boundary", () => {
     const edge = fs.readFileSync(path.resolve("../supabase/functions/dispatch-memo/index.ts"), "utf8");
     const policy = fs.readFileSync(path.resolve("../supabase/functions/_shared/teacher-metadata.ts"), "utf8");
     expect(policy).toContain('job.status === "queued" || job.status === "failed_retryable"');
-    expect(policy).toContain('job.status === "needs_review" && job.stage === "phase8_1b_metadata_review"');
+    expect(policy).toMatch(/job\.status === "needs_review"\s*&&\s*job\.stage === "phase8_1b_metadata_review"/);
     expect(edge).toContain('.eq("status", claimedFromStatus)');
     expect(edge).toContain('.eq("stage", claimedFromStage)');
   });

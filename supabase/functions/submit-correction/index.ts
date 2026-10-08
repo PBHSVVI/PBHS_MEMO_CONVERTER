@@ -460,8 +460,10 @@ export default {
         displayText = `Add Question ${questionId} to Question ${parentId} with the supplied ${parsed.total}-mark scheme.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (childRepair && typeof childRepair === "object") {
-        const parentId = String(exception.affected_id ?? "");
-        if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(parentId)) {
+        const affectedId = String(exception.affected_id ?? "");
+        const parentReview = exception.category === "question_total_mismatch";
+        const directItemReview = ["item_total_mismatch", "mark_arithmetic_mismatch"].includes(exception.category);
+        if ((!parentReview && !directItemReview) || !QUESTION_ID_RE.test(affectedId)) {
           return Response.json({ error: "child_repair_category_mismatch" }, { status: 400 });
         }
         const value = childRepair as Record<string, unknown>;
@@ -469,12 +471,15 @@ export default {
         const replacementId = typeof value.replacement_id === "string" ? value.replacement_id.trim() : "";
         const markingText = typeof value.marking_text === "string" ? value.marking_text.trim() : "";
         const printedMarks = value.printed_marks == null || value.printed_marks === "" ? null : Number(value.printed_marks);
-        const withinParent = (id: string) => id.startsWith(`${parentId}.`) && id !== parentId;
+        const parentId = parentReview ? affectedId : affectedId.split(".")[0];
+        const withinScope = (id: string) => parentReview
+          ? id.startsWith(`${parentId}.`) && id !== parentId
+          : id === affectedId || (id.split(".")[0] === parentId && id !== parentId);
         const structure = await loadStructure(ctx, job.user_id, jobId);
         const questions = Array.isArray(structure?.questions) ? structure.questions : [];
         const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown> | undefined;
         const replacementConflict = replacementId !== targetId && questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === replacementId);
-        if (!QUESTION_ID_RE.test(targetId) || !QUESTION_ID_RE.test(replacementId) || !withinParent(targetId) || !withinParent(replacementId) || !question || replacementConflict) {
+        if (!QUESTION_ID_RE.test(targetId) || !QUESTION_ID_RE.test(replacementId) || !withinScope(targetId) || !withinScope(replacementId) || (directItemReview && targetId !== affectedId) || !question || replacementConflict) {
           return Response.json({ error: "invalid_child_repair_target" }, { status: 400 });
         }
         const renameRequested = replacementId !== targetId;
@@ -487,7 +492,7 @@ export default {
           schema_version: "1.0",
           operation: "replace_item_content",
           category: exception.category,
-          affected_id: parentId,
+          affected_id: affectedId,
           target_id: targetId,
           replacement_id: replacementId,
           question_text: null,
@@ -498,7 +503,7 @@ export default {
             expected_total: parsed.total,
             mark_calculation_mode: parsed.mode,
           } : {}),
-          reconciliation_scope: "suspicious_child",
+          reconciliation_scope: parentReview ? "suspicious_child" : "bounded_item_editor",
           reinterpretation_method: "structured_child_repair_editor",
         };
         const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");

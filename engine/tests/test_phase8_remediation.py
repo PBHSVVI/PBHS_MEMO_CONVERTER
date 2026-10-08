@@ -119,7 +119,8 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
     assert "Saved changes keep their own audit history" in html
     assert "Review this item" in html
     assert 'id="applyBatch"' in html
-    assert "defer_revalidation:!applyNow" in html
+    assert "defer_revalidation:true" in html
+    assert 'id="confirmApply"' not in html
     assert "phase8_correction_staged" in edge
     assert "conflicting_staged_correction" in edge
 
@@ -242,7 +243,7 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     assert "Review this correction" in html
     assert "SHOW-BACK — not applied yet" in html
     assert 'id="confirm"' in html
-    assert 'reconciliation_scope: "suspicious_child"' in submit
+    assert 'reconciliation_scope: parentReview ? "suspicious_child" : "bounded_item_editor"' in submit
     assert 'operation: "insert_missing_child_question"' in submit
     assert 'reconciliation_scope: "missing_child"' in submit
     assert 'exceptionStatus = "awaiting_confirmation"' in submit

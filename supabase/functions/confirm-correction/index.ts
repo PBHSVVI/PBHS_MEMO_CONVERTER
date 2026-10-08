@@ -100,7 +100,9 @@ export default {
       return Response.json({ error: "exception_not_confirmable" }, { status: 409 });
     }
 
-    const deferRevalidation = body.defer_revalidation === true;
+    // Staging is the safe default. A legacy/advanced caller must explicitly
+    // request false to trigger immediate revalidation.
+    const deferRevalidation = body.defer_revalidation !== false;
     const patch = correction.proposed_patch as Record<string, unknown>;
     const retainParentReview = deferRevalidation && exception.category === "question_total_mismatch" && (
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||

@@ -83,7 +83,7 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert "reconcileReviewQueue(list,saved)" in html
-    assert "Previous decision confirmed and staged. Advanced to" in html
+    assert "Saved ✓ — advanced to" in html
     assert "lastDecisionKey()" in html
 
 
@@ -118,3 +118,45 @@ def test_multiple_semantic_conflicts_have_question_progress_and_mark_position():
         "total": 3,
         "label": "Semantic conflict 2 of 3 for Question 7.2",
     }
+
+def test_repeated_exception_generations_have_one_logical_queue_row():
+    result = _evaluate([
+        {"id": "old", "category": "item_total_mismatch", "affected_id": "5.1", "message": "Question 5.1 printed 3 but computed 2."},
+        {"id": "new", "category": "item_total_mismatch", "affected_id": "5.1", "message": "Question 5.1 printed 3 but computed 2."},
+    ])
+    assert result["order"] == ["new"]
+    assert result["first"] == "new"
+
+
+def test_save_next_is_the_only_normal_confirmation_path():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "Save &amp; next" in html
+    assert 'id="confirmApply"' not in html
+    assert "Confirm, apply and recheck" not in html
+    assert "invoke('confirm-correction',{correction_id:correction.id,defer_revalidation:true})" in html
+    confirm_source = html.split("async function confirmCurrent()", 1)[1].split("async function applyStagedBatch", 1)[0]
+    assert "resume-correction" not in confirm_source
+    assert "monitorProcessing" not in confirm_source
+    assert "Saved ✓" in confirm_source
+
+
+def test_recheck_is_exposed_only_after_actionable_queue_is_empty():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert 'id="applyBatch" class="confirm hide">Recheck memo' in html
+    assert "ready=staged.length>0&&remaining===0" in html
+    assert "$('#applyBatch').classList.toggle('hide',!ready)" in html
+    assert html.count("invoke('resume-correction'") == 1
+
+
+def test_progress_uses_server_backed_staged_count_and_actionable_count():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert ".eq('confirmation_status','confirmed').is('applied_at',null)" in html
+    assert "stagedDecisionCount=staged.length" in html
+    assert "total=stagedDecisionCount+count" in html
+    assert "Review ${position} of ${total}" in html
+
+
+def test_bounded_item_editor_avoids_free_form_interpretation_route():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "['question_total_mismatch','item_total_mismatch','mark_arithmetic_mismatch']" in html
+    assert "child_repair:{target_id:target,replacement_id:replacement,printed_marks:total,marking_text:markingText}" in html
