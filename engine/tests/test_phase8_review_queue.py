@@ -20,22 +20,22 @@ def _section(name: str) -> str:
     return match.group(1)
 
 
-def _evaluate(exceptions: list[dict]) -> dict:
+def _evaluate(exceptions: list[dict], staged: list[dict] | None = None) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is required for the review queue regression")
     program = (
         "const knownSpecs={};\n"
         + _section("REVIEW DEPENDENCY MODEL")
-        + "\nconst list=JSON.parse(process.argv[1]);"
-        + "\nlet state=reconcileReviewQueue(list,{});"
+        + "\nconst input=JSON.parse(process.argv[1]),list=input.exceptions,staged=input.staged;"
+        + "\nlet state=reconcileReviewQueue(list,{},staged);"
         + "\nconst first=state.selected_id;state=moveReviewQueue(state,1);const next=state.selected_id;"
         + "\nstate=moveReviewQueue(state,-1);const previous=state.selected_id;"
         + "\nstate=skipReviewQueue(state);"
-        + "\nconsole.log(JSON.stringify({first,next,previous,skipped:state.selected_id,order:state.ids,actionable:actionableReviewQueue(list).map(x=>x.id)}));"
+        + "\nconsole.log(JSON.stringify({first,next,previous,skipped:state.selected_id,order:state.ids,actionable:actionableReviewQueue(list,staged).map(x=>x.id),targets:[...stagedTargetSet(staged)]}));"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", program, json.dumps(exceptions)],
+        [node, "--input-type=module", "-e", program, json.dumps({"exceptions": exceptions, "staged": staged or []})],
         check=True,
         capture_output=True,
         text=True,
@@ -82,14 +82,14 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "reconcileReviewQueue(list,saved)" in html
+    assert "reconcileReviewQueue(list,saved,staged)" in html
     assert "Saved ✓ — advanced to" in html
     assert "lastDecisionKey()" in html
 
 
 def test_multiple_semantic_conflicts_have_question_progress_and_mark_position():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "semanticConflictProgress(ex,currentActive)" in html
+    assert "semanticConflictProgress(ex,currentActive,currentStaged)" in html
     assert "Semantic conflict ${index+1} of ${peers.length} for Question ${ex.affected_id}" in html
     assert "semanticCandidateIndex" in html
 
@@ -104,7 +104,7 @@ def test_multiple_semantic_conflicts_have_question_progress_and_mark_position():
     ]
     program = (
         "const actionableReviewQueue=list=>list;\n" + model
-        + "\nconst list=JSON.parse(process.argv[1]);console.log(JSON.stringify(semanticConflictProgress(list[1],list)));"
+        + "\nconst list=JSON.parse(process.argv[1]);console.log(JSON.stringify(semanticConflictProgress(list[1],list,[])));"
     )
     result = subprocess.run(
         [node, "--input-type=module", "-e", program, json.dumps(exceptions)],
@@ -148,15 +148,95 @@ def test_recheck_is_exposed_only_after_actionable_queue_is_empty():
     assert html.count("invoke('resume-correction'") == 1
 
 
-def test_progress_uses_server_backed_staged_count_and_actionable_count():
+def test_progress_uses_server_backed_staged_subtraction_and_remaining_workload():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert ".eq('confirmation_status','confirmed').is('applied_at',null)" in html
-    assert "stagedDecisionCount=staged.length" in html
-    assert "total=stagedDecisionCount+count" in html
-    assert "Review ${position} of ${total}" in html
+    assert "loadReviewState()" in html
+    assert "remaining=actionableReviewQueue(currentActive,staged).length" in html
+    assert "Review ${position} of ${count} remaining" in html
+    assert "total=stagedDecisionCount+count" not in html
 
 
 def test_bounded_item_editor_avoids_free_form_interpretation_route():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "['question_total_mismatch','item_total_mismatch','mark_arithmetic_mismatch']" in html
+    assert "boundedItemEditorAllowed(currentException,target)" in html
     assert "child_repair:{target_id:target,replacement_id:replacement,printed_marks:total,marking_text:markingText}" in html
+
+
+def test_staged_target_removes_all_rows_and_progress_is_monotonic():
+    active = [
+        {"id": "parent", "category": "question_total_mismatch", "affected_id": "3"},
+        {"id": "two-four-total", "category": "item_total_mismatch", "affected_id": "2.4"},
+        {"id": "two-four-arithmetic", "category": "mark_arithmetic_mismatch", "affected_id": "2.4"},
+        {"id": "geometry", "category": "geometry_line_relationship_conflict", "affected_id": "3.2"},
+        {"id": "other", "category": "item_total_mismatch", "affected_id": "4.1"},
+    ]
+    after_24 = [{"id": "c24", "proposed_patch": {
+        "operation": "replace_mark_points", "affected_id": "2.4"
+    }}]
+    after_32 = [*after_24, {"id": "c32", "patch": {
+        "operation": "replace_item_content", "target_id": "3.2"
+    }}]
+
+    initial = _evaluate(active)
+    first_save = _evaluate(active, after_24)
+    second_save = _evaluate(active, after_32)
+    reload = _evaluate(active, after_32)
+
+    assert initial["actionable"] == [
+        "two-four-total", "two-four-arithmetic", "geometry", "other"
+    ]
+    assert first_save["actionable"] == ["geometry", "other"]
+    assert first_save["first"] == "geometry"
+    assert second_save["actionable"] == ["other"]
+    assert second_save["first"] == "other"
+    assert reload["actionable"] == second_save["actionable"]
+    assert len(initial["actionable"]) > len(first_save["actionable"]) > len(second_save["actionable"])
+    assert first_save["targets"] == ["question:2.4"]
+
+
+def test_structured_and_semantic_corrections_share_normalized_targets():
+    active = [
+        {"id": "content", "category": "geometry_line_relationship_conflict", "affected_id": "3.2"},
+        {"id": "semantic-one", "category": "ambiguous_mark_semantics", "affected_id": "7.2",
+         "suggestions": [{"candidate_id": "7_2__m1"}]},
+        {"id": "semantic-two", "category": "ambiguous_mark_semantics", "affected_id": "7.2",
+         "suggestions": [{"candidate_id": "7_2__m2"}]},
+    ]
+    staged = [
+        {"proposed_patch": {"operation": "replace_item_content", "target_id": "3.2"}},
+        {"proposed_patch": {"operation": "replace_mark_semantic", "candidate_id": "7_2__m1"}},
+    ]
+    result = _evaluate(active, staged)
+    assert result["actionable"] == ["semantic-two"]
+    assert result["targets"] == ["question:3.2", "semantic:7_2__m1"]
+
+    grouped = _evaluate(
+        [{"id": "group", "category": "question_allocation_pairing_ambiguous",
+          "affected_id": "8.1,8.2"}],
+        [{"proposed_patch": {"operation": "resolve_question_allocation_pairing",
+          "allocations": [{"question_id": "8.1"}, {"question_id": "8.2"}]}}],
+    )
+    assert grouped["actionable"] == []
+    assert grouped["targets"] == ["question:8.1", "question:8.2"]
+
+
+def test_staged_child_keeps_parent_validation_deferred_until_revalidation():
+    active = [{"id": "parent", "category": "question_total_mismatch", "affected_id": "3"}]
+    staged = [{"proposed_patch": {
+        "operation": "replace_item_content", "target_id": "3.2"
+    }}]
+    assert _evaluate(active, staged)["actionable"] == []
+    assert _evaluate(active, [])["actionable"] == ["parent"]
+
+
+def test_confirmation_records_locally_then_reloads_server_state():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    confirm = html.split("async function confirmCurrent()", 1)[1].split(
+        "async function applyStagedBatch", 1
+    )[0]
+    assert confirm.index("recordStagedCorrection(correction)") < confirm.index(
+        "await loadReviewState()"
+    )
+    assert "refreshReviewQueue(currentActive,currentStaged)" in confirm
+    assert "currentStaged=[...currentStaged.filter" in html

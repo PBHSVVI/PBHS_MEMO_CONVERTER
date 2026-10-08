@@ -85,6 +85,52 @@ def test_source_focus_rejects_q3_q6_numeric_collisions():
     assert result == {"q6": [False, True, False], "q31": [False, False, True]}
 
 
+
+def test_split_run_question_label_wins_over_nested_numeric_span():
+    source = _section("SOURCE FOCUS MODEL")
+    program = r"""
+const textMatches=(a,b)=>String(a).includes(String(b));
+""" + source + r"""
+const span={textContent:'3.2'};
+const paragraph={textContent:'3.2 Determine the line relationship'};
+let selector='';
+const root={querySelectorAll(value){selector=value;return value==='p,td,th'?[paragraph]:[span,paragraph]}};
+const found=findTokenElement(root,'3.2',false,true);
+console.log(JSON.stringify({selector,paragraph:found===paragraph,span:found===span}));
+"""
+    result = _node(program, {})
+    assert result == {"selector": "p,td,th", "paragraph": True, "span": False}
+
+
+def test_structural_question_region_precedes_global_token_fallback():
+    html = PAGE.read_text(encoding="utf-8")
+    focused = html.split("async function renderFocusedEvidence()", 1)[1].split(
+        "function renderFullMemo", 1
+    )[0]
+    assert "Number.isInteger(currentStep?.sourceBlockIndex)?visibleQuestionRegion" in focused
+    assert "made=structural||visibleCloneAround(currentStep)" in focused
+
+
+def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
+    model = _section("BOUNDED EDITOR MODEL")
+    program = (
+        "function majorQuestionId(value){const m=String(value||'').match(/^\\\\d+/);"
+        "return m?m[0]:''}\n" + model
+        + "\nconst cases=JSON.parse(process.argv[1]);"
+        + "\nconsole.log(JSON.stringify(cases.map(x=>boundedItemEditorAllowed(x.ex,x.target))));"
+    )
+    cases = [
+        {"ex": {"category": "geometry_line_relationship_conflict", "affected_id": "3.2"}, "target": "3.1"},
+        {"ex": {"category": "geometry_line_relationship_conflict", "affected_id": "3.2"}, "target": "3.2"},
+        {"ex": {"category": "item_total_mismatch", "affected_id": "3.2"}, "target": "3.1"},
+        {"ex": {"category": "item_total_mismatch", "affected_id": "3.2"}, "target": "3.2"},
+        {"ex": {"category": "question_total_mismatch", "affected_id": "3"}, "target": "3.1"},
+    ]
+    assert _node(program, cases) == [False, False, False, True, True]
+    html = PAGE.read_text(encoding="utf-8")
+    assert "setCorrectionTool(ex.category==='question_total_mismatch'?'typed':'content')" in html
+    assert "row.inserted||!boundedItemEditorAllowed(ex,row.question_id)" in html
+
 def test_long_processing_has_no_fixed_timeout_and_remains_resumable():
     html = PAGE.read_text(encoding="utf-8")
     assert "for(let i=0;i<300" not in html
