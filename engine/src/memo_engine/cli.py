@@ -214,14 +214,16 @@ def run_job(job_id: str) -> int:
     if job["status"] != "dispatched":
         raise RuntimeError(f"Job is not dispatchable from state {job['status']!r}")
 
+    started_at = utc_now()
     job = db.patch_job(
         job_id,
         "dispatched",
         {
             "status": "processing",
             "stage": "ingestion",
-            "started_at": utc_now(),
-            "updated_at": utc_now(),
+            "started_at": started_at,
+            "completed_at": None,
+            "updated_at": started_at,
             "error_code": None,
             "error_message": None,
         },
@@ -699,6 +701,7 @@ def run_job(job_id: str) -> int:
             }
             db.upload_json(BUCKET, render_validation_path, render_validation)
 
+        completed_at = utc_now()
         job = db.patch_job(
             job_id,
             "processing",
@@ -709,7 +712,8 @@ def run_job(job_id: str) -> int:
                 "engine_version": "phase7.5",
                 "error_code": None,
                 "error_message": None,
-                "updated_at": utc_now(),
+                "completed_at": completed_at,
+                "updated_at": completed_at,
             },
         )
 
