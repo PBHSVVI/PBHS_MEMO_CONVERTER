@@ -179,20 +179,77 @@ def test_migration_enforces_read_and_write_contract_without_broadening_storage()
     assert "create table if not exists public.paper_library_summary" in sql
     assert "job_id uuid primary key" in sql
     assert "owner_display_name text" in sql
-    assert "(select private.is_active_department_member())" in sql
+    assert "create schema if not exists memo_private" in sql
+    assert "(select memo_private.is_active_department_member())" in sql
     assert "subject_scope in ('mathematics', 'fs_mathematics')" in sql
-    assert "create or replace function private.can_write_paper(p_job_id uuid)" in sql
+    assert "create or replace function memo_private.can_write_paper(p_job_id uuid)" in sql
     assert "j.user_id = (select auth.uid())" in sql
     assert "p.hod_scope = s.subject_scope" in sql
     assert "p.active" in sql
-    assert "revoke all on public.department_profiles from anon, authenticated" in sql
-    assert "grant select on public.paper_library_summary to authenticated" in sql
-    assert "grant select, insert, update on public.paper_library_summary to service_role" in sql
     assert "set search_path = ''" in sql
-    assert "revoke all on function private.can_write_paper(uuid) from public, anon" in sql
+    assert "revoke all on function memo_private.can_write_paper(uuid) from public, anon" in sql
     assert "storage.objects" not in sql
     assert "insert into public.department_profiles" not in sql
     assert "@" not in sql
+
+
+def test_migration_establishes_department_table_grants_from_zero():
+    sql_without_comments = "\n".join(
+        line
+        for line in MIGRATION.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    statements = [
+        " ".join(statement.split()).lower()
+        for statement in sql_without_comments.split(";")
+        if statement.strip()
+    ]
+    profile_revoke = (
+        "revoke all on public.department_profiles "
+        "from public, anon, authenticated, service_role"
+    )
+    summary_revoke = (
+        "revoke all on public.paper_library_summary "
+        "from public, anon, authenticated, service_role"
+    )
+    profile_service_grant = (
+        "grant select, insert, update on public.department_profiles to service_role"
+    )
+    summary_browser_grant = (
+        "grant select on public.paper_library_summary to authenticated"
+    )
+    summary_service_grant = (
+        "grant select, insert, update on public.paper_library_summary to service_role"
+    )
+
+    assert profile_revoke in statements
+    assert summary_revoke in statements
+    assert profile_service_grant in statements
+    assert summary_browser_grant in statements
+    assert summary_service_grant in statements
+    assert statements.index(profile_revoke) < statements.index(profile_service_grant)
+    assert statements.index(summary_revoke) < statements.index(summary_browser_grant)
+    assert statements.index(summary_revoke) < statements.index(summary_service_grant)
+
+    department_table_grants = [
+        statement
+        for statement in statements
+        if statement.startswith("grant ")
+        and (
+            " on public.department_profiles " in statement
+            or " on public.paper_library_summary " in statement
+        )
+    ]
+    assert set(department_table_grants) == {
+        profile_service_grant,
+        summary_browser_grant,
+        summary_service_grant,
+    }
+    for statement in department_table_grants:
+        assert all(
+            privilege not in statement
+            for privilege in ("delete", "truncate", "references", "trigger")
+        )
 
 
 def test_worker_publishes_canonical_summary_for_review_rendering_and_completion():

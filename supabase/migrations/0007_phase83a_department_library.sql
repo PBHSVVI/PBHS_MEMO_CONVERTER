@@ -1,8 +1,8 @@
 -- Phase 8.3A: server-enforced departmental library and authorization foundation.
 
-create schema if not exists private;
-revoke all on schema private from public, anon;
-grant usage on schema private to authenticated;
+create schema if not exists memo_private;
+revoke all on schema memo_private from public, anon;
+grant usage on schema memo_private to authenticated;
 
 create table if not exists public.department_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -49,7 +49,7 @@ create index if not exists paper_library_summary_filter_idx
 create index if not exists paper_library_summary_owner_idx
   on public.paper_library_summary (owner_user_id, updated_at desc);
 
-create or replace function private.phase83a_profile_stamp()
+create or replace function memo_private.phase83a_profile_stamp()
 returns trigger
 language plpgsql
 security definer
@@ -63,7 +63,7 @@ begin
 end;
 $$;
 
-create or replace function private.phase83a_summary_stamp()
+create or replace function memo_private.phase83a_summary_stamp()
 returns trigger
 language plpgsql
 security definer
@@ -83,7 +83,7 @@ begin
 end;
 $$;
 
-create or replace function private.phase83a_refresh_owner_label()
+create or replace function memo_private.phase83a_refresh_owner_label()
 returns trigger
 language plpgsql
 security definer
@@ -101,19 +101,19 @@ $$;
 drop trigger if exists department_profiles_stamp on public.department_profiles;
 create trigger department_profiles_stamp
 before insert or update on public.department_profiles
-for each row execute function private.phase83a_profile_stamp();
+for each row execute function memo_private.phase83a_profile_stamp();
 
 drop trigger if exists paper_library_summary_stamp on public.paper_library_summary;
 create trigger paper_library_summary_stamp
 before insert or update on public.paper_library_summary
-for each row execute function private.phase83a_summary_stamp();
+for each row execute function memo_private.phase83a_summary_stamp();
 
 drop trigger if exists department_profiles_refresh_owner_label on public.department_profiles;
 create trigger department_profiles_refresh_owner_label
 after insert or update of display_name on public.department_profiles
-for each row execute function private.phase83a_refresh_owner_label();
+for each row execute function memo_private.phase83a_refresh_owner_label();
 
-create or replace function private.is_active_department_member()
+create or replace function memo_private.is_active_department_member()
 returns boolean
 language sql
 stable
@@ -128,7 +128,7 @@ as $$
   );
 $$;
 
-create or replace function private.can_write_paper(p_job_id uuid)
+create or replace function memo_private.can_write_paper(p_job_id uuid)
 returns boolean
 language sql
 stable
@@ -162,26 +162,33 @@ on public.paper_library_summary
 for select
 to authenticated
 using (
-  (select private.is_active_department_member())
+  (select memo_private.is_active_department_member())
   and subject_scope in ('mathematics', 'fs_mathematics')
 );
 
-revoke all on public.department_profiles from anon, authenticated;
-revoke all on public.paper_library_summary from anon, authenticated;
+-- Supabase may provision broad platform-default grants on new public tables.
+-- Establish this boundary explicitly before granting back the operations used by
+-- trusted profile administration and the worker's idempotent summary upsert.
+revoke all on public.department_profiles
+  from public, anon, authenticated, service_role;
+revoke all on public.paper_library_summary
+  from public, anon, authenticated, service_role;
+
+grant select, insert, update on public.department_profiles to service_role;
 grant select on public.paper_library_summary to authenticated;
 grant select, insert, update on public.paper_library_summary to service_role;
 
-revoke all on function private.phase83a_profile_stamp() from public, anon, authenticated;
-revoke all on function private.phase83a_summary_stamp() from public, anon, authenticated;
-revoke all on function private.phase83a_refresh_owner_label() from public, anon, authenticated;
-revoke all on function private.is_active_department_member() from public, anon;
-revoke all on function private.can_write_paper(uuid) from public, anon;
-grant execute on function private.is_active_department_member() to authenticated;
-grant execute on function private.can_write_paper(uuid) to authenticated;
+revoke all on function memo_private.phase83a_profile_stamp() from public, anon, authenticated;
+revoke all on function memo_private.phase83a_summary_stamp() from public, anon, authenticated;
+revoke all on function memo_private.phase83a_refresh_owner_label() from public, anon, authenticated;
+revoke all on function memo_private.is_active_department_member() from public, anon;
+revoke all on function memo_private.can_write_paper(uuid) from public, anon;
+grant execute on function memo_private.is_active_department_member() to authenticated;
+grant execute on function memo_private.can_write_paper(uuid) to authenticated;
 
 comment on table public.department_profiles is
   'Safe departmental application profile. Authentication credentials remain in Supabase Auth.';
 comment on table public.paper_library_summary is
   'Worker-maintained effective memo metadata for the authorized departmental library.';
-comment on function private.can_write_paper(uuid) is
+comment on function memo_private.can_write_paper(uuid) is
   'Server-side authorization primitive: active owners write their papers; HODs also write papers in their exact subject scope.';
