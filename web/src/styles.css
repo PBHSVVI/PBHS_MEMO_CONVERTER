@@ -182,6 +182,14 @@ p { line-height: 1.55; }
 .auth-card label { display: grid; gap: 7px; margin: 16px 0; color: var(--navy); font-weight: 760; }
 .auth-card input { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #b8c4d2; border-radius: 9px; background: white; }
 .fine-print { margin: 18px 0 0; color: var(--ink-muted); font-size: .83rem; }
+.onboarding-card { width: min(540px, 100%); }
+.invite-identity { display: grid; gap: 3px; margin: 18px 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: #f7f9fb; }
+.invite-identity strong { color: var(--navy); }
+.invite-identity span { color: var(--ink-muted); word-break: break-word; }
+.password-requirements { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; margin: -5px 0 18px; padding: 0; color: var(--ink-muted); font-size: .84rem; list-style: none; }
+.password-requirements li::before { content: "○"; margin-right: 7px; color: var(--pbhs-red); font-weight: 900; }
+.password-requirements li.met { color: var(--pbhs-green); }
+.password-requirements li.met::before { content: "✓"; color: var(--pbhs-green); }
 
 .upload-panel h1, .progress-panel h1 { font-size: clamp(2rem, 7vw, 3rem); }
 .drop-zone {
@@ -258,6 +266,7 @@ p { line-height: 1.55; }
   .panel, .hero { border-radius: 14px; }
   .button-row .button { width: 100%; }
   .progress-steps { grid-template-columns: 1fr; }
+  .password-requirements { grid-template-columns: 1fr; }
 }
 
 .metadata-optional { margin-top: 22px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }

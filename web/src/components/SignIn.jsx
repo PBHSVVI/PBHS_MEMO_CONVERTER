@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { BrandCrest } from "./BrandIdentity";
 
-export function SignIn({ client }) {
+export function SignIn({ client, setupComplete = false }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState({ busy: false, error: "" });
@@ -26,6 +26,7 @@ export function SignIn({ client }) {
         <p className="eyebrow">PBHS Mathematics</p>
         <h1>Memo Converter</h1>
         <p className="lede">Turn a source memo into a checked, consistently formatted Word and PDF memo.</p>
+        {setupComplete && <p className="notice info" role="status">Account setup complete. Sign in with your email and new password.</p>}
         <form onSubmit={submit}>
           <label>
             Email address
@@ -52,7 +53,7 @@ export function SignIn({ client }) {
             {state.busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <p className="fine-print">Use your approved teacher account. Your uploaded memos remain private to your account.</p>
+        <p className="fine-print">Use your approved teacher account. Accounts are created by invitation only. Your uploaded memos remain private to your account.</p>
       </section>
     </main>
   );

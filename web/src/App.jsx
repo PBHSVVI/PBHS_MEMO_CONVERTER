@@ -5,10 +5,14 @@ import { Dashboard } from "./components/Dashboard";
 import { UploadMemo } from "./components/UploadMemo";
 import { ConversionProgress } from "./components/ConversionProgress";
 import { BrandCrest, BrandLockup } from "./components/BrandIdentity";
+import { ExpiredInvitation, InviteOnboarding } from "./components/InviteOnboarding";
+import { inviteRouteState, normalSignInUrl } from "./lib/inviteOnboarding";
 
 export function App({ client = defaultClient }) {
   const [auth, setAuth] = useState({ loading: true, session: null });
   const [screen, setScreen] = useState({ name: "dashboard", job: null });
+  const [inviteRoute, setInviteRoute] = useState(() => inviteRouteState());
+  const [setupComplete, setSetupComplete] = useState(false);
 
   useEffect(() => {
     if (!client) {
@@ -34,10 +38,22 @@ export function App({ client = defaultClient }) {
   if (!client) {
     return <main className="center-message"><section className="notice danger">{configurationError}</section></main>;
   }
+  const returnToSignIn = () => {
+    window.history.replaceState({}, "", normalSignInUrl());
+    setInviteRoute({ active: false, expired: false, errorCode: null });
+  };
+  const finishOnboarding = () => {
+    setAuth({ loading: false, session: null });
+    setSetupComplete(true);
+    returnToSignIn();
+  };
+  if (inviteRoute.expired) return <ExpiredInvitation onSignIn={returnToSignIn} />;
   if (auth.loading) {
     return <main className="center-message"><p>Opening your teacher workspace…</p></main>;
   }
-  if (!auth.session) return <SignIn client={client} />;
+  if (inviteRoute.active && !auth.session) return <ExpiredInvitation onSignIn={returnToSignIn} />;
+  if (inviteRoute.active) return <InviteOnboarding client={client} session={auth.session} onComplete={finishOnboarding} />;
+  if (!auth.session) return <SignIn client={client} setupComplete={setupComplete} />;
 
   const user = auth.session.user;
   const dashboard = () => setScreen({ name: "dashboard", job: null });

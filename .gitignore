@@ -12,3 +12,7 @@ dist/
 
 tmp/
 work/
+
+# Runtime-only staff onboarding inputs and one-time invitation material.
+provisioning-private/
+supabase/.temp/

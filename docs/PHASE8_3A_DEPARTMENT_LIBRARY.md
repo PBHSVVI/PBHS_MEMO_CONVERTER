@@ -1,7 +1,8 @@
 # Phase 8.3A — Department Library Authorization Foundation
 
-Status: local implementation candidate. The migration has not been applied and
-the worker change has not been deployed.
+Status: accepted production foundation. Migration `0007` was applied to PBHS
+production and the worker/frontend baseline was deployed at
+`cee06fa5e070981df38b29023177f4f6b6c3a732`.
 
 ## Architecture
 
@@ -68,11 +69,17 @@ worker code that writes the summary. Provision real department profiles only in 
 separate explicitly approved step. After hosted RLS and worker-population tests,
 the frontend departmental library can consume `paper_library_summary` directly.
 
-Before any real PBHS staff account is provisioned, production Supabase Auth must
-have Leaked Password Protection enabled. The approved first-login lifecycle is a
-temporary staff-code password followed by a forced password change, after which
-the temporary password is no longer usable. Staff codes and temporary passwords
-must never be stored in migrations, source files, tests, logs, or documentation.
+Real PBHS staff onboarding must use a trusted administrator-generated, one-time
+Supabase invitation link. The administrator delivers that link through official
+PBHS email and the teacher chooses a strong private password on the branded
+Teacher App onboarding route. Staff codes and administrator-created temporary
+passwords are prohibited.
+
+Leaked Password Protection is unavailable on the current Supabase Free plan and
+is not part of the current control set. It may be enabled later if PBHS moves to
+a qualifying plan. The current controls are invitation-only account creation,
+server-side profile binding, a strong password policy, short-lived invitation
+links, and optional MFA evaluation. See `PHASE8_3B_STAFF_ONBOARDING.md`.
 
 ## Migration safety and remediation
 

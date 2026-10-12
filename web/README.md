@@ -5,7 +5,7 @@ memo-conversion pilot.
 
 ## Supported teacher flow
 
-1. Sign in with an approved Supabase Auth email/password account.
+1. Accept an administrator-issued invitation and choose a private password, or sign in with an approved account.
 2. View recent conversions owned by that account.
 3. Upload a PDF, DOCX, PNG or JPEG memo up to 50 MB.
 4. Create and dispatch a conversion.
@@ -41,9 +41,31 @@ key, GitHub token, or AI provider keys to a `VITE_*` variable.
 npm run test:run
 ```
 
-The tests cover auth routing, state mapping, upload validation and sequencing, review
-handoff to v4.9, private downloads, retry/terminal failures, RLS assumptions and
+The tests cover invitation onboarding, strong password guidance, sign-in-only
+public access, auth routing, state mapping, upload validation and sequencing,
+review handoff, private downloads, retry/terminal failures, RLS assumptions and
 client secret checks.
+
+## Trusted staff provisioning
+
+The invitation utility is intentionally outside the browser bundle:
+
+```powershell
+cd web
+node scripts/provision-staff.mjs --dry-run `
+  --email synthetic@example.invalid `
+  --display-name "Synthetic Teacher" `
+  --role teacher
+```
+
+For live state inspection, set `SUPABASE_URL` and a modern `sb_secret_...` key in
+`SUPABASE_SECRET_KEY`, only in the trusted process environment. A legacy
+`SUPABASE_SERVICE_ROLE_KEY` is accepted temporarily by the provisioning CLI as a
+deprecated fallback; it is never preferred and is not accepted by the hosted
+validation harness. JSON or CSV can be read with `--input <path>` or from
+standard input with `--input -`. Keep private input outside the repository,
+preferably under the ignored `provisioning-private/` directory. Never redirect
+invitation output into a tracked file.
 
 ## GitHub Pages build
 
