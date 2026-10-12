@@ -52,4 +52,18 @@ describe("Document Details", () => {
     expect(screen.getByText("Create a revised conversion to change document details.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
+
+  it("offers the bounded Assessment Type choices without a Term field", () => {
+    render(<DocumentDetails mode="upload" />);
+    const assessment = screen.getByRole("combobox", { name: "Assessment Type" });
+    expect([...assessment.options].map((option) => option.textContent)).toEqual([
+      "Not supplied",
+      "Standardised Test",
+      "Class Test",
+      "Investigation",
+      "Examination",
+    ]);
+    expect(screen.queryByLabelText("Term")).not.toBeInTheDocument();
+    expect(assessment.closest(".metadata-grid")).toHaveAttribute("data-future-field", "term");
+  });
 });

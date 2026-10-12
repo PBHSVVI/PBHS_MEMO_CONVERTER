@@ -124,9 +124,11 @@ def test_v410_recovery_and_progressive_disclosure_contract():
     assert 'id="reviewLogin"' in html and "addEventListener('submit',startReview)" in html
     assert 'id="correctionTool"' in html and "setCorrectionTool" in html
     assert "$('#correctionTool').onchange" in html
-    assert "selected!=='typed'" in html and "selected!=='content'" in html and "selected!=='file'" in html
-    assert "Taking a little longer than usual — still working" in html
-    assert "Estimated remaining:" in html and "Estimating…" in html
+    assert "['marks','numbering'].includes(selected)" in html
+    assert "selected!=='content'" in html and "selected!=='file'" in html
+    assert "selected!=='suggested'" in html
+    assert "You can safely leave this page and return later" in html
+    assert "Estimated remaining:" not in html and "Estimating…" not in html
     assert "setInterval(()=>currentJobData&&updateProcessingPanel(currentJobData),1000)" in html
     assert "['failed','failed_retryable'].includes(j.status)" in html
     assert "monitorProcessing()" in html and "getSession" in html

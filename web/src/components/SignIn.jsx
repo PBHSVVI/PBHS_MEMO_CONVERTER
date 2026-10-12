@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrandCrest } from "./BrandIdentity";
 
 export function SignIn({ client }) {
   const [email, setEmail] = useState("");
@@ -21,7 +22,7 @@ export function SignIn({ client }) {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <div className="brand-mark" aria-hidden="true">∑</div>
+        <BrandCrest context="signin" />
         <p className="eyebrow">PBHS Mathematics</p>
         <h1>Memo Converter</h1>
         <p className="lede">Turn a source memo into a checked, consistently formatted Word and PDF memo.</p>

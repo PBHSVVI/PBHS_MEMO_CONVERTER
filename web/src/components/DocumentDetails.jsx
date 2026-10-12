@@ -7,11 +7,33 @@ import {
 const LABELS = {
   subject: "Subject",
   paper: "Paper",
-  exam_type: "Assessment type",
+  exam_type: "Assessment Type",
   year: "Year",
   grade_label: "Form / Grade",
   duration_minutes: "Time allocation",
 };
+
+const ASSESSMENT_TYPES = [
+  ["STANDARDISED TEST", "Standardised Test"],
+  ["CLASS TEST", "Class Test"],
+  ["INVESTIGATION", "Investigation"],
+  ["EXAMINATION", "Examination"],
+];
+
+function AssessmentTypeField({ value, onChange, disabled }) {
+  return (
+    <label>
+      Assessment Type
+      <select value={value} onChange={onChange} disabled={disabled}>
+        <option value="">Not supplied</option>
+        {value && !ASSESSMENT_TYPES.some(([code]) => code === value) && (
+          <option value={value}>{value}</option>
+        )}
+        {ASSESSMENT_TYPES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+      </select>
+    </label>
+  );
+}
 
 export function DocumentDetails({
   mode = "upload",
@@ -129,11 +151,11 @@ export function DocumentDetails({
       )}
 
       {mode === "upload" && (
-        <div className="metadata-grid">
+        <div className="metadata-grid metadata-grid--document" data-future-field="term">
+          <label>Subject<input value={draft.subject} onChange={(event) => update("subject", event.target.value)} placeholder="Mathematics" disabled={busy} /></label>
+          <AssessmentTypeField value={draft.exam_type} onChange={(event) => update("exam_type", event.target.value)} disabled={busy} />
           <label>Paper<select value={draft.paper} onChange={(event) => update("paper", event.target.value)} disabled={busy}><option value="">Not supplied</option><option value="PAPER 1">Paper 1</option><option value="PAPER 2">Paper 2</option></select></label>
           <label>Year<input type="number" min="2000" max="2100" value={draft.year} onChange={(event) => update("year", event.target.value)} disabled={busy} /></label>
-          <label>Assessment type<input value={draft.exam_type} onChange={(event) => update("exam_type", event.target.value)} placeholder="Preparatory Examination" disabled={busy} /></label>
-          <label>Subject<input value={draft.subject} onChange={(event) => update("subject", event.target.value)} placeholder="Mathematics" disabled={busy} /></label>
         </div>
       )}
 
@@ -142,11 +164,11 @@ export function DocumentDetails({
       ) && (
         <details className="metadata-optional">
           <summary>Other document details (optional)</summary>
-          <div className="metadata-grid">
+          <div className="metadata-grid metadata-grid--document" data-future-field="term">
+            {!provenance.subject?.source_present && <label>Subject<input value={draft.subject} onChange={(event) => update("subject", event.target.value)} placeholder="Mathematics" disabled={busy} /></label>}
+            {!provenance.exam_type?.source_present && <AssessmentTypeField value={draft.exam_type} onChange={(event) => update("exam_type", event.target.value)} disabled={busy} />}
             {!provenance.paper?.source_present && <label>Paper<select value={draft.paper} onChange={(event) => update("paper", event.target.value)} disabled={busy}><option value="">Not supplied</option><option value="PAPER 1">Paper 1</option><option value="PAPER 2">Paper 2</option></select></label>}
             {!provenance.year?.source_present && <label>Year<input type="number" min="2000" max="2100" value={draft.year} onChange={(event) => update("year", event.target.value)} disabled={busy} /></label>}
-            {!provenance.exam_type?.source_present && <label>Assessment type<input value={draft.exam_type} onChange={(event) => update("exam_type", event.target.value)} placeholder="Preparatory Examination" disabled={busy} /></label>}
-            {!provenance.subject?.source_present && <label>Subject<input value={draft.subject} onChange={(event) => update("subject", event.target.value)} placeholder="Mathematics" disabled={busy} /></label>}
           </div>
         </details>
       )}

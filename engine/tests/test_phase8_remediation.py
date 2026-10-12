@@ -128,15 +128,16 @@ def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
     ]
     assert _node(program, cases) == [False, False, False, True, True]
     html = PAGE.read_text(encoding="utf-8")
-    assert "setCorrectionTool(ex.category==='question_total_mismatch'?'typed':'content')" in html
+    assert "configureCorrectionTools(ex,rendered)" in html
+    assert "options.push(['content','Content'],['file','Evidence / Photo'])" in html
     assert "row.inserted||!boundedItemEditorAllowed(ex,row.question_id)" in html
 
 def test_long_processing_has_no_fixed_timeout_and_remains_resumable():
     html = PAGE.read_text(encoding="utf-8")
     assert "for(let i=0;i<300" not in html
     assert "Timed out waiting for Phase 7.5 revalidation" not in html
-    assert "Taking a little longer than usual — still working" in html
-    assert "You can close this page. Your work is saved." in html
+    assert "Estimated remaining" not in html
+    assert "You can safely leave this page and return later" in html
     assert "['failed','failed_retryable'].includes(j.status)" in html
     assert "monitorProcessing()" in html
 

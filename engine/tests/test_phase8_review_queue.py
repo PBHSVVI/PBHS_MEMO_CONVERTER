@@ -153,7 +153,7 @@ def test_progress_uses_server_backed_staged_subtraction_and_remaining_workload()
     assert ".eq('confirmation_status','confirmed').is('applied_at',null)" in html
     assert "loadReviewState()" in html
     assert "remaining=actionableReviewQueue(currentActive,staged).length" in html
-    assert "Review ${position} of ${count} remaining" in html
+    assert "Review ${position} / ${count}" in html
     assert "total=stagedDecisionCount+count" not in html
 
 

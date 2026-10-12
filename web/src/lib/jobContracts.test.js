@@ -46,9 +46,9 @@ describe("teacher job states", () => {
   });
 
   it("maps durable stages to teacher language", () => {
-    expect(teacherStage({ status: "processing", stage: "ingestion" })).toBe("Reading memo");
-    expect(teacherStage({ status: "processing", stage: "semantic_interpretation" })).toBe("Checking structure and mathematics");
-    expect(teacherStage({ status: "processing", stage: "rendering" })).toBe("Creating final memo");
+    expect(teacherStage({ status: "processing", stage: "ingestion" })).toBe("Reading your memo");
+    expect(teacherStage({ status: "processing", stage: "semantic_interpretation" })).toBe("Interpreting the marking guideline");
+    expect(teacherStage({ status: "processing", stage: "rendering" })).toBe("Creating Word and PDF files");
   });
 
   it("gates review, retry, and download actions by durable job status", () => {

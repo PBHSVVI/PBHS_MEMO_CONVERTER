@@ -19,11 +19,36 @@ import { reviewUrl } from "../lib/urls";
 import { DocumentDetails } from "./DocumentDetails";
 
 const POLL_MS = 6000;
+const PROCESSING_STEPS = [
+  "Reading your memo",
+  "Checking question structure",
+  "Interpreting the marking guideline",
+  "Preparing your document",
+  "Creating Word and PDF files",
+];
 
-export function ConversionProgress({ client, user, initialJob, onBack }) {
+const STAGE_STEP = {
+  ingestion: 0,
+  normalization: 0,
+  structure: 1,
+  semantic_interpretation: 2,
+  canonicalization: 3,
+  phase5_render_ready: 3,
+  rendering: 4,
+};
+
+function elapsedLabel(job, now) {
+  const started = new Date(job.started_at || job.created_at).getTime();
+  const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((now - started) / 1000)) : 0;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+export function ConversionProgress({ client, user, initialJob, onBack, onRevise = () => {} }) {
   const [job, setJob] = useState(initialJob);
   const [state, setState] = useState({ busy: "", error: "" });
   const [metadataDetails, setMetadataDetails] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
   const status = teacherStatus(job);
   const metadataReview = job?.status === "needs_review" &&
     job?.stage === "phase8_1b_metadata_review";
@@ -42,6 +67,12 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
     const timer = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(timer);
   }, [job?.status, refresh]);
+
+  useEffect(() => {
+    if (!ACTIVE_JOB_STATUSES.has(job?.status)) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [job?.status]);
 
   useEffect(() => {
     if (!metadataReview && job?.status !== "complete") return undefined;
@@ -96,22 +127,45 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
         !metadataDetails.provenance?.[field]?.confirmed_absent
     )
     : [];
+  const processingStep = STAGE_STEP[job?.stage] ?? 0;
+  const complete = canDownload(job);
 
   return (
     <main className="page-shell narrow">
       <button className="back-link" onClick={onBack}>← Recent conversions</button>
       <section className="panel progress-panel">
         <span className={`status-pill large ${status.tone}`}>{status.label}</span>
-        <h1>{job.source_filename || "Memo conversion"}</h1>
-        <p className="lede">{status.detail}</p>
+        {complete ? (
+          <div className="completion-heading">
+            <h1>Your memo is ready</h1>
+            <p className="completion-filename">{job.source_filename || "Converted memo"}</p>
+          </div>
+        ) : (
+          <>
+            <h1>{job.source_filename || "Memo conversion"}</h1>
+            <p className="lede">{status.detail}</p>
+          </>
+        )}
 
-        <div className="progress-track" aria-label="Conversion progress">
+        <div className={`progress-track${complete ? " complete" : ""}`} aria-label="Conversion progress">
           <span className={`progress-dot ${job.status === "complete" ? "done" : ""}`} />
           <div>
             <strong>{teacherStage(job)}</strong>
-            <p>Last updated {new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(job.updated_at || job.created_at))}</p>
+            {ACTIVE_JOB_STATUSES.has(job.status) ? (
+              <p>Elapsed {elapsedLabel(job, now)}</p>
+            ) : (
+              <p>Updated {new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(job.updated_at || job.created_at))}</p>
+            )}
           </div>
         </div>
+
+        {ACTIVE_JOB_STATUSES.has(job.status) && (
+          <ol className="progress-steps" aria-label="Conversion stages">
+            {PROCESSING_STEPS.map((step, index) => (
+              <li key={step} className={index < processingStep ? "done" : index === processingStep ? "current" : ""} aria-current={index === processingStep ? "step" : undefined}>{step}</li>
+            ))}
+          </ol>
+        )}
 
         {state.error && <p className="notice danger" role="alert">{state.error}</p>}
 
@@ -141,10 +195,8 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
           </div>
         )}
 
-        {canDownload(job) && (
-          <div className="action-card success-card">
-            <h2>Your memo is ready</h2>
-            <p>Download either format. Both files are private to your signed-in account.</p>
+        {complete && (
+          <div className="action-card success-card completion-card">
             <div className="button-row">
               <button className="button primary" onClick={() => download("docx")} disabled={Boolean(state.busy)}>
                 {state.busy === "docx" ? "Downloading…" : "Download Word"}
@@ -153,6 +205,7 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
                 {state.busy === "pdf" ? "Downloading…" : "Download PDF"}
               </button>
             </div>
+            <button className="button quiet revise-action" onClick={onRevise}>Create revised conversion</button>
             <details className="completed-metadata">
               <summary>Document details</summary>
               {metadataDetails ? (
@@ -196,7 +249,7 @@ export function ConversionProgress({ client, user, initialJob, onBack }) {
         )}
 
         {ACTIVE_JOB_STATUSES.has(job.status) && (
-          <p className="poll-note">This page checks for progress every few seconds. You may return to Recent conversions and come back later.</p>
+          <p className="poll-note">You can safely leave this page and return later. Progress is saved automatically.</p>
         )}
       </section>
     </main>

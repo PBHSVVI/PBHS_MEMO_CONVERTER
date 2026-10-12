@@ -85,9 +85,26 @@ describe("conversion outcomes", () => {
 
   it("shows both private download actions for a complete job", async () => {
     const job = { ...base, status: "complete" };
-    render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} />);
+    const onRevise = vi.fn();
+    render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} onRevise={onRevise} />);
+    expect(screen.getByRole("heading", { name: "Your memo is ready" })).toBeInTheDocument();
+    expect(screen.getByText("Paper 1 Memo.pdf")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Download Word" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download PDF" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create revised conversion" }));
+    expect(onRevise).toHaveBeenCalledOnce();
+  });
+
+  it("shows plain-language processing stages and a safe-leave message", () => {
+    const job = { ...base, status: "processing", stage: "semantic_interpretation", started_at: base.created_at };
+    render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} />);
+    expect(screen.getByText("Reading your memo")).toBeInTheDocument();
+    expect(screen.getByText("Checking question structure")).toBeInTheDocument();
+    expect(screen.getAllByText("Interpreting the marking guideline").length).toBeGreaterThan(0);
+    expect(screen.getByText("Preparing your document")).toBeInTheDocument();
+    expect(screen.getByText("Creating Word and PDF files")).toBeInTheDocument();
+    expect(screen.getByText(/You can safely leave this page/)).toBeInTheDocument();
+    expect(screen.queryByText(/phase/i)).not.toBeInTheDocument();
   });
 
   it("offers the supported retry action for failed_retryable", async () => {

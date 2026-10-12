@@ -25,6 +25,7 @@ describe("auth state routing", () => {
   it("shows sign in when there is no authenticated session", async () => {
     render(<App client={authClient(null)} />);
     expect(await screen.findByRole("heading", { name: "Memo Converter" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Pretoria Boys High School 125th anniversary crest" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 

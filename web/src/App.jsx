@@ -4,6 +4,7 @@ import { SignIn } from "./components/SignIn";
 import { Dashboard } from "./components/Dashboard";
 import { UploadMemo } from "./components/UploadMemo";
 import { ConversionProgress } from "./components/ConversionProgress";
+import { BrandCrest, BrandLockup } from "./components/BrandIdentity";
 
 export function App({ client = defaultClient }) {
   const [auth, setAuth] = useState({ loading: true, session: null });
@@ -45,8 +46,8 @@ export function App({ client = defaultClient }) {
     <div className="app">
       <header className="topbar">
         <button className="brand-button" onClick={dashboard}>
-          <span className="brand-small" aria-hidden="true">∑</span>
-          <span><strong>PBHS Mathematics</strong><small>Memo Converter</small></span>
+          <BrandCrest decorative />
+          <BrandLockup compact />
         </button>
         <div className="account">
           <span>{user.email}</span>
@@ -75,6 +76,7 @@ export function App({ client = defaultClient }) {
           user={user}
           initialJob={screen.job}
           onBack={dashboard}
+          onRevise={() => setScreen({ name: "upload", job: null })}
         />
       )}
     </div>
