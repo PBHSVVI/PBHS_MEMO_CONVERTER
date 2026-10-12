@@ -27,6 +27,98 @@ class Phase81BMetadataTests(unittest.TestCase):
         self.assertTrue(audit["teacher_conflict_ignored"])
         self.assertEqual(audit["teacher_metadata_revision"], 2)
 
+    def test_explicit_source_assessment_headers_are_detected(self) -> None:
+        cases = (
+            ("CLASS TEST", "CLASS TEST"),
+            ("STANDARDISED TEST", "STANDARDISED TEST"),
+            ("INVESTIGATION", "INVESTIGATION"),
+            ("EXAMINATION", "EXAMINATION"),
+            ("PREPARATORY EXAMINATION", "PREPARATORY EXAMINATION"),
+            ("class test", "CLASS TEST"),
+            ("Assessment: Class Test", "CLASS TEST"),
+            ("Assessment Type: Investigation", "INVESTIGATION"),
+            ("Type: Examination", "EXAMINATION"),
+            (
+                "MATHEMATICS 2026 CLASS TEST PAPER 1 FORM 5 TIME: 0.5 HOURS",
+                "CLASS TEST",
+            ),
+            (
+                "PREPARATORY EXAMINATION MATHEMATICS PAPER 2 2026",
+                "PREPARATORY EXAMINATION",
+            ),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                result = resolve_document_metadata(source, EMPTY)
+                self.assertEqual(result["effective"]["exam_type"], expected)
+                self.assertEqual(
+                    result["audit"]["fields"]["exam_type"]["selected_provenance"],
+                    "source",
+                )
+
+    def test_body_prose_does_not_become_assessment_type(self) -> None:
+        cases = (
+            "Test whether the following statement is true.",
+            "Investigate whether the graph is increasing.",
+            "During the examination of the graph, determine the intercepts.",
+            "The class test results are shown below.",
+            "QUESTION 1\nCLASS TEST",
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                result = resolve_document_metadata(source, EMPTY)
+                self.assertIsNone(result["effective"]["exam_type"])
+                self.assertEqual(
+                    result["audit"]["fields"]["exam_type"]["selected_provenance"],
+                    "absent",
+                )
+
+    def test_unknown_or_missing_assessment_type_remains_null(self) -> None:
+        for source in ("MATHEMATICS\nPAPER 1", "ASSESSMENT: WEEKLY QUIZ"):
+            with self.subTest(source=source):
+                result = resolve_document_metadata(source, EMPTY)
+                self.assertIsNone(result["effective"]["exam_type"])
+
+    def test_source_assessment_type_overrides_teacher_fallback(self) -> None:
+        result = resolve_document_metadata(
+            "CLASS TEST",
+            {
+                "schema_version": "1.0",
+                "values": {"exam_type": "INVESTIGATION"},
+                "confirmed_absent": [],
+            },
+        )
+        self.assertEqual(result["effective"]["exam_type"], "CLASS TEST")
+        field = result["audit"]["fields"]["exam_type"]
+        self.assertEqual(field["selected_provenance"], "source")
+        self.assertTrue(field["teacher_conflict_ignored"])
+
+    def test_teacher_assessment_type_fills_absent_source(self) -> None:
+        result = resolve_document_metadata(
+            "MATHEMATICS\nPAPER 1",
+            {
+                "schema_version": "1.0",
+                "values": {"exam_type": "class test"},
+                "confirmed_absent": [],
+            },
+        )
+        self.assertEqual(result["effective"]["exam_type"], "CLASS TEST")
+        self.assertEqual(
+            result["audit"]["fields"]["exam_type"]["selected_provenance"],
+            "teacher",
+        )
+
+    def test_multiple_source_assessment_types_fail_closed(self) -> None:
+        result = resolve_document_metadata(
+            "CLASS TEST\nPREPARATORY EXAMINATION",
+            EMPTY,
+        )
+        self.assertIsNone(result["effective"]["exam_type"])
+        self.assertEqual(
+            result["source_conflicts"]["exam_type"],
+            ["CLASS TEST", "PREPARATORY EXAMINATION"],
+        )
+
     def test_teacher_fills_missing_form_and_duration(self) -> None:
         result = resolve_document_metadata(
             "PREPARATORY EXAMINATION MATHEMATICS PAPER 2 2026",

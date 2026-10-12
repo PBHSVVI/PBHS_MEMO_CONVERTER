@@ -12,6 +12,25 @@ _YEAR_RE = re.compile(r"\b(20\d{2})\b")
 _PAPER_RE = re.compile(r"(?i)\bPAPER\s*([12])\b")
 _GRADE_RE = re.compile(r"(?i)\b(FORM|GRADE)\s*([0-9]{1,2})\b")
 _DURATION_RE = re.compile(r"(?i)\bTIME\s*[:=-]?\s*(\d+(?:[.,]\d+)?)\s*HOURS?\b")
+_ASSESSMENT_TYPES = (
+    "PREPARATORY EXAMINATION",
+    "STANDARDISED TEST",
+    "CLASS TEST",
+    "INVESTIGATION",
+    "EXAMINATION",
+)
+_ASSESSMENT_TYPE_PATTERN = "|".join(
+    re.escape(value) for value in _ASSESSMENT_TYPES
+)
+_LABELLED_ASSESSMENT_RE = re.compile(
+    rf"(?i)^(?:ASSESSMENT(?:\s+TYPE)?|TYPE)\s*[:=-]\s*({_ASSESSMENT_TYPE_PATTERN})$"
+)
+_QUESTION_START_RE = re.compile(
+    r"(?i)^(?:QUESTION\s+\d+\b|\d+(?:\.\d+)+(?:\s|$)|\d+[.)]\s)"
+)
+_COMPOSITE_HEADER_SIGNAL_RE = re.compile(
+    r"\b(?:MATHEMATICS|PAPER\s*[12]|(?:FORM|GRADE)\s*\d{1,2}|20\d{2}|TIME\s*[:=-])\b"
+)
 
 
 class MetadataValidationError(ValueError):
@@ -99,13 +118,50 @@ def _single_candidate(candidates: set[str | int]) -> tuple[str | int | None, lis
     return (None, ordered) if ordered else (None, [])
 
 
+def _assessment_type_candidates(text: str) -> set[str | int]:
+    candidates: set[str | int] = set()
+    header_lines: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if _QUESTION_START_RE.match(line):
+            break
+        header_lines.append(line)
+        if len(header_lines) >= 30:
+            break
+
+    for line in header_lines:
+        upper = line.upper()
+        if upper in _ASSESSMENT_TYPES:
+            candidates.add(upper)
+            continue
+        labelled = _LABELLED_ASSESSMENT_RE.fullmatch(line)
+        if labelled:
+            candidates.add(labelled.group(1).upper())
+            continue
+        # Preserve compact legacy headers that place several source fields on
+        # one all-uppercase line. Requiring a second header signal prevents
+        # ordinary mathematical prose from becoming assessment metadata.
+        if line == upper and _COMPOSITE_HEADER_SIGNAL_RE.search(upper):
+            matches = {
+                assessment_type
+                for assessment_type in _ASSESSMENT_TYPES
+                if re.search(rf"\b{re.escape(assessment_type)}\b", upper)
+            }
+            if "PREPARATORY EXAMINATION" in matches:
+                matches.discard("EXAMINATION")
+            candidates.update(matches)
+    return candidates
+
+
 def extract_source_metadata(text: str) -> tuple[dict[str, Any], dict[str, list[Any]]]:
     source_text = text or ""
     upper = source_text.upper()
     candidate_sets: dict[str, set[str | int]] = {
         "subject": {"MATHEMATICS"} if re.search(r"\bMATHEMATICS\b", upper) else set(),
         "paper": {f"PAPER {value}" for value in _PAPER_RE.findall(source_text)},
-        "exam_type": {"PREPARATORY EXAMINATION"} if re.search(r"\bPREPARATORY(?:\s+EXAMINATION)?\b", upper) else set(),
+        "exam_type": _assessment_type_candidates(source_text),
         "year": {int(value) for value in _YEAR_RE.findall(source_text)},
         "grade_label": {f"{kind.upper()} {int(number)}" for kind, number in _GRADE_RE.findall(source_text)},
         "duration_minutes": {int(round(float(value.replace(",", ".")) * 60)) for value in _DURATION_RE.findall(source_text)},
