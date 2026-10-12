@@ -161,6 +161,14 @@ class SupabaseRest:
             },
         )
 
+    def upsert_paper_library_summary(self, summary: dict[str, Any]) -> None:
+        self._request_json(
+            "POST",
+            "/rest/v1/paper_library_summary?on_conflict=job_id",
+            body=summary,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+
     def add_exceptions(
         self,
         job: dict[str, Any],

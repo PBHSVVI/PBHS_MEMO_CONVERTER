@@ -17,6 +17,7 @@ from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
 from .corrections import apply_confirmed_corrections, attach_correction_audit
 from .phase7_5 import enrich_structure_phase7_5
+from .library import paper_library_summary
 from .renderer import (
     RENDERER_VERSION,
     RENDER_PROFILE,
@@ -443,6 +444,7 @@ def run_job(job_id: str) -> int:
         )
         db.upload_json(BUCKET, canonical_path, canonical)
         db.upload_json(BUCKET, validation_path, validation)
+        db.upsert_paper_library_summary(paper_library_summary(job, canonical))
 
         # Publish a complete replacement review generation only after every
         # validation stage has computed successfully. The REST client inserts
@@ -534,6 +536,7 @@ def run_job(job_id: str) -> int:
                     "updated_at": utc_now(),
                 },
             )
+            db.upsert_paper_library_summary(paper_library_summary(job, canonical))
 
             db.add_event(
                 job,
@@ -614,6 +617,7 @@ def run_job(job_id: str) -> int:
                 "updated_at": utc_now(),
             },
         )
+        db.upsert_paper_library_summary(paper_library_summary(job, canonical))
 
         output_docx_path = f"{job['user_id']}/{job['id']}/output/memo.docx"
         output_pdf_path = f"{job['user_id']}/{job['id']}/output/memo.pdf"
@@ -716,6 +720,7 @@ def run_job(job_id: str) -> int:
                 "updated_at": completed_at,
             },
         )
+        db.upsert_paper_library_summary(paper_library_summary(job, canonical))
 
         db.add_event(
             job,

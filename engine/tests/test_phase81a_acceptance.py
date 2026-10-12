@@ -70,6 +70,7 @@ def test_read_only_client_exposes_no_mutating_api():
     for name in (
         "patch_job", "add_event", "add_exceptions", "upload_object",
         "upload_json", "mark_corrections_applied",
+        "upsert_paper_library_summary",
         "supersede_unresolved_exceptions",
     ):
         assert not hasattr(client, name)
@@ -101,6 +102,7 @@ def test_acceptance_module_does_not_import_or_call_production_lifecycle():
     for mutation in (
         ".patch_job(", ".add_event(", ".add_exceptions(",
         ".upload_object(", ".upload_json(", ".mark_corrections_applied(",
+        ".upsert_paper_library_summary(",
     ):
         assert mutation not in source
 
