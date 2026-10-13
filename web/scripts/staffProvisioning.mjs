@@ -95,7 +95,7 @@ export function validateInviteRedirect(value) {
   if (!hosted && !local) {
     throw new ProvisioningError("INVALID_REDIRECT", "Invite redirect must use the PBHS Teacher App or local development host.");
   }
-  url.searchParams.set("onboarding", "invite");
+  url.searchParams.set("onboarding", "setup");
   return url.toString();
 }
 
@@ -129,7 +129,7 @@ export function classifyProvisioningState(recordInput, users = [], profiles = []
   if (user && profile && profile.user_id !== user.id) {
     throw new ProvisioningError("AUTH_PROFILE_MISMATCH", "The email is linked to a different profile UUID.", "Resolve the identity mismatch before changing any profile.");
   }
-  if (!user) return { record, state: "new", user: null, profile: null, planned: ["create_invite", "create_profile"] };
+  if (!user) return { record, state: "new", user: null, profile: null, planned: ["create_auth_identity", "create_profile"] };
   if (!profile) {
     return {
       record,
@@ -143,7 +143,7 @@ export function classifyProvisioningState(recordInput, users = [], profiles = []
   if (!profile.active) return { record, state: "inactive_profile", user, profile, differences, planned: ["admin_review"] };
   if (differences.length) return { record, state: "profile_conflict", user, profile, differences, planned: ["explicit_profile_update"] };
   if (isConfirmed(user)) return { record, state: "active_confirmed", user, profile, differences: [], planned: [] };
-  return { record, state: "invite_pending", user, profile, differences: [], planned: ["optional_invite_reissue"] };
+  return { record, state: "setup_pending", user, profile, differences: [], planned: ["send_setup_page"] };
 }
 
 export function safeProvisioningReport(classification, dryRun = true) {
@@ -169,7 +169,6 @@ export async function provisionStaff({
   reissueInvite = false,
   repairProfile = false,
   updateProfile = false,
-  onInvite = () => {},
 }) {
   const record = validateStaffRecord(input);
   const redirect = validateInviteRedirect(redirectTo);
@@ -184,16 +183,14 @@ export async function provisionStaff({
   if (dryRun) return safeProvisioningReport(current, true);
 
   if (current.state === "new") {
-    const invitation = await admin.generateInvite(record.email, redirect);
-    const user = invitation.user;
-    if (!user?.id || !invitation.actionLink) {
-      throw new ProvisioningError("INVITE_RESPONSE_INVALID", "Supabase did not return a complete invitation.");
+    const user = await admin.createUser(record.email, record.display_name);
+    if (!user?.id) {
+      throw new ProvisioningError("CREATE_USER_RESPONSE_INVALID", "Supabase did not return a complete Auth identity.");
     }
     await admin.setSafeIdentity(user.id, record.display_name, user.app_metadata);
     await admin.createProfile({ user_id: user.id, ...record, active: true });
-    await onInvite(invitation.actionLink);
-    current = { ...current, state: "invited", user, profile: { user_id: user.id, ...record, active: true }, planned: [] };
-    return { ...safeProvisioningReport(current, false), invite_generated: true };
+    current = { ...current, state: "setup_ready", user, profile: { user_id: user.id, ...record, active: true }, planned: [] };
+    return { ...safeProvisioningReport(current, false), setup_url: redirect, invite_generated: false };
   }
 
   if (["confirmed_auth_profile_missing", "invited_auth_profile_missing"].includes(current.state)) {
@@ -202,11 +199,6 @@ export async function provisionStaff({
     }
     await admin.setSafeIdentity(current.user.id, record.display_name, current.user.app_metadata);
     await admin.createProfile({ user_id: current.user.id, ...record, active: true });
-    if (current.state === "invited_auth_profile_missing" && reissueInvite) {
-      const invitation = await admin.generateInvite(record.email, redirect);
-      await onInvite(invitation.actionLink);
-      return { ...safeProvisioningReport({ ...current, state: "profile_repaired", profile: { user_id: current.user.id } }, false), invite_generated: true };
-    }
     return { ...safeProvisioningReport({ ...current, state: "profile_repaired", profile: { user_id: current.user.id } }, false), invite_generated: false };
   }
 
@@ -219,10 +211,8 @@ export async function provisionStaff({
     return { ...safeProvisioningReport({ ...current, state: "profile_updated", differences: [] }, false), invite_generated: false };
   }
 
-  if (current.state === "invite_pending" && reissueInvite) {
-    const invitation = await admin.generateInvite(record.email, redirect);
-    await onInvite(invitation.actionLink);
-    return { ...safeProvisioningReport({ ...current, state: "invite_reissued" }, false), invite_generated: true };
+  if (current.state === "setup_pending" && reissueInvite) {
+    throw new ProvisioningError("RAW_INVITES_DISABLED", "Raw one-time invitation links are disabled.", "Send the permanent PBHS account setup page instead.");
   }
 
   if (current.state === "inactive_profile") {
@@ -264,14 +254,16 @@ export function createSupabaseAdmin({ url, secret, fetchImpl = fetch }) {
     async listProfilesByUserId(userId) {
       return request(`/rest/v1/department_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,display_name,email,role,hod_scope,active`);
     },
-    async generateInvite(email, redirectTo) {
-      const result = await request(`/auth/v1/admin/generate_link?redirect_to=${encodeURIComponent(redirectTo)}`, {
+    async createUser(email, displayName) {
+      const result = await request("/auth/v1/admin/users", {
         method: "POST",
-        body: JSON.stringify({ type: "invite", email }),
+        body: JSON.stringify({
+          email,
+          email_confirm: true,
+          app_metadata: { pbhs_display_name: displayName },
+        }),
       });
-      const user = result?.user || (result?.id && result?.email ? result : null);
-      const actionLink = result?.properties?.action_link || result?.action_link || null;
-      return { user, actionLink };
+      return result?.user || (result?.id && result?.email ? result : null);
     },
     async setSafeIdentity(userId, displayName, currentAppMetadata = {}) {
       return request(`/auth/v1/admin/users/${encodeURIComponent(userId)}`, {

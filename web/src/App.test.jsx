@@ -9,9 +9,12 @@ function authClient(session) {
       getSession: vi.fn(async () => ({ data: { session } })),
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe } } })),
       signInWithPassword: vi.fn(),
+      signInWithOtp: vi.fn(async () => ({ error: null })),
+      verifyOtp: vi.fn(),
       signOut: vi.fn(),
       updateUser: vi.fn(),
     },
+    rpc: vi.fn(),
     from: vi.fn(() => ({
       select: () => ({
         order: () => ({
@@ -40,26 +43,33 @@ describe("auth state routing", () => {
     expect(screen.getByText("teacher@pbhs.example")).toBeInTheDocument();
   });
 
-  it("routes an expired invite to a safe reissue message", async () => {
+  it("routes an obsolete invite to the harmless code setup page", async () => {
     window.history.replaceState({}, "", "/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=invite&error_code=otp_expired");
     render(<App client={authClient(null)} />);
-    expect(await screen.findByText(/This invitation has expired/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Return to sign in" })).toBeInTheDocument();
+    expect(await screen.findByText(/now uses a code/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set up my account" }));
+    expect(await screen.findByRole("heading", { name: "Create your PBHS Mathematics account" })).toBeInTheDocument();
     window.history.replaceState({}, "", "/");
   });
 
-  it("finishes invite setup at the normal sign-in screen", async () => {
-    window.history.replaceState({}, "", "/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=invite");
-    const client = authClient({ user: { id: "7699652c-9795-40e6-a730-ac38c18f5a86", email: "teacher@pbhs.example", app_metadata: { pbhs_display_name: "Teacher Example" } } });
-    client.auth.updateUser.mockResolvedValue({ error: null });
-    client.auth.signOut.mockResolvedValue({ error: null });
-    render(<App client={client} />);
-    fireEvent.change(await screen.findByLabelText("Create password"), { target: { value: "StrongPassword9!" } });
-    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "StrongPassword9!" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create my account" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("account is ready");
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
-    expect(client.auth.signOut).toHaveBeenCalledTimes(1);
+  it("scanner GETs of the setup page do not consume or modify an account", async () => {
+    window.history.replaceState({}, "", "/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=setup");
+    const first = authClient(null);
+    const view = render(<App client={first} />);
+    expect(await screen.findByRole("heading", { name: "Create your PBHS Mathematics account" })).toBeInTheDocument();
+    expect(first.auth.signInWithOtp).not.toHaveBeenCalled();
+    expect(first.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(first.auth.updateUser).not.toHaveBeenCalled();
+    expect(first.auth.signOut).not.toHaveBeenCalled();
+    view.unmount();
+
+    const second = authClient(null);
+    render(<App client={second} />);
+    expect(await screen.findByRole("heading", { name: "Create your PBHS Mathematics account" })).toBeInTheDocument();
+    expect(second.auth.signInWithOtp).not.toHaveBeenCalled();
+    expect(second.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(second.auth.updateUser).not.toHaveBeenCalled();
+    expect(second.auth.signOut).not.toHaveBeenCalled();
     window.history.replaceState({}, "", "/");
   });
 });

@@ -53,4 +53,5 @@ def test_expected_migration_history_is_explicit():
         "0006_phase81b_teacher_metadata.sql",
         "0007_phase83a_department_library.sql",
         "0008_support_incidents.sql",
+        "0009_scanner_safe_onboarding.sql",
     }

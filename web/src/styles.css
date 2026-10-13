@@ -156,6 +156,8 @@ p { line-height: 1.55; }
 .invite-identity { display: grid; gap: 3px; margin: var(--space-4) 0; padding: 12px 14px; border-left: 4px solid var(--pbhs-gold); background: var(--pbhs-surface-muted); }
 .invite-identity strong { color: var(--navy); }
 .invite-identity span { color: var(--ink-muted); word-break: break-word; }
+.setup-code { text-align: center; font-size: 1.35rem; font-weight: 800; letter-spacing: .18em; }
+.setup-resend { margin-top: var(--space-2); }
 .password-requirements { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: -3px 0 var(--space-4); padding: 0; color: var(--ink-muted); font-size: .82rem; list-style: none; }
 .password-requirements li::before { content: "○"; margin-right: 7px; color: var(--pbhs-red); font-weight: 900; }
 .password-requirements li.met { color: var(--pbhs-green); }

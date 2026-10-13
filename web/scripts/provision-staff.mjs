@@ -58,7 +58,7 @@ async function loadInput(values) {
 async function main() {
   const { values, flags } = argumentsFrom(process.argv.slice(2));
   const input = validateStaffRecord(await loadInput(values));
-  const redirectTo = validateInviteRedirect(values["--redirect-to"] || process.env.PBHS_INVITE_REDIRECT || "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=invite");
+  const redirectTo = validateInviteRedirect(values["--redirect-to"] || process.env.PBHS_INVITE_REDIRECT || "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=setup");
   const url = process.env.SUPABASE_URL;
   const credentialAvailable = Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (flags.has("--dry-run") && (!url || !credentialAvailable)) {
@@ -74,10 +74,6 @@ async function main() {
   const result = await provisionStaff({
     admin, input, redirectTo, dryRun: flags.has("--dry-run"),
     reissueInvite: flags.has("--reissue-invite"), repairProfile: flags.has("--repair-profile"), updateProfile: flags.has("--update-profile"),
-    onInvite: async (link) => {
-      process.stderr.write("One-time invitation link — deliver immediately through official PBHS email; do not save it:\n");
-      process.stderr.write(`${link}\n`);
-    },
   });
   console.log(JSON.stringify(redactSensitiveValue(result), null, 2));
 }

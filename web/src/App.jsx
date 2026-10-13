@@ -46,17 +46,23 @@ export function App({ client = defaultClient }) {
     window.history.replaceState({}, "", normalSignInUrl());
     setInviteRoute({ active: false, expired: false, errorCode: null });
   };
+  const openCodeSetup = () => {
+    const url = new URL(window.location.href);
+    url.search = "?onboarding=setup";
+    url.hash = "";
+    window.history.replaceState({}, "", url);
+    setInviteRoute({ active: true, expired: false, errorCode: null });
+  };
   const finishOnboarding = () => {
     setAuth({ loading: false, session: null });
     setSetupComplete(true);
     returnToSignIn();
   };
-  if (inviteRoute.expired) return <ExpiredInvitation onSignIn={returnToSignIn} />;
+  if (inviteRoute.expired) return <ExpiredInvitation onSetup={openCodeSetup} />;
   if (auth.loading) {
     return <main className="center-message"><p>Opening your teacher workspace…</p></main>;
   }
-  if (inviteRoute.active && !auth.session) return <ExpiredInvitation onSignIn={returnToSignIn} />;
-  if (inviteRoute.active) return <InviteOnboarding client={client} session={auth.session} onComplete={finishOnboarding} />;
+  if (inviteRoute.active) return <InviteOnboarding client={client} onComplete={finishOnboarding} />;
   if (!auth.session) return <SignIn client={client} setupComplete={setupComplete} />;
 
   const user = auth.session.user;

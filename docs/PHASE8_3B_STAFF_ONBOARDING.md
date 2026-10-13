@@ -1,26 +1,50 @@
-# Phase 8.3B — Secure Staff Invitation Foundation
+# Phase 8.3B — Secure Staff Onboarding Foundation
 
-Status: local implementation complete with hosted synthetic Auth/RLS validation
-on `wgkydsildfmbqzvicuwm`. The frontend and utility have not been pushed or
-deployed. No real PBHS staff have been provisioned.
+Status: scanner-safe code onboarding is implemented locally. The validation-only
+profile-status RPC is deployed on `wgkydsildfmbqzvicuwm`. Full hosted email
+delivery remains blocked until that Free-plan project has Custom SMTP, because
+Supabase does not permit custom Auth templates with its default mail provider.
+The frontend and provisioning utility have not been pushed or deployed by this
+change. No real PBHS staff were provisioned.
 
-## Architecture
+The validation project passed the native Auth lifecycle through a temporary,
+removed test harness: harmless scanner GETs, invalid/replayed OTP denial,
+single-use OTP verification, active/missing/inactive profile decisions, password
+policy enforcement, forced sign-out, normal password login, unprovisioned-user
+denial, and recovery of an existing unconfirmed invite-era identity. Synthetic
+identities and profiles were deleted after the run.
 
-Staff onboarding is invitation-only. A trusted administrator runs
+## Scanner-safe architecture
+
+Staff onboarding remains administrator-provisioned. A trusted administrator runs
 `web/scripts/provision-staff.mjs` with staff identity, application role, and any
 HOD subject scope supplied at runtime. The utility uses the Supabase Admin API to
-generate a one-time `invite` action link without invoking Supabase SMTP. Once it
-has the Auth UUID, it creates the matching `department_profiles` row through the
-trusted service role.
+create a confirmed Auth identity with no password and no consumable invite URL.
+Once it has the Auth UUID, it creates the matching `department_profiles` row
+through the trusted secret-key client.
 
-The action link redirects to:
+The administrator gives staff this permanent page:
 
-`https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=invite`
+`https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=setup`
 
-The Teacher App displays the PBHS crest, safe name and email, then asks the
-teacher to choose and confirm a password. After Auth accepts the password, the
-invite session is signed out and the normal Sign In view confirms that setup is
-complete. The app exposes no public signup control.
+The page contains no token. The teacher enters their email, and the app calls
+`signInWithOtp` with `shouldCreateUser: false`. The Magic Link Auth template must
+contain `{{ .Token }}` and must not contain `{{ .ConfirmationURL }}` or
+`{{ .TokenHash }}`. The teacher enters the code, the app verifies it with
+`verifyOtp({ email, token, type: "email" })`, and a boolean-only RPC confirms an
+active department profile. The teacher can then set a password. The app signs
+the setup session out before returning to normal password sign-in.
+
+Email security scanners can GET the permanent setup URL repeatedly without
+touching Auth state. No consumable Auth credential appears in the URL or email
+link. Only manual code submission reaches the OTP verification endpoint.
+
+Supabase email OTP is technically available to every existing email-provider
+identity, including a staff member who already has a password. The normal Sign
+In screen does not expose passwordless login, but possession of the staff
+mailbox plus the permanent setup page can establish a session and replace that
+account's password. This is the intended recovery model for the pilot and should
+be reviewed alongside PBHS mailbox security before the wider rollout.
 
 ## Authorization boundary
 
@@ -32,17 +56,21 @@ permission. Existing RLS follows:
 
 `auth.uid() -> department_profiles -> memo_private helpers -> RLS`
 
-Active department members may read resolved Mathematics and FS Mathematics
-summaries. Teachers may write only their own papers. Each HOD may additionally
-write other staff papers in the HOD's exact subject scope, while retaining
-owner-write access for their own papers in the other scope. Unresolved scope
-fails closed.
+The onboarding RPC returns only a boolean active-membership fact. It does not
+expose profile rows, role, scope, or other staff data.
 
-## Password controls
+## Password and OTP controls
 
 The onboarding UI requires at least 12 characters containing lowercase,
 uppercase, a digit, and a symbol before it calls Supabase Auth. Supabase remains
 the final password authority. Password-manager use is recommended.
+
+OTP expiry and resend throttling remain Supabase Auth policy. The setup screen
+reports invalid, expired, and used codes with one safe message and lets the
+teacher request a new code. The validation baseline observed before the blocked
+template update was an eight-digit code, one-hour expiry, one-minute resend
+frequency, and 30 verification attempts per five minutes. Production values must
+be reviewed before rollout and must not be weakened for convenience.
 
 Leaked Password Protection is unavailable on the current Supabase Free plan. It
 may be enabled later on a qualifying plan; the app does not claim that this check
@@ -51,54 +79,61 @@ is active.
 ## Dry run and duplicate handling
 
 `--dry-run` validates the input and, when trusted runtime credentials are
-available, reads existing Auth/profile state without creating an identity,
-invitation, or profile. Without credentials it performs offline validation and
-reports that existing state was not checked.
+available, reads existing Auth/profile state without creating an identity or
+profile. Without credentials it performs offline validation and reports that
+existing state was not checked.
 
-The utility distinguishes new, invite-pending, confirmed, missing-profile,
+The utility distinguishes new, setup-pending, confirmed, missing-profile,
 inactive, mismatched, and conflicting-profile states. It refuses silent account
-duplication and requires explicit `--repair-profile`, `--update-profile`, or
-`--reissue-invite` intent for the corresponding administrative action. An
-expired link is reissued against the existing unconfirmed identity and profile;
-it never creates a second profile.
+duplication and requires explicit `--repair-profile` or `--update-profile` intent
+for those administrative actions. Raw invite reissue is refused. Staff receive
+the same permanent setup URL and request a fresh code from Auth.
 
 ## Secret handling
 
 The trusted utility prefers a modern Supabase `sb_secret_...` key supplied only
 as `SUPABASE_SECRET_KEY`. Its deprecated `SUPABASE_SERVICE_ROLE_KEY` fallback is
-retained temporarily for the provisioning CLI and is never preferred. The
-hosted validation harness requires the modern variable and does not accept the
-legacy fallback.
+retained temporarily for the provisioning CLI and is never preferred. Hosted
+validation requires modern publishable and secret credentials.
 
-Admin keys, passwords, and action links are runtime-only. The safe JSON result
-contains only state and UUID diagnostics. An actual action link is shown once to
-the administrator for immediate delivery through official PBHS email. It is not
-stored in the database, source tree, documentation, fixtures, or durable test
-logs. Hosted automation must keep the link in memory and redact token material.
-Structured and text diagnostics redact modern secrets, JWT-shaped legacy keys,
-invite tokens, passwords, and authorization/API-key headers before output.
+Admin keys, OTPs, passwords, and any historical action links are runtime-only.
+Safe reports redact modern secrets, JWT-shaped legacy keys, invite tokens,
+passwords, and authorization/API-key headers. Private JSON/CSV inputs belong in
+the ignored `provisioning-private/` directory.
 
-Private JSON/CSV inputs belong outside tracked files; `provisioning-private/` is
-ignored as a local convenience. No real staff list belongs in this repository.
+## Historical invite-link implementation
 
-## Expiry and reissue
+Phase 8.3B originally generated one-time Supabase invite action links. That
+implementation was correctly validated for identity/profile idempotency and RLS,
+but institutional link scanning consumed Amanda's link before she opened it.
+The scanner-safe change preserves those provisioning and authorization lessons
+while replacing link delivery. Historical records and commits remain valid
+evidence of the earlier implementation; they are not rewritten as though
+code-based onboarding existed from the beginning.
 
-Supabase's configured invite expiry remains unchanged. The Teacher App reports:
+## Hosted Auth configuration
 
-> This invitation has expired. Ask the Mathematics Department administrator for
-> a new invitation.
+For each approved project, an administrator must:
 
-The administrator verifies the identity and uses `--reissue-invite`. Expiry must
-not be weakened for convenience.
+1. Configure Custom SMTP. Resend is recommended for the wider rollout; use a
+   verified PBHS-controlled sending domain rather than `onboarding@resend.dev`.
+2. In **Authentication → Email Templates → Magic Link**, copy
+   `supabase/templates/pbhs_setup_otp.html`. Confirm that the template contains
+   `{{ .Token }}` and contains no `ConfirmationURL` or `TokenHash`.
+3. Set the Site URL to the Teacher App base URL and allow the permanent
+   `?onboarding=setup` URL.
+4. Disable project-wide public signup. Keep the email provider enabled so
+   existing users can use OTP and password login; the app additionally sends
+   `shouldCreateUser: false`.
+5. Keep minimum password length 12 with lowercase, uppercase, digits, and
+   symbols.
+6. Review OTP expiry, code length, email frequency, and verification rate limits.
+
+Default Supabase Auth mail is not sufficient for this Free-plan rollout because
+that plan/provider combination does not allow the required code-only template.
 
 ## Stop boundary
 
-Before a reviewed production deployment, production Auth configuration must add
-the exact onboarding redirect URL and set the minimum password length to 12 with
-the strongest available mixed-character requirement. These are Auth
-configuration changes, not a database migration. Validation uses the exact
-hosted redirect and rejects weak passwords server-side.
-
-Do not provision real staff, send invitations, backfill production library data,
-or expose the Department Library dashboard until Phase 8.3B has been reviewed
-and separately approved for rollout.
+Do not change production Auth configuration, deploy the frontend, send Amanda an
+OTP, alter her identity/profile, provision other staff, or begin the wider staff
+rollout without a separate reviewed production approval.

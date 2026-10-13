@@ -18,7 +18,7 @@ function admin(overrides = {}) {
     listUsersByEmail: vi.fn(async () => []),
     listProfilesByEmail: vi.fn(async () => []),
     listProfilesByUserId: vi.fn(async () => []),
-    generateInvite: vi.fn(async () => ({ user, actionLink: "https://example.invalid/verify?token=sensitive" })),
+    createUser: vi.fn(async () => user),
     setSafeIdentity: vi.fn(async () => {}),
     createProfile: vi.fn(async () => {}),
     updateProfile: vi.fn(async () => {}),
@@ -65,38 +65,45 @@ describe("trusted staff provisioning", () => {
   it("dry run reports intended changes and causes zero mutation", async () => {
     const client = admin();
     const result = await provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/", dryRun: true });
-    expect(result).toMatchObject({ dry_run: true, state: "new", planned_actions: ["create_invite", "create_profile"] });
-    expect(client.generateInvite).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ dry_run: true, state: "new", planned_actions: ["create_auth_identity", "create_profile"] });
+    expect(client.createUser).not.toHaveBeenCalled();
     expect(client.createProfile).not.toHaveBeenCalled();
     expect(client.setSafeIdentity).not.toHaveBeenCalled();
   });
 
-  it("creates one invite and one profile without returning token material", async () => {
+  it("creates one confirmed Auth identity and one profile without raw invite material", async () => {
     const client = admin();
-    const captured = [];
-    const result = await provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/", onInvite: async (link) => captured.push(link) });
-    expect(client.generateInvite).toHaveBeenCalledTimes(1);
+    const result = await provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/" });
+    expect(client.createUser).toHaveBeenCalledWith(teacher.email, teacher.display_name);
     expect(client.createProfile).toHaveBeenCalledWith({ user_id: user.id, ...teacher, active: true });
     expect(client.setSafeIdentity).toHaveBeenCalledWith(user.id, teacher.display_name, undefined);
-    expect(captured).toHaveLength(1);
-    expect(JSON.stringify(result)).not.toContain("token=");
-    expect(result.invite_generated).toBe(true);
+    expect(result).toMatchObject({ state: "setup_ready", invite_generated: false });
+    expect(result.setup_url).toContain("onboarding=setup");
+    expect(JSON.stringify(result)).not.toMatch(/token=|action_link|invite_link/i);
   });
 
-  it("accepts the raw Admin REST invite response shape", async () => {
-    const response = { ...user, action_link: "https://example.invalid/verify?token=sensitive" };
+  it("creates a confirmed user through the Admin REST API without a password or invite URL", async () => {
+    const response = { ...user };
     const fetchImpl = vi.fn(async (url) => ({ ok: true, status: 200, json: async () => response }));
     const { createSupabaseAdmin } = await import("../../scripts/staffProvisioning.mjs");
     const restAdmin = createSupabaseAdmin({ url: "https://validation.supabase.co", secret: "runtime-only", fetchImpl });
-    const invite = await restAdmin.generateInvite(teacher.email, "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=invite");
-    expect(invite).toEqual({ user: expect.objectContaining({ id: user.id }), actionLink: response.action_link });
+    const created = await restAdmin.createUser(teacher.email, teacher.display_name);
+    expect(created).toEqual(expect.objectContaining({ id: user.id }));
+    const request = fetchImpl.mock.calls[0];
+    expect(request[0]).toContain("/auth/v1/admin/users");
+    expect(JSON.parse(request[1].body)).toEqual({
+      email: teacher.email,
+      email_confirm: true,
+      app_metadata: { pbhs_display_name: teacher.display_name },
+    });
+    expect(request[1].body).not.toContain("password");
   });
 
   it("does not silently duplicate or alter a confirmed account", async () => {
     const confirmed = { ...user, email_confirmed_at: "2026-10-12T01:00:00Z" };
     const client = admin({ listUsersByEmail: vi.fn(async () => [confirmed]), listProfilesByEmail: vi.fn(async () => [profile]) });
     await expect(provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/" })).rejects.toMatchObject({ code: "ALREADY_PROVISIONED" });
-    expect(client.generateInvite).not.toHaveBeenCalled();
+    expect(client.createUser).not.toHaveBeenCalled();
   });
 
   it("requires explicit repair for an existing Auth user with no profile", async () => {
@@ -105,11 +112,11 @@ describe("trusted staff provisioning", () => {
     expect(client.createProfile).not.toHaveBeenCalled();
   });
 
-  it("reissues an invite without creating a duplicate profile", async () => {
+  it("refuses raw invite reissue for a pending existing identity", async () => {
     const client = admin({ listUsersByEmail: vi.fn(async () => [user]), listProfilesByEmail: vi.fn(async () => [profile]) });
-    const result = await provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/", reissueInvite: true });
-    expect(result.state).toBe("invite_reissued");
-    expect(client.generateInvite).toHaveBeenCalledTimes(1);
+    await expect(provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/", reissueInvite: true }))
+      .rejects.toMatchObject({ code: "RAW_INVITES_DISABLED" });
+    expect(client.createUser).not.toHaveBeenCalled();
     expect(client.createProfile).not.toHaveBeenCalled();
     expect(client.updateProfile).not.toHaveBeenCalled();
   });

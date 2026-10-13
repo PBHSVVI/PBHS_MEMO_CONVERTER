@@ -1,5 +1,5 @@
 export const INVITE_EXPIRED_MESSAGE =
-  "This invitation has expired. Ask the Mathematics Department administrator for a new invitation.";
+  "That account setup link is no longer used. Open the PBHS Mathematics account setup page and request a new code.";
 
 export function passwordChecks(password) {
   return {
@@ -22,7 +22,8 @@ export function inviteRouteState(href = window.location.href) {
   const errorCode = query.get("error_code") || hash.get("error_code") || query.get("error") || hash.get("error");
   const description = query.get("error_description") || hash.get("error_description") || "";
   const expired = /expired|otp_expired/i.test(`${errorCode || ""} ${description}`);
-  const active = query.get("onboarding") === "invite" || query.get("type") === "invite" || hash.get("type") === "invite";
+  const onboarding = query.get("onboarding");
+  const active = onboarding === "setup" || onboarding === "invite" || query.get("type") === "invite" || hash.get("type") === "invite";
   return { active: active || expired, expired, errorCode: errorCode || null };
 }
 
