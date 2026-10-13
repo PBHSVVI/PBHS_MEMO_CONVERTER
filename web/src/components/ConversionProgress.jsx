@@ -19,6 +19,7 @@ import { reviewUrl } from "../lib/urls";
 import { DocumentDetails } from "./DocumentDetails";
 
 const POLL_MS = 6000;
+const NOOP = () => {};
 const PROCESSING_STEPS = [
   "Reading your memo",
   "Checking question structure",
@@ -44,7 +45,7 @@ function elapsedLabel(job, now) {
   return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-export function ConversionProgress({ client, user, initialJob, onBack, onRevise = () => {} }) {
+export function ConversionProgress({ client, user, initialJob, onBack, onRevise = NOOP, onJobChange = NOOP }) {
   const [job, setJob] = useState(initialJob);
   const [state, setState] = useState({ busy: "", error: "" });
   const [metadataDetails, setMetadataDetails] = useState(null);
@@ -55,11 +56,13 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
 
   const refresh = useCallback(async () => {
     try {
-      setJob(await getJob(client, initialJob.id));
+      const updated = await getJob(client, initialJob.id);
+      setJob(updated);
+      onJobChange(updated);
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
     }
-  }, [client, initialJob.id]);
+  }, [client, initialJob.id, onJobChange]);
 
   useEffect(() => {
     refresh();

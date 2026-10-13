@@ -2,3 +2,6 @@ project_id = "pbhs-gde-memo-builder"
 
 [functions.dispatch-memo]
 verify_jwt = true
+
+[functions.notify-support-incident]
+verify_jwt = true

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { configurationError, supabase as defaultClient } from "./lib/supabase";
 import { SignIn } from "./components/SignIn";
 import { Dashboard } from "./components/Dashboard";
@@ -7,12 +7,16 @@ import { ConversionProgress } from "./components/ConversionProgress";
 import { BrandCrest, BrandLockup } from "./components/BrandIdentity";
 import { ExpiredInvitation, InviteOnboarding } from "./components/InviteOnboarding";
 import { inviteRouteState, normalSignInUrl } from "./lib/inviteOnboarding";
+import { SupportIncident } from "./components/SupportIncident";
 
 export function App({ client = defaultClient }) {
   const [auth, setAuth] = useState({ loading: true, session: null });
   const [screen, setScreen] = useState({ name: "dashboard", job: null });
   const [inviteRoute, setInviteRoute] = useState(() => inviteRouteState());
   const [setupComplete, setSetupComplete] = useState(false);
+  const updateCurrentJob = useCallback((job) => {
+    setScreen((current) => current.name === "progress" ? { ...current, job } : current);
+  }, []);
 
   useEffect(() => {
     if (!client) {
@@ -66,6 +70,7 @@ export function App({ client = defaultClient }) {
           <BrandLockup compact />
         </button>
         <div className="account">
+          <SupportIncident client={client} user={user} context={{ job: screen.job, currentView: screen.name }} />
           <span className="account-identity"><small>Teacher workspace</small>{user.email}</span>
           <button className="button quiet" onClick={() => client.auth.signOut()}>Sign out</button>
         </div>
@@ -94,6 +99,7 @@ export function App({ client = defaultClient }) {
           initialJob={screen.job}
           onBack={dashboard}
           onRevise={() => setScreen({ name: "upload", job: null })}
+          onJobChange={updateCurrentJob}
         />
       )}
     </div>

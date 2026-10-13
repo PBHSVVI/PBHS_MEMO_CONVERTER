@@ -42,7 +42,7 @@ def test_responsive_contract_keeps_form_tabs_scrollable():
     assert ".paper-card" in css
 
 
-def test_phase84b_adds_no_migration_or_rls_storage_change():
+def test_expected_migration_history_is_explicit():
     migration_names = {path.name for path in MIGRATIONS.glob("*.sql")}
     assert migration_names == {
         "0001_core.sql",
@@ -52,4 +52,5 @@ def test_phase84b_adds_no_migration_or_rls_storage_change():
         "0005_phase7_correction_overlay_reconciliation.sql",
         "0006_phase81b_teacher_metadata.sql",
         "0007_phase83a_department_library.sql",
+        "0008_support_incidents.sql",
     }
