@@ -22,7 +22,7 @@ These are accessible interface colours derived provisionally from the supplied 2
 | Gold accent | `--pbhs-gold` | `#b98208` |
 | Accessible gold text | `--pbhs-gold-text` | `#775400` |
 | Semantic success | `--pbhs-green` | `#146b43` |
-| Working canvas | `--pbhs-canvas` | `#f4f5f4` |
+| Working canvas | `--pbhs-canvas` | `#eef1f0` |
 | Primary surface | `--pbhs-surface` | `#ffffff` |
 | Muted surface | `--pbhs-surface-muted` | `#f8f9f8` |
 | Secondary text | `--pbhs-muted` | `#59636d` |
