@@ -21,6 +21,12 @@ const JOB_COLUMNS = [
   "updated_at",
 ].join(",");
 
+const LIBRARY_COLUMNS = [
+  "job_id", "owner_user_id", "owner_display_name", "subject_scope", "subject_display",
+  "assessment_type", "term", "year", "paper", "grade_label", "workflow_bucket",
+  "status_source", "stage_source", "updated_at", "created_at", "source_filename",
+].join(",");
+
 export class PilotAppError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -41,6 +47,16 @@ export async function listRecentJobs(client, limit = 20) {
     .order("created_at", { ascending: false })
     .limit(limit);
   fail(error, "JOBS_LOAD_FAILED", "Your recent conversions could not be loaded.");
+  return data || [];
+}
+
+export async function listDepartmentPapers(client, limit = 200) {
+  const { data, error } = await client
+    .from("paper_library_summary")
+    .select(LIBRARY_COLUMNS)
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  fail(error, "LIBRARY_LOAD_FAILED", "The department paper library is not available for this account.");
   return data || [];
 }
 

@@ -74,6 +74,7 @@ export function App({ client = defaultClient }) {
       {screen.name === "dashboard" && (
         <Dashboard
           client={client}
+          user={user}
           onConvert={() => setScreen({ name: "upload", job: null })}
           onOpen={(job) => setScreen({ name: "progress", job })}
         />

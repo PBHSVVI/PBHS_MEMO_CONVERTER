@@ -266,7 +266,7 @@ def test_worker_publishes_canonical_summary_for_review_rendering_and_completion(
     assert any(index > complete for index in positions)
 
 
-def test_summary_contract_requires_no_browser_canonical_download():
+def test_summary_contract_uses_the_safe_browser_relation_without_profile_access():
     service = (ROOT / "web" / "src" / "lib" / "memoService.js").read_text(encoding="utf-8")
-    assert "paper_library_summary" not in service
+    assert '.from("paper_library_summary")' in service
     assert "department_profiles" not in service

@@ -34,8 +34,9 @@ describe("auth state routing", () => {
   it("opens the teacher dashboard for an authenticated session", async () => {
     const client = authClient({ user: { id: "7699652c-9795-40e6-a730-ac38c18f5a86", email: "teacher@pbhs.example" } });
     render(<App client={client} />);
-    expect(await screen.findByRole("heading", { name: "Convert a mathematics memo" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Mathematics papers" })).toBeInTheDocument();
     await waitFor(() => expect(client.from).toHaveBeenCalledWith("jobs"));
+    expect(client.from).toHaveBeenCalledWith("paper_library_summary");
     expect(screen.getByText("teacher@pbhs.example")).toBeInTheDocument();
   });
 

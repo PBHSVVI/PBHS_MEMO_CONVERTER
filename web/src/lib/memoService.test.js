@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAndDispatchJob, fetchOutput, retryJob } from "./memoService";
+import { createAndDispatchJob, fetchOutput, listDepartmentPapers, retryJob } from "./memoService";
 
 const user = { id: "7699652c-9795-40e6-a730-ac38c18f5a86" };
 const job = {
@@ -78,5 +78,18 @@ describe("private downloads", () => {
     await fetchOutput(client, user.id, job.id, "docx");
     expect(download).toHaveBeenCalledWith(`${user.id}/${job.id}/output/memo.docx`);
     expect(client.storage.from).toHaveBeenCalledWith("memo-files");
+  });
+});
+
+describe("department library", () => {
+  it("reads only the trusted summary relation and never other teachers' raw jobs", async () => {
+    const limit = vi.fn(async () => ({ data: [{ job_id: "summary" }], error: null }));
+    const order = vi.fn(() => ({ limit }));
+    const select = vi.fn(() => ({ order }));
+    const client = { from: vi.fn(() => ({ select })) };
+    await expect(listDepartmentPapers(client)).resolves.toEqual([{ job_id: "summary" }]);
+    expect(client.from).toHaveBeenCalledWith("paper_library_summary");
+    expect(select.mock.calls[0][0]).toContain("owner_display_name");
+    expect(order).toHaveBeenCalledWith("updated_at", { ascending: false });
   });
 });
