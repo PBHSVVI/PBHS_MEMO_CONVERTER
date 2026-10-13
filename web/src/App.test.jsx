@@ -55,8 +55,8 @@ describe("auth state routing", () => {
     render(<App client={client} />);
     fireEvent.change(await screen.findByLabelText("Create password"), { target: { value: "StrongPassword9!" } });
     fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "StrongPassword9!" } });
-    fireEvent.click(screen.getByRole("button", { name: "Set password" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Account setup complete");
+    fireEvent.click(screen.getByRole("button", { name: "Create my account" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("account is ready");
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(client.auth.signOut).toHaveBeenCalledTimes(1);
     window.history.replaceState({}, "", "/");

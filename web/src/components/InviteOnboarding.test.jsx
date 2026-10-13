@@ -25,7 +25,7 @@ describe("invite onboarding", () => {
     const fields = screen.getAllByLabelText(/password/i);
     fireEvent.change(fields[0], { target: { value: "weak" } });
     fireEvent.change(fields[1], { target: { value: "weak" } });
-    fireEvent.click(screen.getByRole("button", { name: "Set password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create my account" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("does not yet meet");
     expect(auth.auth.updateUser).not.toHaveBeenCalled();
   });
@@ -36,7 +36,7 @@ describe("invite onboarding", () => {
     const fields = screen.getAllByLabelText(/password/i);
     fireEvent.change(fields[0], { target: { value: "StrongPassword9!" } });
     fireEvent.change(fields[1], { target: { value: "StrongPassword9!" } });
-    fireEvent.click(screen.getByRole("button", { name: "Set password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create my account" }));
     await waitFor(() => expect(auth.auth.updateUser).toHaveBeenCalledWith({ password: "StrongPassword9!" }));
     expect(auth.auth.signOut).toHaveBeenCalledTimes(1);
     expect(complete).toHaveBeenCalledWith("synthetic@example.invalid");

@@ -52,7 +52,7 @@ export function Dashboard({ client, onConvert, onOpen }) {
           <h1>Convert a mathematics memo</h1>
           <p>Upload the memo, review only the decisions that need you, then download the finished Word and PDF files.</p>
         </div>
-        <button className="button primary" onClick={onConvert}>Convert a memo</button>
+        <button className="button primary" onClick={onConvert}>Upload memo</button>
       </section>
 
       <section className="panel">

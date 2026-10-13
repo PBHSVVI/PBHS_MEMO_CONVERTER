@@ -22,11 +22,14 @@ export function SignIn({ client, setupComplete = false }) {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <BrandCrest context="signin" />
-        <p className="eyebrow">PBHS Mathematics</p>
-        <h1>Memo Converter</h1>
+        <div className="auth-identity">
+          <BrandCrest context="signin" />
+          <p className="school-name">Pretoria Boys High School</p>
+          <p className="department-name">Mathematics Department</p>
+          <h1>Memo Converter</h1>
+        </div>
         <p className="lede">Turn a source memo into a checked, consistently formatted Word and PDF memo.</p>
-        {setupComplete && <p className="notice info" role="status">Account setup complete. Sign in with your email and new password.</p>}
+        {setupComplete && <p className="notice success" role="status">Your PBHS Mathematics account is ready. Sign in with your email and new password.</p>}
         <form onSubmit={submit}>
           <label>
             Email address

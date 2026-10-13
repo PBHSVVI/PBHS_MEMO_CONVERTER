@@ -15,8 +15,8 @@ export function BrandCrest({ context = "header", decorative = false }) {
 export function BrandLockup({ compact = false }) {
   return (
     <span className={`brand-lockup${compact ? " brand-lockup--compact" : ""}`}>
-      <strong>PBHS Mathematics</strong>
-      <small>Memo Converter</small>
+      <strong>Pretoria Boys High School</strong>
+      <small>Mathematics · Memo Converter</small>
     </span>
   );
 }

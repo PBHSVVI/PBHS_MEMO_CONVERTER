@@ -137,7 +137,8 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
         <span className={`status-pill large ${status.tone}`}>{status.label}</span>
         {complete ? (
           <div className="completion-heading">
-            <h1>Your memo is ready</h1>
+            <p className="eyebrow">Conversion complete</p>
+            <h1>Ready</h1>
             <p className="completion-filename">{job.source_filename || "Converted memo"}</p>
           </div>
         ) : (

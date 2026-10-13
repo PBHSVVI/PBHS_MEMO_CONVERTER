@@ -87,7 +87,7 @@ describe("conversion outcomes", () => {
     const job = { ...base, status: "complete" };
     const onRevise = vi.fn();
     render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} onRevise={onRevise} />);
-    expect(screen.getByRole("heading", { name: "Your memo is ready" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ready" })).toBeInTheDocument();
     expect(screen.getByText("Paper 1 Memo.pdf")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Download Word" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download PDF" })).toBeInTheDocument();

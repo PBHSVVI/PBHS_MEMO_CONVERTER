@@ -45,8 +45,11 @@ export function InviteOnboarding({ client, session, onComplete }) {
   return (
     <main className="auth-shell">
       <section className="auth-card onboarding-card">
-        <BrandCrest context="signin" />
-        <p className="eyebrow">PBHS Mathematics</p>
+        <div className="auth-identity auth-identity--compact">
+          <BrandCrest context="signin" />
+          <p className="school-name">Pretoria Boys High School</p>
+          <p className="department-name">Mathematics Department</p>
+        </div>
         <h1>Set up your PBHS Mathematics account</h1>
         <div className="invite-identity" aria-label="Invited staff identity">
           <strong>{identity.name}</strong>
@@ -60,7 +63,7 @@ export function InviteOnboarding({ client, session, onComplete }) {
           </ul>
           <label>Confirm password<input type="password" autoComplete="new-password" required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
           {state.error && <p className="notice danger" role="alert">{state.error}</p>}
-          <button className="button primary full" disabled={state.busy}>{state.busy ? "Setting up…" : "Set password"}</button>
+          <button className="button primary full" disabled={state.busy}>{state.busy ? "Creating account…" : "Create my account"}</button>
         </form>
         <p className="fine-print">A password manager is recommended. Compromised-password checking is not available on the current service plan.</p>
       </section>
@@ -72,8 +75,11 @@ export function ExpiredInvitation({ onSignIn }) {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <BrandCrest context="signin" />
-        <p className="eyebrow">PBHS Mathematics</p>
+        <div className="auth-identity auth-identity--compact">
+          <BrandCrest context="signin" />
+          <p className="school-name">Pretoria Boys High School</p>
+          <p className="department-name">Mathematics Department</p>
+        </div>
         <h1>Invitation unavailable</h1>
         <p className="notice danger" role="alert">{INVITE_EXPIRED_MESSAGE}</p>
         <button className="button primary full" onClick={onSignIn}>Return to sign in</button>

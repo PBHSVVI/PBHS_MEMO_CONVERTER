@@ -66,7 +66,7 @@ export function App({ client = defaultClient }) {
           <BrandLockup compact />
         </button>
         <div className="account">
-          <span>{user.email}</span>
+          <span className="account-identity"><small>Teacher workspace</small>{user.email}</span>
           <button className="button quiet" onClick={() => client.auth.signOut()}>Sign out</button>
         </div>
       </header>
