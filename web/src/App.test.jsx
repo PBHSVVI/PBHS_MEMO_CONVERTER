@@ -14,7 +14,8 @@ function authClient(session) {
       signOut: vi.fn(),
       updateUser: vi.fn(),
     },
-    rpc: vi.fn(),
+    rpc: vi.fn(async () => ({ data: "ready", error: null })),
+    functions: { invoke: vi.fn() },
     from: vi.fn(() => ({
       select: () => ({
         order: () => ({
@@ -41,6 +42,24 @@ describe("auth state routing", () => {
     await waitFor(() => expect(client.from).toHaveBeenCalledWith("jobs"));
     expect(client.from).toHaveBeenCalledWith("paper_library_summary");
     expect(screen.getByText("teacher@pbhs.example")).toBeInTheDocument();
+  });
+
+  it("blocks every workspace surface until a temporary password is replaced", async () => {
+    const client = authClient({ user: { id: "7699652c-9795-40e6-a730-ac38c18f5a86", email: "teacher@pbhs.example" } });
+    client.rpc.mockResolvedValue({ data: "password_change_required", error: null });
+    render(<App client={client} />);
+    expect(await screen.findByRole("heading", { name: "Choose your private password" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mathematics papers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload memo" })).not.toBeInTheDocument();
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a missing or inactive department profile", async () => {
+    const client = authClient({ user: { id: "7699652c-9795-40e6-a730-ac38c18f5a86", email: "teacher@pbhs.example" } });
+    client.rpc.mockResolvedValue({ data: "unavailable", error: null });
+    render(<App client={client} />);
+    expect(await screen.findByText(/account is not available/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mathematics papers" })).not.toBeInTheDocument();
   });
 
   it("routes an obsolete invite to the harmless code setup page", async () => {

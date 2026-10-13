@@ -29,7 +29,9 @@ export function SignIn({ client, setupComplete = false }) {
           <h1>Memo Converter</h1>
         </div>
         <p className="lede">Turn a source memo into a checked, consistently formatted Word and PDF memo.</p>
-        {setupComplete && <p className="notice success" role="status">Your PBHS Mathematics account is ready. Sign in with your email and new password.</p>}
+        {setupComplete && <p className="notice success" role="status">{setupComplete === "password"
+          ? <>Your password has been changed.<br />Please sign in again with your new password.</>
+          : "Your PBHS Mathematics account is ready. Sign in with your email and new password."}</p>}
         <form onSubmit={submit}>
           <label>
             Email address

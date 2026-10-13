@@ -23,8 +23,9 @@ def test_provisioning_is_trusted_runtime_only_and_creates_no_raw_invite():
     assert "process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY" in cli
     assert "--dry-run" in cli
     assert "--input" in cli
-    assert "--password" not in cli
-    assert "password:" not in source.lower()
+    assert "--temporary-password" in cli
+    assert "--staff-code" in cli
+    assert "temporary_password_supplied" in source
     assert "sb_secret_" in source
 
 
@@ -52,7 +53,8 @@ def test_safe_report_and_provisioning_exclude_invite_material():
     assert "action_link:" not in source
     report = source[source.index("export function safeProvisioningReport"):source.index("export async function provisionStaff")]
     assert "actionLink" not in report
-    assert "password" not in report.lower()
+    assert "temporary_password_supplied" in report
+    assert "staff_code" not in report
 
 
 def test_browser_has_code_onboarding_but_no_signup_path():
@@ -99,4 +101,4 @@ def test_documentation_records_free_plan_and_authorization_boundaries():
     assert "No real PBHS staff" in text
     assert "institutional link scanning consumed Amanda's link" in text
     assert "Custom SMTP" in text
-    assert "temporary password" not in text.lower()
+    assert "temporary password" in text.lower()

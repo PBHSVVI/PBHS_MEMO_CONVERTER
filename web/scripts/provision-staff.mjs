@@ -10,6 +10,7 @@ import {
   selectTrustedCredential,
   validateInviteRedirect,
   validateStaffRecord,
+  validateTemporaryPassword,
 } from "./staffProvisioning.mjs";
 
 function argumentsFrom(argv) {
@@ -18,7 +19,7 @@ function argumentsFrom(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (!value.startsWith("--")) throw new Error(`Unexpected argument: ${value}`);
-    if (["--dry-run", "--reissue-invite", "--repair-profile", "--update-profile"].includes(value)) flags.add(value);
+    if (["--dry-run", "--reissue-invite", "--repair-profile", "--update-profile", "--temporary-password"].includes(value)) flags.add(value);
     else values[value] = argv[++index];
   }
   return { values, flags };
@@ -43,7 +44,7 @@ function parseCsv(text) {
 
 async function loadInput(values) {
   if (!values["--input"]) {
-    return { email: values["--email"], display_name: values["--display-name"], role: values["--role"], hod_scope: values["--hod-scope"] };
+    return { email: values["--email"], display_name: values["--display-name"], role: values["--role"], hod_scope: values["--hod-scope"], staff_code: values["--staff-code"] };
   }
   const source = values["--input"] === "-"
     ? await new Promise((resolve, reject) => {
@@ -57,12 +58,21 @@ async function loadInput(values) {
 
 async function main() {
   const { values, flags } = argumentsFrom(process.argv.slice(2));
-  const input = validateStaffRecord(await loadInput(values));
+  const rawInput = await loadInput(values);
+  const input = validateStaffRecord(rawInput);
+  const temporaryMode = flags.has("--temporary-password");
+  const staffCode = rawInput?.staff_code == null || rawInput.staff_code === "" ? null : validateTemporaryPassword(rawInput.staff_code);
+  if (temporaryMode !== Boolean(staffCode)) {
+    throw new ProvisioningError(
+      "TEMPORARY_PASSWORD_INPUT_MISMATCH",
+      "Use --temporary-password together with exactly one runtime staff_code value.",
+    );
+  }
   const redirectTo = validateInviteRedirect(values["--redirect-to"] || process.env.PBHS_INVITE_REDIRECT || "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/?onboarding=setup");
   const url = process.env.SUPABASE_URL;
   const credentialAvailable = Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (flags.has("--dry-run") && (!url || !credentialAvailable)) {
-    console.log(JSON.stringify({ ...safeProvisioningReport({ record: input, state: "offline_validated", planned: ["existing_state_not_checked"] }, true), redirect: redirectTo }, null, 2));
+    console.log(JSON.stringify({ ...safeProvisioningReport({ record: input, state: "offline_validated", planned: ["existing_state_not_checked"] }, true, temporaryMode), redirect: redirectTo }, null, 2));
     return;
   }
   const credential = selectTrustedCredential(process.env);
@@ -74,6 +84,8 @@ async function main() {
   const result = await provisionStaff({
     admin, input, redirectTo, dryRun: flags.has("--dry-run"),
     reissueInvite: flags.has("--reissue-invite"), repairProfile: flags.has("--repair-profile"), updateProfile: flags.has("--update-profile"),
+    temporaryPassword: staffCode,
+    temporaryPasswordRecovery: temporaryMode,
   });
   console.log(JSON.stringify(redactSensitiveValue(result), null, 2));
 }

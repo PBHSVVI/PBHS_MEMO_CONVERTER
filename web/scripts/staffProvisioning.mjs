@@ -5,7 +5,8 @@ const MODERN_SECRET_PREFIX = "sb_secret_";
 const SENSITIVE_KEYS = new Set([
   "apikey", "authorization", "password", "access_token", "refresh_token",
   "token", "token_hash", "action_link", "actionlink", "invite_link",
-  "invitelink", "secret", "supabase_secret_key", "supabase_service_role_key",
+  "invitelink", "secret", "staff_code", "staffcode", "temporary_password",
+  "supabase_secret_key", "supabase_service_role_key",
 ]);
 
 export function redactSensitiveText(value) {
@@ -99,6 +100,17 @@ export function validateInviteRedirect(value) {
   return url.toString();
 }
 
+export function validateTemporaryPassword(value) {
+  const password = String(value || "");
+  if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    throw new ProvisioningError(
+      "INVALID_TEMPORARY_PASSWORD",
+      "The runtime staff code must meet the configured 12-character mixed-character password policy.",
+    );
+  }
+  return password;
+}
+
 function isConfirmed(user) {
   return Boolean(user?.email_confirmed_at || user?.confirmed_at);
 }
@@ -146,7 +158,7 @@ export function classifyProvisioningState(recordInput, users = [], profiles = []
   return { record, state: "setup_pending", user, profile, differences: [], planned: ["send_setup_page"] };
 }
 
-export function safeProvisioningReport(classification, dryRun = true) {
+export function safeProvisioningReport(classification, dryRun = true, temporaryPasswordSupplied = false) {
   return {
     dry_run: dryRun,
     email: classification.record.email,
@@ -158,6 +170,7 @@ export function safeProvisioningReport(classification, dryRun = true) {
     auth_user_id: classification.user?.id || null,
     profile_user_id: classification.profile?.user_id || null,
     profile_differences: classification.differences || [],
+    temporary_password_supplied: Boolean(temporaryPasswordSupplied),
   };
 }
 
@@ -169,8 +182,14 @@ export async function provisionStaff({
   reissueInvite = false,
   repairProfile = false,
   updateProfile = false,
+  temporaryPassword = null,
+  temporaryPasswordRecovery = false,
 }) {
   const record = validateStaffRecord(input);
+  const runtimePassword = temporaryPassword == null ? null : validateTemporaryPassword(temporaryPassword);
+  if (temporaryPasswordRecovery && !runtimePassword) {
+    throw new ProvisioningError("TEMPORARY_PASSWORD_REQUIRED", "Temporary-password recovery requires a runtime staff code.");
+  }
   const redirect = validateInviteRedirect(redirectTo);
   const users = await admin.listUsersByEmail(record.email);
   const emailProfiles = await admin.listProfilesByEmail(record.email);
@@ -180,17 +199,26 @@ export async function provisionStaff({
   const profiles = [...emailProfiles, ...userProfiles.filter((candidate) =>
     !emailProfiles.some((existing) => existing.user_id === candidate.user_id))];
   let current = classifyProvisioningState(record, users, profiles);
-  if (dryRun) return safeProvisioningReport(current, true);
+  if (runtimePassword) {
+    const planned = current.state === "new"
+      ? ["create_auth_identity", "set_temporary_password", "create_profile", "require_password_change"]
+      : temporaryPasswordRecovery && current.state === "active_confirmed"
+        ? ["preserve_auth_identity", "set_temporary_password", "require_password_change"]
+        : current.planned;
+    current = { ...current, planned };
+  }
+  if (dryRun) return safeProvisioningReport(current, true, Boolean(runtimePassword));
 
   if (current.state === "new") {
-    const user = await admin.createUser(record.email, record.display_name);
+    const user = await admin.createUser(record.email, record.display_name, runtimePassword);
     if (!user?.id) {
       throw new ProvisioningError("CREATE_USER_RESPONSE_INVALID", "Supabase did not return a complete Auth identity.");
     }
     await admin.setSafeIdentity(user.id, record.display_name, user.app_metadata);
-    await admin.createProfile({ user_id: user.id, ...record, active: true });
-    current = { ...current, state: "setup_ready", user, profile: { user_id: user.id, ...record, active: true }, planned: [] };
-    return { ...safeProvisioningReport(current, false), setup_url: redirect, invite_generated: false };
+    const profile = { user_id: user.id, ...record, active: true, must_change_password: Boolean(runtimePassword) };
+    await admin.createProfile(profile);
+    current = { ...current, state: runtimePassword ? "temporary_password_ready" : "setup_ready", user, profile, planned: [] };
+    return { ...safeProvisioningReport(current, false, Boolean(runtimePassword)), setup_url: redirect, invite_generated: false };
   }
 
   if (["confirmed_auth_profile_missing", "invited_auth_profile_missing"].includes(current.state)) {
@@ -198,8 +226,9 @@ export async function provisionStaff({
       throw new ProvisioningError("PROFILE_REPAIR_REQUIRED", "The Auth identity exists but its department profile is missing.", "Review the UUID, then rerun with --repair-profile.");
     }
     await admin.setSafeIdentity(current.user.id, record.display_name, current.user.app_metadata);
-    await admin.createProfile({ user_id: current.user.id, ...record, active: true });
-    return { ...safeProvisioningReport({ ...current, state: "profile_repaired", profile: { user_id: current.user.id } }, false), invite_generated: false };
+    if (runtimePassword) await admin.setTemporaryPassword(current.user.id, runtimePassword);
+    await admin.createProfile({ user_id: current.user.id, ...record, active: true, must_change_password: Boolean(runtimePassword) });
+    return { ...safeProvisioningReport({ ...current, state: "profile_repaired", profile: { user_id: current.user.id } }, false, Boolean(runtimePassword)), invite_generated: false };
   }
 
   if (current.state === "profile_conflict") {
@@ -208,7 +237,7 @@ export async function provisionStaff({
     }
     await admin.updateProfile(current.user.id, record);
     await admin.setSafeIdentity(current.user.id, record.display_name, current.user.app_metadata);
-    return { ...safeProvisioningReport({ ...current, state: "profile_updated", differences: [] }, false), invite_generated: false };
+    return { ...safeProvisioningReport({ ...current, state: "profile_updated", differences: [] }, false, false), invite_generated: false };
   }
 
   if (current.state === "setup_pending" && reissueInvite) {
@@ -219,6 +248,16 @@ export async function provisionStaff({
     throw new ProvisioningError("INACTIVE_PROFILE", "This department profile is inactive.", "An administrator must review reactivation separately.");
   }
   if (current.state === "active_confirmed") {
+    if (runtimePassword && temporaryPasswordRecovery) {
+      // Fail closed: establish the data-access gate before replacing the Auth
+      // password. If Auth rejects the password, the account remains gated.
+      await admin.setMustChangePassword(current.user.id, true);
+      await admin.setTemporaryPassword(current.user.id, runtimePassword);
+      return {
+        ...safeProvisioningReport({ ...current, state: "temporary_password_reset", planned: [] }, false, true),
+        invite_generated: false,
+      };
+    }
     throw new ProvisioningError("ALREADY_PROVISIONED", "This staff account is already active and confirmed.", "Use the normal sign-in or password-recovery process.");
   }
   throw new ProvisioningError("NO_SAFE_ACTION", "No safe provisioning action was selected.");
@@ -254,14 +293,16 @@ export function createSupabaseAdmin({ url, secret, fetchImpl = fetch }) {
     async listProfilesByUserId(userId) {
       return request(`/rest/v1/department_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,display_name,email,role,hod_scope,active`);
     },
-    async createUser(email, displayName) {
+    async createUser(email, displayName, temporaryPassword = null) {
+      const body = {
+        email,
+        email_confirm: true,
+        app_metadata: { pbhs_display_name: displayName },
+      };
+      if (temporaryPassword) body.password = temporaryPassword;
       const result = await request("/auth/v1/admin/users", {
         method: "POST",
-        body: JSON.stringify({
-          email,
-          email_confirm: true,
-          app_metadata: { pbhs_display_name: displayName },
-        }),
+        body: JSON.stringify(body),
       });
       return result?.user || (result?.id && result?.email ? result : null);
     },
@@ -269,6 +310,12 @@ export function createSupabaseAdmin({ url, secret, fetchImpl = fetch }) {
       return request(`/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
         method: "PUT",
         body: JSON.stringify({ app_metadata: { ...(currentAppMetadata || {}), pbhs_display_name: displayName } }),
+      });
+    },
+    async setTemporaryPassword(userId, temporaryPassword) {
+      return request(`/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ password: temporaryPassword }),
       });
     },
     async createProfile(profile) {
@@ -283,6 +330,13 @@ export function createSupabaseAdmin({ url, secret, fetchImpl = fetch }) {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify(record),
+      });
+    },
+    async setMustChangePassword(userId, required) {
+      return request(`/rest/v1/department_profiles?user_id=eq.${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ must_change_password: Boolean(required) }),
       });
     },
   };

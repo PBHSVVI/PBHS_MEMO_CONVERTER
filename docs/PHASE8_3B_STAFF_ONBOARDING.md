@@ -1,11 +1,11 @@
 # Phase 8.3B — Secure Staff Onboarding Foundation
 
-Status: scanner-safe code onboarding is implemented locally. The validation-only
-profile-status RPC is deployed on `wgkydsildfmbqzvicuwm`. Full hosted email
-delivery remains blocked until that Free-plan project has Custom SMTP, because
-Supabase does not permit custom Auth templates with its default mail provider.
-The frontend and provisioning utility have not been pushed or deployed by this
-change. No real PBHS staff were provisioned.
+Status: scanner-safe code onboarding remains implemented locally. The temporary
+first-login-password fallback has also passed synthetic hosted validation on
+`wgkydsildfmbqzvicuwm`; its migration and JWT-protected completion function are
+deployed only there. Full hosted email delivery remains blocked until Custom
+SMTP is available. The frontend and provisioning utility have not been pushed,
+and neither fallback code nor schema has been deployed to production. No real PBHS staff were provisioned.
 
 The validation project passed the native Auth lifecycle through a temporary,
 removed test harness: harmless scanner GETs, invalid/replayed OTP denial,
@@ -13,6 +13,41 @@ single-use OTP verification, active/missing/inactive profile decisions, password
 policy enforcement, forced sign-out, normal password login, unprovisioned-user
 denial, and recovery of an existing unconfirmed invite-era identity. Synthetic
 identities and profiles were deleted after the run.
+
+## Temporary Friday first-login fallback
+
+While production Custom SMTP is awaiting approval, a local-only fallback allows
+a trusted administrator to provision one explicitly named staff member with a
+runtime staff code as a temporary Auth password. This does not replace the
+scanner-safe OTP architecture described below. The fallback is intended to be
+retired for new users once production code delivery is available.
+
+`department_profiles.must_change_password` is the server-controlled state for
+this path. A temporary-password profile starts with the flag set. After sign-in,
+the Teacher App shows only **Choose your private password**. Normal job,
+correction, support, storage, and department-library RLS requires an active
+profile whose flag is clear.
+
+The JWT-protected `complete-first-login` function validates the caller and the
+server-side profile state, applies the new password through the caller's Auth
+session, then invokes a service-only completion RPC for that same Auth UUID. The
+browser cannot call the completion RPC, update a profile, select another user,
+or change role, HOD scope, or active state. The app signs the teacher out after
+completion and requires a normal login with the replacement password.
+
+Trusted provisioning enables the fallback only with `--temporary-password` and
+a runtime `staff_code` input. Safe output records only
+`temporary_password_supplied: true`; it never contains the value. Private staff
+JSON or CSV input belongs under the Git-ignored `provisioning-private/`
+directory and contains these columns:
+
+`display_name,email,role,hod_scope,staff_code`
+
+Supply exactly one staff record per invocation. Do not place real values in
+source, documentation, shell history, screenshots, or generated reports. The
+same explicit mode can preserve an existing matching Auth identity and profile
+while setting a new temporary password and the first-login flag. It refuses
+identity/profile mismatches and does not alter role, HOD scope, or active state.
 
 ## Scanner-safe architecture
 

@@ -7,6 +7,7 @@ import {
   redactSensitiveValue,
   selectTrustedCredential,
   validateStaffRecord,
+  validateTemporaryPassword,
 } from "../../scripts/staffProvisioning.mjs";
 
 const teacher = { email: "synthetic@example.invalid", display_name: "Synthetic Teacher", role: "teacher", hod_scope: null };
@@ -22,6 +23,8 @@ function admin(overrides = {}) {
     setSafeIdentity: vi.fn(async () => {}),
     createProfile: vi.fn(async () => {}),
     updateProfile: vi.fn(async () => {}),
+    setTemporaryPassword: vi.fn(async () => {}),
+    setMustChangePassword: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -47,12 +50,19 @@ describe("trusted staff provisioning", () => {
       Authorization: `Bearer ${jwt}`,
       apikey: modern,
       password: "DoNotLog!123",
+      staff_code: "StaffCode!2468",
       action_link: invite,
       nested: `failure ${modern} ${jwt} ${invite}`,
     }));
-    for (const sensitive of [modern, jwt, "DoNotLog!123", "invite-value", "validation.supabase.co/auth/v1/verify"]) expect(output).not.toContain(sensitive);
+    for (const sensitive of [modern, jwt, "DoNotLog!123", "StaffCode!2468", "invite-value", "validation.supabase.co/auth/v1/verify"]) expect(output).not.toContain(sensitive);
     expect(output).toContain("[REDACTED]");
     expect(redactSensitiveText(`Authorization=Bearer ${modern}`)).not.toContain(modern);
+  });
+
+  it("validates a temporary staff code without including it in safe reports", () => {
+    const temporary = "RuntimeOnly!2468";
+    expect(validateTemporaryPassword(temporary)).toBe(temporary);
+    expect(() => validateTemporaryPassword("weak")).toThrowError(/12-character/);
   });
 
   it("validates roles and HOD scopes deterministically", () => {
@@ -74,12 +84,49 @@ describe("trusted staff provisioning", () => {
   it("creates one confirmed Auth identity and one profile without raw invite material", async () => {
     const client = admin();
     const result = await provisionStaff({ admin: client, input: teacher, redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/" });
-    expect(client.createUser).toHaveBeenCalledWith(teacher.email, teacher.display_name);
-    expect(client.createProfile).toHaveBeenCalledWith({ user_id: user.id, ...teacher, active: true });
+    expect(client.createUser).toHaveBeenCalledWith(teacher.email, teacher.display_name, null);
+    expect(client.createProfile).toHaveBeenCalledWith({ user_id: user.id, ...teacher, active: true, must_change_password: false });
     expect(client.setSafeIdentity).toHaveBeenCalledWith(user.id, teacher.display_name, undefined);
     expect(result).toMatchObject({ state: "setup_ready", invite_generated: false });
     expect(result.setup_url).toContain("onboarding=setup");
     expect(JSON.stringify(result)).not.toMatch(/token=|action_link|invite_link/i);
+  });
+
+  it("creates a temporary-password identity and server-gated profile without reporting the credential", async () => {
+    const client = admin();
+    const temporary = "RuntimeOnly!2468";
+    const result = await provisionStaff({
+      admin: client,
+      input: teacher,
+      redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/",
+      temporaryPassword: temporary,
+      temporaryPasswordRecovery: true,
+    });
+    expect(client.createUser).toHaveBeenCalledWith(teacher.email, teacher.display_name, temporary);
+    expect(client.createProfile).toHaveBeenCalledWith({ user_id: user.id, ...teacher, active: true, must_change_password: true });
+    expect(result).toMatchObject({ state: "temporary_password_ready", temporary_password_supplied: true });
+    expect(JSON.stringify(result)).not.toContain(temporary);
+  });
+
+  it("recovers an existing confirmed user without replacing identity or authorization", async () => {
+    const confirmed = { ...user, email_confirmed_at: "2026-10-12T01:00:00Z" };
+    const client = admin({ listUsersByEmail: vi.fn(async () => [confirmed]), listProfilesByEmail: vi.fn(async () => [profile]) });
+    const temporary = "RuntimeOnly!2468";
+    const result = await provisionStaff({
+      admin: client,
+      input: teacher,
+      redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/",
+      temporaryPassword: temporary,
+      temporaryPasswordRecovery: true,
+    });
+    expect(client.createUser).not.toHaveBeenCalled();
+    expect(client.createProfile).not.toHaveBeenCalled();
+    expect(client.updateProfile).not.toHaveBeenCalled();
+    expect(client.setTemporaryPassword).toHaveBeenCalledWith(user.id, temporary);
+    expect(client.setMustChangePassword).toHaveBeenCalledWith(user.id, true);
+    expect(client.setMustChangePassword.mock.invocationCallOrder[0]).toBeLessThan(client.setTemporaryPassword.mock.invocationCallOrder[0]);
+    expect(result).toMatchObject({ state: "temporary_password_reset", role: "teacher", hod_scope: null, temporary_password_supplied: true });
+    expect(JSON.stringify(result)).not.toContain(temporary);
   });
 
   it("creates a confirmed user through the Admin REST API without a password or invite URL", async () => {

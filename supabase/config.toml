@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.notify-support-incident]
 verify_jwt = true
+
+[functions.complete-first-login]
+verify_jwt = true
