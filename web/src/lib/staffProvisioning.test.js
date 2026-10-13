@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ProvisioningError,
   classifyProvisioningState,
+  deriveTemporaryPassword,
   provisionStaff,
   redactSensitiveText,
   redactSensitiveValue,
@@ -59,10 +60,13 @@ describe("trusted staff provisioning", () => {
     expect(redactSensitiveText(`Authorization=Bearer ${modern}`)).not.toContain(modern);
   });
 
-  it("validates a temporary staff code without including it in safe reports", () => {
-    const temporary = "RuntimeOnly!2468";
+  it("derives the temporary password from a runtime staff code", () => {
+    const code = "qzx";
+    const temporary = deriveTemporaryPassword(code);
+    expect(temporary).toBe("QZXqzx12!");
     expect(validateTemporaryPassword(temporary)).toBe(temporary);
-    expect(() => validateTemporaryPassword("weak")).toThrowError(/12-character/);
+    expect(() => deriveTemporaryPassword("")).toThrowError(/staff code/);
+    expect(() => validateTemporaryPassword("weak")).toThrowError(/mixed-character/);
   });
 
   it("validates roles and HOD scopes deterministically", () => {
@@ -94,12 +98,13 @@ describe("trusted staff provisioning", () => {
 
   it("creates a temporary-password identity and server-gated profile without reporting the credential", async () => {
     const client = admin();
-    const temporary = "RuntimeOnly!2468";
+    const staffCode = "qzx";
+    const temporary = deriveTemporaryPassword(staffCode);
     const result = await provisionStaff({
       admin: client,
       input: teacher,
       redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/",
-      temporaryPassword: temporary,
+      staffCode,
       temporaryPasswordRecovery: true,
     });
     expect(client.createUser).toHaveBeenCalledWith(teacher.email, teacher.display_name, temporary);
@@ -111,12 +116,13 @@ describe("trusted staff provisioning", () => {
   it("recovers an existing confirmed user without replacing identity or authorization", async () => {
     const confirmed = { ...user, email_confirmed_at: "2026-10-12T01:00:00Z" };
     const client = admin({ listUsersByEmail: vi.fn(async () => [confirmed]), listProfilesByEmail: vi.fn(async () => [profile]) });
-    const temporary = "RuntimeOnly!2468";
+    const staffCode = "qzx";
+    const temporary = deriveTemporaryPassword(staffCode);
     const result = await provisionStaff({
       admin: client,
       input: teacher,
       redirectTo: "https://pbhsvvi.github.io/PBHS_MEMO_CONVERTER/teacher-app/",
-      temporaryPassword: temporary,
+      staffCode,
       temporaryPasswordRecovery: true,
     });
     expect(client.createUser).not.toHaveBeenCalled();

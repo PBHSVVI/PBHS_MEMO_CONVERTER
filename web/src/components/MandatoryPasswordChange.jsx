@@ -4,7 +4,7 @@ import { passwordChecks, passwordIsStrong } from "../lib/inviteOnboarding";
 import { completeFirstLogin } from "../lib/firstLogin";
 
 const requirements = {
-  length: "At least 12 characters",
+  length: "At least 8 characters",
   lowercase: "A lowercase letter",
   uppercase: "An uppercase letter",
   digit: "A number",

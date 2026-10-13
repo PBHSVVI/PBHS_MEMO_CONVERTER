@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
 
-const PASSWORD_MINIMUM = 12;
+const PASSWORD_MINIMUM = 8;
 
 function acceptablePassword(value: unknown): value is string {
   return typeof value === "string"

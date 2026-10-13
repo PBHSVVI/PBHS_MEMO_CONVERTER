@@ -10,7 +10,6 @@ import {
   selectTrustedCredential,
   validateInviteRedirect,
   validateStaffRecord,
-  validateTemporaryPassword,
 } from "./staffProvisioning.mjs";
 
 function argumentsFrom(argv) {
@@ -61,7 +60,7 @@ async function main() {
   const rawInput = await loadInput(values);
   const input = validateStaffRecord(rawInput);
   const temporaryMode = flags.has("--temporary-password");
-  const staffCode = rawInput?.staff_code == null || rawInput.staff_code === "" ? null : validateTemporaryPassword(rawInput.staff_code);
+  const staffCode = rawInput?.staff_code == null || rawInput.staff_code === "" ? null : String(rawInput.staff_code).trim();
   if (temporaryMode !== Boolean(staffCode)) {
     throw new ProvisioningError(
       "TEMPORARY_PASSWORD_INPUT_MISMATCH",
@@ -84,7 +83,7 @@ async function main() {
   const result = await provisionStaff({
     admin, input, redirectTo, dryRun: flags.has("--dry-run"),
     reissueInvite: flags.has("--reissue-invite"), repairProfile: flags.has("--repair-profile"), updateProfile: flags.has("--update-profile"),
-    temporaryPassword: staffCode,
+    staffCode,
     temporaryPasswordRecovery: temporaryMode,
   });
   console.log(JSON.stringify(redactSensitiveValue(result), null, 2));

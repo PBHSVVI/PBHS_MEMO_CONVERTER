@@ -36,7 +36,9 @@ or change role, HOD scope, or active state. The app signs the teacher out after
 completion and requires a normal login with the replacement password.
 
 Trusted provisioning enables the fallback only with `--temporary-password` and
-a runtime `staff_code` input. Safe output records only
+a runtime `staff_code` input. It derives the temporary Auth password in memory
+as uppercase staff code, lowercase staff code, then the fixed policy suffix.
+Safe output records only
 `temporary_password_supplied: true`; it never contains the value. Private staff
 JSON or CSV input belongs under the Git-ignored `provisioning-private/`
 directory and contains these columns:
@@ -96,7 +98,7 @@ expose profile rows, role, scope, or other staff data.
 
 ## Password and OTP controls
 
-The onboarding UI requires at least 12 characters containing lowercase,
+The onboarding UI requires at least 8 characters containing lowercase,
 uppercase, a digit, and a symbol before it calls Supabase Auth. Supabase remains
 the final password authority. Password-manager use is recommended.
 
@@ -160,7 +162,7 @@ For each approved project, an administrator must:
 4. Disable project-wide public signup. Keep the email provider enabled so
    existing users can use OTP and password login; the app additionally sends
    `shouldCreateUser: false`.
-5. Keep minimum password length 12 with lowercase, uppercase, digits, and
+5. Keep minimum password length 8 with lowercase, uppercase, digits, and
    symbols.
 6. Review OTP expiry, code length, email frequency, and verification rate limits.
 

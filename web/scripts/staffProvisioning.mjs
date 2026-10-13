@@ -102,13 +102,21 @@ export function validateInviteRedirect(value) {
 
 export function validateTemporaryPassword(value) {
   const password = String(value || "");
-  if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+  if (password.length < 8 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     throw new ProvisioningError(
       "INVALID_TEMPORARY_PASSWORD",
-      "The runtime staff code must meet the configured 12-character mixed-character password policy.",
+      "The derived temporary password does not meet the configured mixed-character password policy.",
     );
   }
   return password;
+}
+
+export function deriveTemporaryPassword(value) {
+  const staffCode = String(value || "").trim();
+  if (!staffCode || staffCode.length > 32 || /\s|[\u0000-\u001f\u007f]/.test(staffCode)) {
+    throw new ProvisioningError("INVALID_STAFF_CODE", "A valid runtime staff code is required.");
+  }
+  return validateTemporaryPassword(`${staffCode.toUpperCase()}${staffCode.toLowerCase()}12!`);
 }
 
 function isConfirmed(user) {
@@ -182,11 +190,11 @@ export async function provisionStaff({
   reissueInvite = false,
   repairProfile = false,
   updateProfile = false,
-  temporaryPassword = null,
+  staffCode = null,
   temporaryPasswordRecovery = false,
 }) {
   const record = validateStaffRecord(input);
-  const runtimePassword = temporaryPassword == null ? null : validateTemporaryPassword(temporaryPassword);
+  const runtimePassword = staffCode == null ? null : deriveTemporaryPassword(staffCode);
   if (temporaryPasswordRecovery && !runtimePassword) {
     throw new ProvisioningError("TEMPORARY_PASSWORD_REQUIRED", "Temporary-password recovery requires a runtime staff code.");
   }
