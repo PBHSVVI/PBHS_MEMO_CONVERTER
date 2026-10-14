@@ -18,8 +18,8 @@ const libraryRow = {
   status_source: "complete", stage_source: "complete", updated_at: "2026-10-02T09:00:00Z", source_filename: "raw.pdf",
 };
 
-function renderDashboard(overrides = {}) {
-  return render(<Dashboard client={{}} user={{ ...user, ...overrides }} onConvert={vi.fn()} onOpen={vi.fn()} />);
+function renderDashboard(overrides = {}, props = {}) {
+  return render(<Dashboard client={{}} user={{ ...user, ...overrides }} onConvert={vi.fn()} onOpen={vi.fn()} {...props} />);
 }
 
 describe("department workspace", () => {
@@ -65,6 +65,22 @@ describe("department workspace", () => {
     await screen.findByRole("heading", { name: "CONTROL TEST · PAPER 1" });
     fireEvent.click(screen.getByRole("tab", { name: /Form 4/ }));
     expect(screen.getByRole("heading", { name: "No in-progress Form 4 Mathematics papers." })).toBeInTheDocument();
+  });
+
+  it("passes the selected department and form into upload", async () => {
+    const onConvert = vi.fn();
+    renderDashboard({}, { onConvert });
+    await screen.findByRole("heading", { name: "Mathematics papers" });
+    fireEvent.click(screen.getByRole("tab", { name: /Form 4/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload memo" }));
+    expect(onConvert).toHaveBeenCalledWith({ department: "mathematics", form: 4 });
+  });
+
+  it("keeps unclassified uploads visible with teacher-friendly wording", async () => {
+    listRecentJobs.mockResolvedValue([{ ...ownerJob, id: "unclassified", teacher_metadata: { values: {} } }]);
+    renderDashboard();
+    expect(await screen.findByText(/Needs document details/)).toBeInTheDocument();
+    expect(screen.getByText(/uploads are safe/)).toBeInTheDocument();
   });
 
   it("fails cleanly when the department library is unavailable", async () => {

@@ -5,13 +5,13 @@ describe("support incident safe snapshot", () => {
   it("captures bounded diagnostic references without memo content", () => {
     const snapshot = incidentSnapshot({
       user: { id: "teacher-1" },
-      job: { id: "job-1", stage: "structure", status: "needs_review", review_required: true, error_code: "SAFE_ERROR_1" },
+      job: { id: "job-1", source_filename: "Paper 1 Memo.pdf", stage: "structure", status: "needs_review", review_required: true, error_code: "SAFE_ERROR_1" },
       currentView: "review",
       questionContext: "4.2.2",
       unresolvedExceptionCount: 3,
       appVersion: "commit-abc",
     });
-    expect(snapshot).toMatchObject({ user_id: "teacher-1", job_id: "job-1", current_view: "review", question_context: "4.2.2", unresolved_exception_count: 3, latest_safe_error: "SAFE_ERROR_1" });
+    expect(snapshot).toMatchObject({ user_id: "teacher-1", job_id: "job-1", source_filename: "Paper 1 Memo.pdf", current_view: "review", question_context: "4.2.2", unresolved_exception_count: 3, latest_safe_error: "SAFE_ERROR_1" });
     expect(JSON.stringify(snapshot)).not.toContain("memo_content");
   });
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { INCIDENT_TYPES, submitSupportIncident } from "../lib/supportIncidents";
 
-export function SupportIncident({ client, user, context }) {
+export function SupportIncident({ client, user, context, label = "Report a problem", className = "" }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState("stuck");
   const [note, setNote] = useState("");
@@ -27,7 +27,7 @@ export function SupportIncident({ client, user, context }) {
 
   return (
     <>
-      <button className="button support-action" onClick={() => setOpen(true)}>Help / Report a problem</button>
+      <button className={`button support-action ${className}`.trim()} onClick={() => setOpen(true)}>{label}</button>
       {open && <div className="support-backdrop" role="presentation">
         <section className="support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title">
           <button className="support-close" aria-label="Close support form" onClick={close}>×</button>

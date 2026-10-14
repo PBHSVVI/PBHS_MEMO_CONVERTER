@@ -205,3 +205,18 @@ export function metadataDispatchPolicy(
   }
   return { allowed: false, error: "job_not_queueable" };
 }
+
+export function initialDispatchFailureState(
+  job: DispatchJob,
+  errorCode: string,
+  errorMessage: string,
+) {
+  if (job.status !== "queued") return null;
+  return {
+    status: "queued",
+    stage: "dispatch_retry",
+    dispatched_at: null,
+    error_code: errorCode,
+    error_message: errorMessage,
+  };
+}

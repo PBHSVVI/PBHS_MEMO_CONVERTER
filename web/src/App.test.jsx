@@ -42,6 +42,17 @@ describe("auth state routing", () => {
     await waitFor(() => expect(client.from).toHaveBeenCalledWith("jobs"));
     expect(client.from).toHaveBeenCalledWith("paper_library_summary");
     expect(screen.getByText("teacher@pbhs.example")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Report a problem" })).toHaveClass("support-action");
+  });
+
+  it("returns home explicitly from the upload screen", async () => {
+    const client = authClient({ user: { id: "7699652c-9795-40e6-a730-ac38c18f5a86", email: "teacher@pbhs.example" } });
+    render(<App client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Upload memo" }));
+    expect(screen.getByRole("heading", { name: "Upload your memo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(await screen.findByRole("heading", { name: "Mathematics papers" })).toBeInTheDocument();
   });
 
   it("blocks every workspace surface until a temporary password is replaced", async () => {

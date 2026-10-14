@@ -51,6 +51,7 @@ export function incidentSnapshot({ user, job = null, currentView, questionContex
   return {
     user_id: user.id,
     job_id: job?.id || null,
+    source_filename: safeText(job?.source_filename, 260),
     current_view: safeText(currentView, 80),
     current_stage: safeText(job?.stage, 120),
     job_status: safeText(job?.status, 80),

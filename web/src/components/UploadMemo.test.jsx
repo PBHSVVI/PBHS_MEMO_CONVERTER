@@ -53,7 +53,7 @@ describe("memo upload drag and drop", () => {
     render(<UploadMemo {...props()} />);
     expect(screen.getByText("Document details (optional)")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Document details (optional)"));
-    fireEvent.change(screen.getByPlaceholderText("Form 5"), { target: { value: "Form 5" } });
+    fireEvent.change(screen.getByLabelText("Form / Grade"), { target: { value: "FORM 5" } });
     fireEvent.change(screen.getByLabelText("Time allocation value"), { target: { value: "3" } });
     fireEvent.drop(zone(), { dataTransfer: { files: [memo()] } });
     fireEvent.click(screen.getByRole("button", { name: "Upload and convert" }));
@@ -61,11 +61,52 @@ describe("memo upload drag and drop", () => {
       expect.objectContaining({
         teacherMetadata: {
           schema_version: "1.0",
-          values: { grade_label: "Form 5", duration_minutes: 180 },
+          values: { grade_label: "FORM 5", duration_minutes: 180 },
           confirmed_absent: [],
         },
       }),
     ));
+  });
+
+  it("uses a bounded Form selector instead of free text", () => {
+    render(<UploadMemo {...props()} />);
+    fireEvent.click(screen.getByText("Document details (optional)"));
+    const field = screen.getByLabelText("Form / Grade");
+    expect(field.tagName).toBe("SELECT");
+    expect(Array.from(field.options).map((option) => option.value)).toEqual(["", "FORM 1", "FORM 2", "FORM 3", "FORM 4", "FORM 5"]);
+  });
+
+  it("blocks invalid year and duration before creating a job", async () => {
+    render(<UploadMemo {...props()} />);
+    fireEvent.click(screen.getByText("Document details (optional)"));
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: "1999" } });
+    fireEvent.change(screen.getByLabelText("Time allocation value"), { target: { value: "0" } });
+    fireEvent.drop(zone(), { dataTransfer: { files: [memo()] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload and convert" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Please correct the highlighted document details");
+    expect(createAndDispatchJob).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/^Year/)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Time allocation value")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("submits blank optional fields and prevents duplicate job creation", async () => {
+    createAndDispatchJob.mockImplementation(() => new Promise(() => {}));
+    render(<UploadMemo {...props()} />);
+    fireEvent.drop(zone(), { dataTransfer: { files: [memo()] } });
+    const button = screen.getByRole("button", { name: "Upload and convert" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(createAndDispatchJob).toHaveBeenCalledTimes(1));
+    expect(createAndDispatchJob.mock.calls[0][0].teacherMetadata).toEqual({ schema_version: "1.0", values: {}, confirmed_absent: [] });
+  });
+
+  it("prepopulates safe dashboard context without locking the fields", () => {
+    render(<UploadMemo {...props()} initialContext={{ department: "mathematics", form: 4 }} />);
+    fireEvent.click(screen.getByText("Document details (optional)"));
+    expect(screen.getByLabelText("Subject")).toHaveValue("MATHEMATICS");
+    expect(screen.getByLabelText("Form / Grade")).toHaveValue("FORM 4");
+    fireEvent.change(screen.getByLabelText("Form / Grade"), { target: { value: "FORM 5" } });
+    expect(screen.getByLabelText("Form / Grade")).toHaveValue("FORM 5");
   });
 
   it("preserves click-to-choose behavior", () => {

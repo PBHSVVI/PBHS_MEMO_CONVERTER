@@ -67,7 +67,7 @@ describe("conversion outcomes", () => {
     render(<ConversionProgress client={client} user={user} initialJob={job} onBack={() => {}} />);
     expect(await screen.findByRole("heading", { name: "Document details need attention" })).toBeInTheDocument();
     expect(screen.getByText("PAPER 2")).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("Form 5"), { target: { value: "Form 5" } });
+    fireEvent.change(screen.getByLabelText("Form / Grade"), { target: { value: "FORM 5" } });
     fireEvent.change(screen.getByLabelText("Time allocation value"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply details" }));
     await waitFor(() => expect(client.functions.invoke).toHaveBeenCalledWith("dispatch-memo", {
@@ -75,7 +75,7 @@ describe("conversion outcomes", () => {
         job_id: job.id,
         teacher_metadata: {
           schema_version: "1.0",
-          values: { grade_label: "Form 5", duration_minutes: 180 },
+          values: { grade_label: "FORM 5", duration_minutes: 180 },
           confirmed_absent: [],
         },
       },
@@ -122,6 +122,24 @@ describe("conversion outcomes", () => {
     render(<ConversionProgress client={clientFor(job)} user={user} initialJob={job} onBack={() => {}} />);
     expect(await screen.findByRole("button", { name: "Retry conversion" })).toBeInTheDocument();
     expect(screen.getByText("Needs retry")).toBeInTheDocument();
+  });
+
+  it("recovers a legacy queued/upload job only after confirming its private source exists", async () => {
+    const job = {
+      ...base,
+      status: "queued",
+      stage: "upload",
+      source_path: `${user.id}/${base.id}/source/Paper-1-Memo.pdf`,
+    };
+    const client = clientFor(job);
+    client.storage.from = vi.fn(() => ({
+      list: vi.fn(async () => ({ data: [{ name: "Paper-1-Memo.pdf" }], error: null })),
+      download: vi.fn(),
+    }));
+    render(<ConversionProgress client={client} user={user} initialJob={job} onBack={() => {}} />);
+    expect(await screen.findByText("Your memo was uploaded safely, but conversion did not start.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry conversion" }));
+    await waitFor(() => expect(client.functions.invoke).toHaveBeenCalledWith("dispatch-memo", { body: { job_id: job.id } }));
   });
 
   it("shows a terminal message without a retry action for failed", async () => {

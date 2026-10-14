@@ -13,10 +13,12 @@ import {
   getJob,
   retryJob,
   saveBlob,
+  sourceObjectExists,
   submitTeacherMetadata,
 } from "../lib/memoService";
 import { reviewUrl } from "../lib/urls";
 import { DocumentDetails } from "./DocumentDetails";
+import { SupportIncident } from "./SupportIncident";
 
 const POLL_MS = 6000;
 const NOOP = () => {};
@@ -49,8 +51,10 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
   const [job, setJob] = useState(initialJob);
   const [state, setState] = useState({ busy: "", error: "" });
   const [metadataDetails, setMetadataDetails] = useState(null);
+  const [sourceAvailable, setSourceAvailable] = useState(null);
   const [now, setNow] = useState(() => Date.now());
-  const status = teacherStatus(job);
+  const uploadedBeforeDispatch = job?.status === "queued" && job?.stage === "upload" && sourceAvailable === true;
+  const status = teacherStatus(uploadedBeforeDispatch ? { ...job, stage: "dispatch_retry" } : job);
   const metadataReview = job?.status === "needs_review" &&
     job?.stage === "phase8_1b_metadata_review";
 
@@ -89,6 +93,18 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
       });
     return () => { active = false; };
   }, [client, job?.id, job?.status, metadataReview, user.id]);
+
+  useEffect(() => {
+    if (job?.status !== "queued" || job?.stage !== "upload") {
+      setSourceAvailable(null);
+      return undefined;
+    }
+    let active = true;
+    sourceObjectExists(client, user.id, job).then((exists) => {
+      if (active) setSourceAvailable(exists);
+    });
+    return () => { active = false; };
+  }, [client, job?.id, job?.source_path, job?.stage, job?.status, user.id]);
 
   async function retry() {
     setState({ busy: "retry", error: "" });
@@ -172,6 +188,7 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
         )}
 
         {state.error && <p className="notice danger" role="alert">{state.error}</p>}
+        {state.error && <SupportIncident client={client} user={user} label="Report this error" context={{ job, currentView: "conversion_error" }} />}
 
         {metadataReview && (
           <div className="action-card review-card">
@@ -223,13 +240,14 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
           </div>
         )}
 
-        {canRetry(job) && (
+        {(canRetry(job) || uploadedBeforeDispatch) && (
           <div className="action-card danger-card">
             <h2>Conversion paused safely</h2>
             <p>Your original memo and any confirmed review decisions are still saved. You can retry this conversion.</p>
             <button className="button primary" onClick={retry} disabled={state.busy === "retry"}>
               {state.busy === "retry" ? "Retrying…" : "Retry conversion"}
             </button>
+            <SupportIncident client={client} user={user} label="Report this error" context={{ job, currentView: "retryable_failure" }} />
             {job.error_code && (
               <details className="technical">
                 <summary>Technical details</summary>
@@ -243,6 +261,7 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
           <div className="action-card danger-card">
             <h2>This conversion could not finish</h2>
             <p>Please keep the original memo and contact the pilot support person before trying again.</p>
+            <SupportIncident client={client} user={user} label="Report this error" context={{ job, currentView: "conversion_failed" }} />
             {job.error_code && (
               <details className="technical">
                 <summary>Technical details</summary>

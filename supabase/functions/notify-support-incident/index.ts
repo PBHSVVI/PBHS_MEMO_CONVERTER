@@ -26,6 +26,7 @@ export function supportEmailText(incident: Record<string, unknown>, teacher: Rec
     line("Type", incident.incident_type),
     line("Note", incident.teacher_note),
     line("Job", incident.job_id),
+    line("Source file", incident.source_filename),
     line("View", incident.current_view),
     line("Stage", incident.current_stage),
     line("Job status", incident.job_status),
@@ -53,7 +54,7 @@ export default {
     if (!UUID_RE.test(incidentId)) return Response.json({ error: "invalid_incident_id" }, { status: 400 });
 
     const { data: incident, error } = await ctx.supabase.from("support_incidents")
-      .select("id,reference,created_at,user_id,job_id,incident_type,teacher_note,current_view,current_stage,job_status,question_context,latest_safe_error,unresolved_exception_count,app_version,user_agent_summary,viewport_class,notification_status")
+      .select("id,reference,created_at,user_id,job_id,source_filename,incident_type,teacher_note,current_view,current_stage,job_status,question_context,latest_safe_error,unresolved_exception_count,app_version,user_agent_summary,viewport_class,notification_status")
       .eq("id", incidentId).maybeSingle();
     if (error) return Response.json({ error: "incident_lookup_failed" }, { status: 502 });
     if (!incident) return Response.json({ error: "incident_not_found" }, { status: 404 });

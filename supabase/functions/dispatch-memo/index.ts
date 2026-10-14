@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
 import {
   metadataDispatchPolicy,
+  initialDispatchFailureState,
   normalizeTeacherMetadata,
   TeacherMetadataError,
   type TeacherMetadata,
@@ -29,31 +30,7 @@ export default {
     }
 
     const hasMetadata = Object.prototype.hasOwnProperty.call(body, "teacher_metadata");
-    let normalizedMetadata: TeacherMetadata | null = null;
-    if (hasMetadata) {
-      try {
-        normalizedMetadata = normalizeTeacherMetadata(body.teacher_metadata);
-      } catch (error) {
-        const detail = error instanceof TeacherMetadataError ? error.code : "invalid_payload";
-        return Response.json(
-          { error: "invalid_teacher_metadata", detail },
-          { status: 400 },
-        );
-      }
-    }
-
     const jobId = body.job_id;
-    const githubToken = Deno.env.get("GITHUB_TOKEN");
-    const githubRepository =
-      Deno.env.get("GITHUB_REPOSITORY") ?? "PBHSVVI/PBHS_MEMO_CONVERTER";
-    const githubRef = Deno.env.get("GITHUB_REF") ?? "main";
-    if (!githubToken) {
-      return Response.json(
-        { error: "server_not_configured", missing: "GITHUB_TOKEN" },
-        { status: 500 },
-      );
-    }
-
     const { data: visibleJob, error: lookupError } = await ctx.supabase
       .from("jobs")
       .select("id,user_id,status,stage,attempt_count,teacher_metadata,teacher_metadata_revision,teacher_metadata_updated_at,dispatched_at,error_code,error_message")
@@ -65,6 +42,66 @@ export default {
     }
     if (!visibleJob) {
       return Response.json({ error: "job_not_found" }, { status: 404 });
+    }
+
+    async function markInitialDispatchRetry(
+      errorCode: string,
+      errorMessage: string,
+      payload: Record<string, unknown> = {},
+    ) {
+      const retryState = initialDispatchFailureState(visibleJob, errorCode, errorMessage);
+      if (!retryState) return;
+      const failureTime = new Date().toISOString();
+      const { data: restored } = await ctx.supabaseAdmin
+        .from("jobs")
+        .update({ ...retryState, updated_at: failureTime })
+        .eq("id", jobId)
+        .eq("status", "queued")
+        .eq("stage", visibleJob.stage)
+        .select("id,user_id")
+        .maybeSingle();
+      if (restored) {
+        await ctx.supabaseAdmin.from("job_events").insert({
+          job_id: jobId,
+          user_id: restored.user_id,
+          event_type: "dispatch_failed",
+          stage: "upload",
+          payload: { error_code: errorCode, ...payload },
+        });
+      }
+    }
+
+    let normalizedMetadata: TeacherMetadata | null = null;
+    if (hasMetadata) {
+      try {
+        normalizedMetadata = normalizeTeacherMetadata(body.teacher_metadata);
+      } catch (error) {
+        const detail = error instanceof TeacherMetadataError ? error.code : "invalid_payload";
+        await markInitialDispatchRetry(
+          "INVALID_TEACHER_METADATA",
+          "Teacher metadata did not satisfy the dispatch contract",
+          { detail },
+        );
+        return Response.json(
+          { error: "invalid_teacher_metadata", detail },
+          { status: 400 },
+        );
+      }
+    }
+
+    const githubToken = Deno.env.get("GITHUB_TOKEN");
+    const githubRepository =
+      Deno.env.get("GITHUB_REPOSITORY") ?? "PBHSVVI/PBHS_MEMO_CONVERTER";
+    const githubRef = Deno.env.get("GITHUB_REF") ?? "main";
+    if (!githubToken) {
+      await markInitialDispatchRetry(
+        "DISPATCH_SERVER_NOT_CONFIGURED",
+        "Workflow dispatch is not configured",
+      );
+      return Response.json(
+        { error: "server_not_configured", missing: "GITHUB_TOKEN" },
+        { status: 500 },
+      );
     }
 
     const policy = metadataDispatchPolicy(visibleJob, hasMetadata);
@@ -104,6 +141,10 @@ export default {
       .select("id,user_id")
       .maybeSingle();
     if (claimError) {
+      await markInitialDispatchRetry(
+        "DISPATCH_CLAIM_FAILED",
+        "The job could not be claimed for workflow dispatch",
+      );
       console.error("dispatch claim failed", claimError.code);
       return Response.json({ error: "dispatch_claim_failed" }, { status: 502 });
     }
@@ -132,7 +173,7 @@ export default {
           .from("jobs")
           .update({
             status: claimedFromStatus,
-            stage: claimedFromStage,
+            stage: claimedFromStatus === "queued" ? "dispatch_retry" : claimedFromStage,
             attempt_count: Number(visibleJob.attempt_count ?? 0),
             teacher_metadata: visibleJob.teacher_metadata,
             teacher_metadata_revision: Number(
@@ -140,8 +181,8 @@ export default {
             ),
             teacher_metadata_updated_at: visibleJob.teacher_metadata_updated_at,
             dispatched_at: visibleJob.dispatched_at,
-            error_code: visibleJob.error_code,
-            error_message: visibleJob.error_message,
+            error_code: claimedFromStatus === "queued" ? "TEACHER_METADATA_AUDIT_FAILED" : visibleJob.error_code,
+            error_message: claimedFromStatus === "queued" ? "Teacher metadata could not be audited before dispatch" : visibleJob.error_message,
             updated_at: now,
           })
           .eq("id", jobId)

@@ -12,7 +12,7 @@ describe("SupportIncident", () => {
   it("saves without navigating or disturbing the current screen", async () => {
     const before = window.location.href;
     render(<div><span>Current review work</span><SupportIncident client={{}} user={{ id: "teacher-1" }} context={{ currentView: "review" }} /></div>);
-    fireEvent.click(screen.getByRole("button", { name: "Help / Report a problem" }));
+    fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
     expect(screen.getByRole("heading", { name: "What happened?" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     expect(await screen.findByText("Your report has been saved.")).toBeInTheDocument();
@@ -25,10 +25,18 @@ describe("SupportIncident", () => {
   it("shows a safe fallback when the incident cannot be saved", async () => {
     submitSupportIncident.mockRejectedValueOnce({ fallbackReference: "JOB-A284E625" });
     render(<SupportIncident client={{}} user={{ id: "teacher-1" }} context={{ currentView: "processing" }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Help / Report a problem" }));
+    fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     expect(await screen.findByText("We couldn't send the report.")).toBeInTheDocument();
     expect(screen.getByText(/JOB-A284E625/)).toBeInTheDocument();
     expect(screen.queryByText("Your report has been saved.")).not.toBeInTheDocument();
+  });
+
+  it("supports contextual error wording and retains the failed job", async () => {
+    const job = { id: "job-1", status: "queued", stage: "dispatch_retry", source_filename: "memo.pdf", error_code: "DISPATCH_FAILED" };
+    render(<SupportIncident client={{}} user={{ id: "teacher-1" }} label="Report this error" context={{ currentView: "upload_error", job }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Report this error" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await waitFor(() => expect(submitSupportIncident).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({ job }) })));
   });
 });

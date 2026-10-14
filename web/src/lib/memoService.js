@@ -70,7 +70,7 @@ export async function getJob(client, jobId) {
   return data;
 }
 
-export async function createAndDispatchJob({ client, user, file, teacherMetadata, onStep = () => {} }) {
+export async function createAndDispatchJob({ client, user, file, teacherMetadata, onStep = () => {}, onJobCreated = () => {} }) {
   const validation = validateMemoFile(file);
   if (!validation.ok) throw new PilotAppError("FILE_INVALID", validation.message);
   if (!user?.id) throw new PilotAppError("AUTH_REQUIRED", "Sign in before uploading a memo.");
@@ -95,6 +95,7 @@ export async function createAndDispatchJob({ client, user, file, teacherMetadata
     .select(JOB_COLUMNS)
     .single();
   fail(createError, "JOB_CREATE_FAILED", "The conversion record could not be created.");
+  onJobCreated(job);
 
   onStep("uploading");
   const { error: uploadError } = await client.storage
@@ -116,12 +117,22 @@ export async function createAndDispatchJob({ client, user, file, teacherMetadata
     "dispatch-memo",
     { body: { job_id: jobId, teacher_metadata: teacherMetadata || { schema_version: "1.0", values: {}, confirmed_absent: [] } } },
   );
-  fail(
-    dispatchError,
-    "DISPATCH_FAILED",
-    "The memo was uploaded but conversion did not start. Open it from Recent conversions and retry.",
-    { jobId },
-  );
+  if (dispatchError) {
+    throw new PilotAppError(
+      "DISPATCH_FAILED",
+      "Your file was uploaded successfully, but conversion did not start.",
+      {
+        jobId,
+        job: {
+          ...job,
+          status: "queued",
+          stage: "dispatch_retry",
+          error_code: "DISPATCH_FAILED",
+        },
+        cause: dispatchError,
+      },
+    );
+  }
 
   onStep("started");
   return { ...job, status: dispatch?.status || "dispatched", stage: "dispatch" };
@@ -133,6 +144,20 @@ export async function retryJob(client, jobId) {
   });
   fail(error, "RETRY_FAILED", "The conversion could not be restarted. Please try again.");
   return data;
+}
+
+export async function sourceObjectExists(client, userId, job) {
+  const path = String(job?.source_path || "");
+  const prefix = `${userId}/${job?.id}/source/`;
+  if (!path.startsWith(prefix) || path === prefix) return false;
+  const filename = path.slice(prefix.length);
+  if (filename.includes("/")) return false;
+  const { data, error } = await client.storage.from("memo-files").list(
+    `${userId}/${job.id}/source`,
+    { limit: 10, search: filename },
+  );
+  if (error) return false;
+  return (data || []).some((entry) => entry.name === filename);
 }
 
 

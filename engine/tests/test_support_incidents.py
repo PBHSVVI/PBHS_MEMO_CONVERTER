@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "supabase" / "migrations" / "0008_support_incidents.sql"
+SOURCE_FILENAME_MIGRATION = ROOT / "supabase" / "migrations" / "0010_support_incident_source_filename.sql"
 FUNCTION = ROOT / "supabase" / "functions" / "notify-support-incident" / "index.ts"
 REVIEW = ROOT / "docs" / "phase7-5-review" / "index.html"
 
@@ -25,6 +26,14 @@ def test_notification_is_server_side_and_incident_survives_missing_provider():
     assert 'email_provider_not_configured' in source
     assert 'https://api.resend.com/emails' in source
     assert "Memo content, credentials and session material are deliberately excluded" in source
+
+
+def test_support_context_adds_only_a_bounded_source_filename():
+    sql = SOURCE_FILENAME_MIGRATION.read_text(encoding="utf-8")
+    source = FUNCTION.read_text(encoding="utf-8")
+    assert "add column if not exists source_filename text" in sql
+    assert "length(source_filename) <= 260" in sql
+    assert 'line("Source file", incident.source_filename)' in source
 
 
 def test_review_help_is_authenticated_and_does_not_mutate_workflow():

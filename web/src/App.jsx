@@ -108,6 +108,7 @@ export function App({ client = defaultClient }) {
 
   const user = auth.session.user;
   const dashboard = () => setScreen({ name: "dashboard", job: null });
+  const retainCurrentJob = (job) => setScreen((current) => ({ ...current, job }));
 
   return (
     <div className="app">
@@ -117,6 +118,7 @@ export function App({ client = defaultClient }) {
           <BrandLockup compact />
         </button>
         <div className="account">
+          <button className="button home-action" onClick={dashboard}>Home</button>
           <SupportIncident client={client} user={user} context={{ job: screen.job, currentView: screen.name }} />
           <span className="account-identity"><small>Teacher workspace</small>{user.email}</span>
           <button className="button quiet" onClick={() => client.auth.signOut()}>Sign out</button>
@@ -127,7 +129,7 @@ export function App({ client = defaultClient }) {
         <Dashboard
           client={client}
           user={user}
-          onConvert={() => setScreen({ name: "upload", job: null })}
+          onConvert={(context) => setScreen({ name: "upload", job: null, uploadContext: context })}
           onOpen={(job) => setScreen({ name: "progress", job })}
         />
       )}
@@ -136,6 +138,8 @@ export function App({ client = defaultClient }) {
           client={client}
           user={user}
           onBack={dashboard}
+          initialContext={screen.uploadContext}
+          onJobCreated={retainCurrentJob}
           onCreated={(job) => setScreen({ name: "progress", job })}
         />
       )}

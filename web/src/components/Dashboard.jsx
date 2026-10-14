@@ -152,7 +152,7 @@ export function Dashboard({ client, user, onConvert, onOpen }) {
           <h1>Mathematics papers</h1>
           <p>Continue work in progress or open completed departmental papers.</p>
         </div>
-        <button className="button primary" onClick={onConvert}>Upload memo</button>
+        <button className="button primary" onClick={() => onConvert({ department, form })}>Upload memo</button>
       </section>
 
       <section className="workspace-controls" aria-label="Paper filters">
@@ -209,8 +209,8 @@ export function Dashboard({ client, user, onConvert, onOpen }) {
 
         {!state.loading && incompleteOwnerPapers.length > 0 && (
           <details className="metadata-incomplete">
-            <summary>{incompleteOwnerPapers.length} paper{incompleteOwnerPapers.length === 1 ? "" : "s"} with details not recorded</summary>
-            <p>These papers remain available without assigning missing department or form information.</p>
+            <summary>Needs document details · {incompleteOwnerPapers.length} paper{incompleteOwnerPapers.length === 1 ? "" : "s"}</summary>
+            <p>These uploads are safe, but we do not yet know which Form or department they belong to.</p>
             <div className="paper-list">{incompleteOwnerPapers.map((paper) => <PaperCard key={paper.job_id} paper={paper} onOpen={onOpen} />)}</div>
           </details>
         )}

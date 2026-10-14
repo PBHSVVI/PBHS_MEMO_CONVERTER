@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  initialDispatchFailureState,
   metadataDispatchPolicy,
   normalizeTeacherMetadata,
 } from "../_shared/teacher-metadata.ts";
@@ -43,6 +44,24 @@ test("permits initial and dedicated metadata review dispatch only", () => {
 test("normal retry reuses stored metadata without mutation", () => {
   assert.equal(metadataDispatchPolicy({ status: "failed_retryable", stage: "worker_failed" }, false).mode, "retry");
   assert.equal(metadataDispatchPolicy({ status: "complete", stage: "complete" }, false).allowed, false);
+});
+
+test("initial dispatch failures become explicit retryable upload states", () => {
+  assert.deepEqual(
+    initialDispatchFailureState(
+      { status: "queued", stage: "upload" },
+      "INVALID_TEACHER_METADATA",
+      "Teacher metadata did not satisfy the dispatch contract",
+    ),
+    {
+      status: "queued",
+      stage: "dispatch_retry",
+      dispatched_at: null,
+      error_code: "INVALID_TEACHER_METADATA",
+      error_message: "Teacher metadata did not satisfy the dispatch contract",
+    },
+  );
+  assert.equal(initialDispatchFailureState({ status: "needs_review", stage: "phase7_review" }, "FAILED", "failed"), null);
 });
 
 
