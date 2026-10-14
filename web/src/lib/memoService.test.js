@@ -39,7 +39,7 @@ function uploadClient(order, dispatchError = null) {
 }
 
 describe("conversion creation", () => {
-  it("creates the job, uploads to its private source path, then dispatches only the job id", async () => {
+  it("durably creates the filing job, uploads privately, then requests first dispatch", async () => {
     const order = [];
     const client = uploadClient(order);
     vi.spyOn(crypto, "randomUUID").mockReturnValue(job.id);
@@ -58,6 +58,8 @@ describe("conversion creation", () => {
       user_id: user.id,
       status: "queued",
       filing_contract_version: "1.0",
+      filing_metadata: filingMetadata,
+      display_name: "Form 4 Class Test 2 Term 4 2026",
       source_path: `${user.id}/${job.id}/source/Paper-1-Memo.pdf`,
     }));
     expect(client.spies.upload).toHaveBeenCalledWith(
@@ -93,6 +95,10 @@ describe("conversion creation", () => {
     });
     expect(order).toEqual(["job", "upload", "dispatch"]);
     expect(onJobCreated).toHaveBeenCalledWith(job);
+    expect(client.spies.insert).toHaveBeenCalledWith(expect.objectContaining({
+      filing_metadata: filingMetadata,
+      display_name: "Form 4 Class Test 2 Term 4 2026",
+    }));
   });
 
   it("uses the same authenticated dispatch contract for a retry", async () => {

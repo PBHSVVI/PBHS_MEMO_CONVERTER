@@ -85,3 +85,59 @@ export function normalizeFilingMetadata(payload: unknown, now = new Date()): Fil
 
   return value as FilingMetadata;
 }
+
+type FilingDispatchInput = {
+  contractVersion: unknown;
+  hasRequestMetadata: boolean;
+  hasRequestDisplayName: boolean;
+  requestMetadata: unknown;
+  requestDisplayName: unknown;
+  storedMetadata: unknown;
+  storedDisplayName: unknown;
+  now?: Date;
+};
+
+export function resolveFilingDispatchInput(input: FilingDispatchInput): {
+  metadata: FilingMetadata;
+  displayName: string;
+  source: "request" | "stored";
+} | null {
+  const filingRequired = input.contractVersion === "1.0";
+  const hasRequestFiling = input.hasRequestMetadata || input.hasRequestDisplayName;
+
+  if (!filingRequired) {
+    if (hasRequestFiling) {
+      throw new FilingMetadataError(
+        "unexpected_or_incomplete_filing_contract",
+        "filing details are only accepted for filing-contract 1.0 jobs",
+      );
+    }
+    return null;
+  }
+
+  if (hasRequestFiling) {
+    if (!input.hasRequestMetadata || !input.hasRequestDisplayName) {
+      throw new FilingMetadataError(
+        "unexpected_or_incomplete_filing_contract",
+        "filing_metadata and display_name must be supplied together",
+      );
+    }
+    return {
+      metadata: normalizeFilingMetadata(input.requestMetadata, input.now),
+      displayName: normalizeDisplayName(input.requestDisplayName),
+      source: "request",
+    };
+  }
+
+  if (input.storedMetadata == null || input.storedDisplayName == null) {
+    throw new FilingMetadataError(
+      "missing_required_filing_contract",
+      "stored filing_metadata and display_name are required for retry",
+    );
+  }
+  return {
+    metadata: normalizeFilingMetadata(input.storedMetadata, input.now),
+    displayName: normalizeDisplayName(input.storedDisplayName),
+    source: "stored",
+  };
+}

@@ -9,8 +9,7 @@ import {
 } from "../_shared/teacher-metadata.ts";
 import {
   FilingMetadataError,
-  normalizeDisplayName,
-  normalizeFilingMetadata,
+  resolveFilingDispatchInput,
   type FilingMetadata,
 } from "../_shared/filing-metadata.ts";
 
@@ -99,24 +98,26 @@ export default {
 
     let normalizedFiling: FilingMetadata | null = null;
     let normalizedDisplayName: string | null = null;
-    const filingRequired = visibleJob.filing_contract_version === "1.0";
-    const storedFilingComplete = Boolean(visibleJob.filing_metadata && visibleJob.display_name);
-    if (filingRequired && !storedFilingComplete && (!hasFilingMetadata || !hasDisplayName)) {
-      await markInitialDispatchRetry("INVALID_FILING_METADATA", "Required department filing details were not supplied", { detail: "missing_required_filing_contract" });
-      return Response.json({ error: "invalid_filing_metadata", detail: "missing_required_filing_contract" }, { status: 400 });
-    }
-    if (hasFilingMetadata || hasDisplayName) {
-      if (!filingRequired || !hasFilingMetadata || !hasDisplayName) {
-        return Response.json({ error: "invalid_filing_metadata", detail: "unexpected_or_incomplete_filing_contract" }, { status: 400 });
+    let filingSource: "request" | "stored" | null = null;
+    try {
+      const resolvedFiling = resolveFilingDispatchInput({
+        contractVersion: visibleJob.filing_contract_version,
+        hasRequestMetadata: hasFilingMetadata,
+        hasRequestDisplayName: hasDisplayName,
+        requestMetadata: body.filing_metadata,
+        requestDisplayName: body.display_name,
+        storedMetadata: visibleJob.filing_metadata,
+        storedDisplayName: visibleJob.display_name,
+      });
+      if (resolvedFiling) {
+        normalizedFiling = resolvedFiling.metadata;
+        normalizedDisplayName = resolvedFiling.displayName;
+        filingSource = resolvedFiling.source;
       }
-      try {
-        normalizedFiling = normalizeFilingMetadata(body.filing_metadata);
-        normalizedDisplayName = normalizeDisplayName(body.display_name);
-      } catch (error) {
-        const detail = error instanceof FilingMetadataError ? error.code : "invalid_payload";
-        await markInitialDispatchRetry("INVALID_FILING_METADATA", "Department filing details did not satisfy the dispatch contract", { detail });
-        return Response.json({ error: "invalid_filing_metadata", detail }, { status: 400 });
-      }
+    } catch (error) {
+      const detail = error instanceof FilingMetadataError ? error.code : "invalid_payload";
+      await markInitialDispatchRetry("INVALID_FILING_METADATA", "Department filing details did not satisfy the dispatch contract", { detail });
+      return Response.json({ error: "invalid_filing_metadata", detail }, { status: 400 });
     }
 
     const githubToken = Deno.env.get("GITHUB_TOKEN");
@@ -246,6 +247,7 @@ export default {
           paper: normalizedFiling.paper,
           duration: normalizedFiling.duration,
           display_name: normalizedDisplayName,
+          filing_source: filingSource,
         },
       });
       if (filingEventError) {

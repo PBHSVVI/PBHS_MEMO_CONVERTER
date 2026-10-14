@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { normalizeDisplayName, normalizeFilingMetadata } from "../_shared/filing-metadata.ts";
+import { normalizeDisplayName, normalizeFilingMetadata, resolveFilingDispatchInput } from "../_shared/filing-metadata.ts";
 
 const valid = {
   schema_version: "1.0", subject_scope: "mathematics", form: 4,
@@ -41,11 +41,66 @@ test("display name rejects unsafe, empty and silently-normalized values", () => 
   for (const value of ["", "../memo", "memo/name", "memo<script>", "x".repeat(121)]) assert.throws(() => normalizeDisplayName(value));
 });
 
+test("filing-contract retry validates and uses durable stored filing data", () => {
+  assert.deepEqual(resolveFilingDispatchInput({
+    contractVersion: "1.0",
+    hasRequestMetadata: false,
+    hasRequestDisplayName: false,
+    requestMetadata: undefined,
+    requestDisplayName: undefined,
+    storedMetadata: valid,
+    storedDisplayName: "Form 4 Class Test 2 Term 4 2026",
+    now,
+  }), {
+    metadata: valid,
+    displayName: "Form 4 Class Test 2 Term 4 2026",
+    source: "stored",
+  });
+});
+
+test("malformed stored filing data fails closed", () => {
+  assert.throws(() => resolveFilingDispatchInput({
+    contractVersion: "1.0",
+    hasRequestMetadata: false,
+    hasRequestDisplayName: false,
+    requestMetadata: undefined,
+    requestDisplayName: undefined,
+    storedMetadata: { ...valid, form: 8 },
+    storedDisplayName: "Form 8 Class Test 2 Term 4 2026",
+    now,
+  }), (error) => error instanceof Error && error.name === "FilingMetadataError" && error.code === "invalid_form");
+});
+
+test("normal first dispatch validates request values and legacy retry remains unchanged", () => {
+  assert.equal(resolveFilingDispatchInput({
+    contractVersion: null,
+    hasRequestMetadata: false,
+    hasRequestDisplayName: false,
+    requestMetadata: undefined,
+    requestDisplayName: undefined,
+    storedMetadata: null,
+    storedDisplayName: null,
+    now,
+  }), null);
+  assert.deepEqual(resolveFilingDispatchInput({
+    contractVersion: "1.0",
+    hasRequestMetadata: true,
+    hasRequestDisplayName: true,
+    requestMetadata: valid,
+    requestDisplayName: "Form 4 Class Test 2 Term 4 2026",
+    storedMetadata: null,
+    storedDisplayName: null,
+    now,
+  }).source, "request");
+});
+
 test("dispatch requires and audits filing data only for opted-in new jobs", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  assert.match(source, /filingRequired.*filing_contract_version === "1\.0"/s);
-  assert.match(source, /missing_required_filing_contract/);
+  assert.match(source, /resolveFilingDispatchInput/);
+  assert.match(source, /storedMetadata: visibleJob\.filing_metadata/);
+  assert.match(source, /storedDisplayName: visibleJob\.display_name/);
   assert.match(source, /event_type: "filing_metadata_submitted"/);
   assert.match(source, /claimValues\.filing_metadata = normalizedFiling/);
+  assert.match(source, /filing_source: filingSource/);
 });
 

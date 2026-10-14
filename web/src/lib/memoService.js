@@ -97,6 +97,8 @@ export async function createAndDispatchJob({ client, user, file, filingMetadata,
       source_path: sourcePath,
       source_size_bytes: file.size,
       filing_contract_version: "1.0",
+      filing_metadata: filingMetadata,
+      display_name: displayName,
     })
     .select(JOB_COLUMNS)
     .single();
