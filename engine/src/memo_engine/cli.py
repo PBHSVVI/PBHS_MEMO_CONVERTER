@@ -15,6 +15,7 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
+from .visual_evidence import extract_visual_evidence, fuse_visual_evidence
 from .corrections import apply_confirmed_corrections, attach_correction_audit
 from .phase7_5 import enrich_structure_phase7_5
 from .library import paper_library_summary
@@ -256,13 +257,65 @@ def run_job(job_id: str) -> int:
         normalized_path = f"{job['user_id']}/{job['id']}/internal/normalized.json"
         db.upload_json(BUCKET, normalized_path, normalized)
 
+        visual_path = f"{job['user_id']}/{job['id']}/internal/visual/evidence.json"
+        visual_cache_hit = False
+        try:
+            cached_visual = db.download_json(BUCKET, visual_path)
+        except Exception:
+            cached_visual = None
+        if (
+            isinstance(cached_visual, dict)
+            and cached_visual.get("schema_version") == "1.0"
+            and cached_visual.get("source_sha256") == source["sha256"]
+        ):
+            visual = cached_visual
+            visual_artifacts: list[dict[str, Any]] = []
+            visual_cache_hit = True
+        else:
+            visual, visual_artifacts = extract_visual_evidence(
+                source_bytes, normalized
+            )
+            for artifact in visual_artifacts:
+                db.upload_object(
+                    BUCKET,
+                    f"{job['user_id']}/{job['id']}/{artifact['path']}",
+                    artifact["data"],
+                    content_type=artifact["content_type"],
+                )
+            db.upload_json(BUCKET, visual_path, visual)
+
+        visual_summary = visual.get("summary", {})
+        db.add_event(
+            job,
+            "phase2_visual_evidence_complete",
+            "normalization",
+            {
+                "visual_path": visual_path,
+                "pages_screened": visual_summary.get("pages_screened", 0),
+                "pages_flagged": visual_summary.get("pages_flagged", 0),
+                "regions_rendered": visual_summary.get("regions_rendered", 0),
+                "vision_calls": visual_summary.get("vision_calls", 0),
+                "vision_model": (
+                    visual.get("runs", [{}])[0].get("model")
+                    if visual.get("runs") else None
+                ),
+                "image_count": visual_summary.get("image_count", 0),
+                "success_count": visual_summary.get("success_count", 0),
+                "failure_count": visual_summary.get("failure_count", 0),
+                "cache_hit": visual_cache_hit,
+            },
+        )
+
         job = db.patch_job(
             job_id,
             "processing",
             {"stage": "structure", "updated_at": utc_now()},
         )
-        structure = enrich_structure_phase7_5(
-            extract_structure(normalized), normalized
+        structure = fuse_visual_evidence(
+            enrich_structure_phase7_5(
+                extract_structure(normalized), normalized
+            ),
+            visual,
         )
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []

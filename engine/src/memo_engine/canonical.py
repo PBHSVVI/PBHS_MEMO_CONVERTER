@@ -769,6 +769,21 @@ def _content_segments(
     source_segments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Return teacher-confirmed item content while retaining source provenance."""
+    visual_segments = qdata.get("visual_solution_segments")
+    if isinstance(visual_segments, list) and visual_segments:
+        return [
+            {
+                "text": str(segment.get("text") or ""),
+                "source_ref": segment.get("source_ref"),
+                "visual_evidence": {
+                    "raw_transcription": segment.get("raw_transcription"),
+                    "rendered_asset_ref": segment.get("rendered_asset_ref"),
+                    "confidence": segment.get("confidence"),
+                },
+            }
+            for segment in visual_segments
+            if str(segment.get("text") or "").strip()
+        ]
     override = qdata.get("content_override")
     if not isinstance(override, dict):
         return source_segments
@@ -1402,6 +1417,9 @@ def _build_item_tree(
             "confidence": {"score": 1.0, "band": "green", "rationale": "Question hierarchy is deterministic after Phase 3 gates."},
             "warnings": [],
         }
+        if qdata is not None and qdata.get("visual_evidence"):
+            item["source_prompt"] = qdata.get("source_preview")
+            item["visual_evidence"] = qdata.get("visual_evidence")
         correction_origin = _correction_origin(qdata) if qdata else None
         if correction_origin is not None:
             item["correction_origin"] = correction_origin
@@ -2272,6 +2290,9 @@ def build_canonical_memo(
             correction_origin = _correction_origin(qdata)
             if correction_origin is not None:
                 item["correction_origin"] = correction_origin
+            if qdata.get("visual_evidence"):
+                item["source_prompt"] = qdata.get("source_preview")
+                item["visual_evidence"] = qdata.get("visual_evidence")
             items = [item]
 
         computed_subtotal = sum(int(item.get("marks", {}).get("computed") or 0) for item in items)

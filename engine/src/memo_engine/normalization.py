@@ -12,6 +12,11 @@ from xml.etree import ElementTree as ET
 from PIL import Image
 
 from .ingestion import IngestionError, sha256_hex
+from .visual_evidence import (
+    apply_document_visual_escalation,
+    image_visual_screen,
+    screen_pdf_page,
+)
 
 
 class NormalizationError(RuntimeError):
@@ -546,10 +551,13 @@ def normalize_pdf(data: bytes, ingestion: dict[str, Any]) -> dict[str, Any]:
                     "ocr_text_length": len(ocr_text),
                     "effective_text": effective_text,
                     "effective_text_source": effective_source,
+                    **screen_pdf_page(page, digital_text),
                 }
             )
     finally:
         document.close()
+
+    apply_document_visual_escalation(pages)
 
     return {
         "kind": "pdf",
@@ -558,6 +566,10 @@ def normalize_pdf(data: bytes, ingestion: dict[str, Any]) -> dict[str, Any]:
             "page_count": len(pages),
             "ocr_required_pages": sum(1 for p in pages if p["ocr_required"]),
             "digital_pages": sum(1 for p in pages if not p["ocr_required"]),
+            "visual_pages_screened": len(pages),
+            "visual_pages_flagged": sum(
+                1 for p in pages if p["visual_inspection_required"]
+            ),
         },
         "ocr": {
             "engine": ocr_engine,
@@ -583,12 +595,15 @@ def normalize_image(kind: str, data: bytes) -> dict[str, Any]:
                 "ocr_text_length": len(text),
                 "effective_text": text,
                 "effective_text_source": "ocr",
+                **image_visual_screen(kind),
             }
         ],
         "summary": {
             "page_count": 1,
             "ocr_required_pages": 1,
             "digital_pages": 0,
+            "visual_pages_screened": 1,
+            "visual_pages_flagged": 1,
         },
         "ocr": {
             "engine": engine,

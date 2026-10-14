@@ -1,0 +1,579 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import json
+import os
+import re
+from typing import Any, Callable
+
+from PIL import Image, ImageStat
+
+from .ai_router import ProviderError, _post_json, configured_provider
+
+
+SCHEMA_VERSION = "1.0"
+EVIDENCE_KINDS = {
+    "answer",
+    "answer_working",
+    "marking_note",
+    "teacher_comment",
+    "tick",
+    "cross",
+    "diagram_entry",
+    "other_visible_annotation",
+}
+VISUAL_REVIEW_THRESHOLD = 0.85
+QUESTION_REF_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
+QUESTION_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})\.?(?!\d)")
+WRITE_ON_RE = re.compile(r"\bWRITE[ -]?ON\s+(?:TEST|ASSESSMENT|PAPER)\b", re.I)
+
+
+class VisualEvidenceError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+
+
+def _coloured_pixel_ratio(image_bytes: bytes) -> float:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        sample = image.convert("RGB")
+        sample.thumbnail((700, 900))
+        pixel_source = getattr(sample, "get_flattened_data", sample.getdata)
+        pixels = list(pixel_source())
+    if not pixels:
+        return 0.0
+    coloured = sum(
+        1 for red, green, blue in pixels
+        if max(red, green, blue) - min(red, green, blue) >= 55
+        and min(red, green, blue) < 225
+    )
+    return coloured / len(pixels)
+
+
+def _annotation_types(page: Any) -> list[str]:
+    result: list[str] = []
+    try:
+        annotations = page.annots()
+        if annotations is None:
+            return result
+        for annotation in annotations:
+            kind = annotation.type[1] if annotation.type else "unknown"
+            result.append(str(kind).lower())
+    except Exception:
+        pass
+    return result
+
+
+def screen_pdf_page(page: Any, digital_text: str) -> dict[str, Any]:
+    reasons: list[str] = []
+    annotations = _annotation_types(page)
+    if any("ink" in kind for kind in annotations):
+        reasons.append("PDF_INK_ANNOTATIONS_PRESENT")
+
+    images = page.get_images(full=True)
+    drawings = page.get_drawings()
+    if images:
+        reasons.append("RASTER_OVERLAY_PRESENT")
+    if drawings:
+        reasons.extend([
+            "NON_TEXT_VECTOR_DRAWINGS_PRESENT",
+            "VISUAL_CONTENT_OUTSIDE_TEXT_LAYER",
+        ])
+    if not digital_text.strip():
+        reasons.append("IMAGE_PAGE")
+    if WRITE_ON_RE.search(digital_text):
+        reasons.append("WRITE_ON_DOCUMENT")
+
+    coloured_ratio = 0.0
+    try:
+        import fitz
+
+        preview = page.get_pixmap(matrix=fitz.Matrix(1.25, 1.25), alpha=False)
+        coloured_ratio = _coloured_pixel_ratio(preview.tobytes("png"))
+    except Exception:
+        coloured_ratio = 0.0
+    if coloured_ratio >= 0.00035:
+        reasons.append("COLOURED_OVERLAY_PRESENT")
+
+    reasons = list(dict.fromkeys(reasons))
+    return {
+        "visual_inspection_required": bool(reasons),
+        "visual_inspection_reasons": reasons,
+        "visual_overlay_detected": bool(
+            annotations or images or drawings or coloured_ratio >= 0.00035
+        ),
+        "visual_evidence_source": "deterministic_pdf_screen",
+        "visual_extraction_confidence": None,
+        "annotation_types": annotations,
+        "raster_image_count": len(images),
+        "vector_drawing_count": len(drawings),
+        "coloured_pixel_ratio": round(coloured_ratio, 6),
+    }
+
+
+def apply_document_visual_escalation(pages: list[dict[str, Any]]) -> None:
+    document_write_on = any(
+        "WRITE_ON_DOCUMENT" in page.get("visual_inspection_reasons", [])
+        for page in pages
+    )
+    if not document_write_on:
+        return
+    for page in pages:
+        if int(page.get("digital_text_length") or 0) < 30 and not page.get("image_count"):
+            continue
+        page["visual_inspection_required"] = True
+        reasons = list(page.get("visual_inspection_reasons") or [])
+        if "WRITE_ON_DOCUMENT" not in reasons:
+            reasons.append("WRITE_ON_DOCUMENT")
+        page["visual_inspection_reasons"] = reasons
+
+
+def image_visual_screen(kind: str) -> dict[str, Any]:
+    return {
+        "visual_inspection_required": True,
+        "visual_inspection_reasons": ["IMAGE_PAGE", "IMAGE_SOURCE"],
+        "visual_overlay_detected": True,
+        "visual_evidence_source": f"deterministic_{kind}_screen",
+        "visual_extraction_confidence": None,
+        "annotation_types": [],
+        "raster_image_count": 1,
+        "vector_drawing_count": 0,
+        "coloured_pixel_ratio": None,
+    }
+
+
+def _question_regions(page: Any) -> list[dict[str, Any]]:
+    anchors: list[tuple[float, str]] = []
+    try:
+        words = page.get_text("words") or []
+    except Exception:
+        words = []
+    for word in words:
+        if len(word) < 5:
+            continue
+        match = QUESTION_TOKEN_RE.fullmatch(str(word[4]).strip())
+        if match:
+            anchors.append((float(word[1]), match.group(1)))
+    anchors = sorted(set(anchors))
+    result: list[dict[str, Any]] = []
+    for index, (top, question_ref) in enumerate(anchors):
+        bottom = anchors[index + 1][0] if index + 1 < len(anchors) else float(page.rect.height)
+        if bottom - top < 18:
+            continue
+        margin = 24.0
+        result.append({
+            "question_refs": [question_ref],
+            "bbox": [
+                0.0,
+                max(0.0, top - margin),
+                float(page.rect.width),
+                min(float(page.rect.height), bottom + margin),
+            ],
+        })
+    return result
+
+
+def _render_regions(source_bytes: bytes, normalized: dict[str, Any]) -> list[dict[str, Any]]:
+    kind = normalized.get("content", {}).get("kind")
+    flagged = [
+        page for page in normalized.get("content", {}).get("pages", [])
+        if page.get("visual_inspection_required")
+    ]
+    if not flagged:
+        return []
+    if kind in {"png", "jpeg"}:
+        extension = "png" if kind == "png" else "jpg"
+        return [{
+            "page": 1,
+            "question_refs": [],
+            "bbox": None,
+            "asset_path": f"internal/visual/pages/page-0001.{extension}",
+            "image_bytes": source_bytes,
+            "mime_type": "image/png" if kind == "png" else "image/jpeg",
+            "printed_text": flagged[0].get("effective_text", ""),
+        }]
+
+    try:
+        import fitz
+        document = fitz.open(stream=source_bytes, filetype="pdf")
+    except Exception as exc:
+        raise VisualEvidenceError(
+            "VISUAL_RENDER_FAILED", "Visual source pages could not be rendered."
+        ) from exc
+
+    regions: list[dict[str, Any]] = []
+    max_regions = max(1, min(40, int(os.environ.get("MEMO_VISION_MAX_REGIONS", "24"))))
+    try:
+        for page_meta in flagged:
+            page_number = int(page_meta["page"])
+            page = document.load_page(page_number - 1)
+            page_regions = _question_regions(page)
+            if not page_regions:
+                page_regions = [{"question_refs": [], "bbox": None}]
+            for region_index, region in enumerate(page_regions, start=1):
+                if len(regions) >= max_regions:
+                    break
+                clip = fitz.Rect(region["bbox"]) if region["bbox"] else None
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), clip=clip, alpha=False)
+                image_bytes = pixmap.tobytes("png")
+                if region["question_refs"]:
+                    suffix = "-".join(region["question_refs"]).replace(".", "_")
+                    asset_path = f"internal/visual/regions/page-{page_number:04d}-q{suffix}.png"
+                else:
+                    asset_path = f"internal/visual/pages/page-{page_number:04d}.png"
+                regions.append({
+                    "page": page_number,
+                    "question_refs": region["question_refs"],
+                    "bbox": region["bbox"],
+                    "asset_path": asset_path,
+                    "image_bytes": image_bytes,
+                    "mime_type": "image/png",
+                    "printed_text": page_meta.get("digital_text", ""),
+                    "region_index": region_index,
+                })
+            if len(regions) >= max_regions:
+                break
+    finally:
+        document.close()
+    return regions
+
+
+def visual_system_prompt() -> str:
+    return """You are an evidence transcriber for a mathematics marking memo.
+Return ONLY additional visible handwritten, digital-ink, diagram, tick, cross,
+teacher-note, or mark-change evidence from the supplied image.
+
+DO NOT solve a missing answer. DO NOT infer an answer merely because the printed
+question is visible. DO NOT invent marking allocations.
+DO NOT reproduce printed question text as handwritten evidence.
+DO NOT assume a tick means an unseen mark
+criterion. DO NOT silently repair unclear handwriting. Preserve decimal commas and
+visible fraction meaning. If a symbol or association is unclear, lower confidence
+and add a warning. Use only the supplied closed kinds and question anchors."""
+
+
+def _vision_schema(page_number: int) -> dict[str, Any]:
+    evidence_item = {
+        "type": "object",
+        "properties": {
+            "question_ref": {"type": ["string", "null"]},
+            "kind": {"type": "string", "enum": sorted(EVIDENCE_KINDS)},
+            "transcription": {"type": "string"},
+            "normalized_math": {"type": ["string", "null"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "source": {"type": "string", "enum": ["visual_overlay"]},
+            "bbox": {
+                "type": ["array", "null"],
+                "items": {"type": "number"},
+                "minItems": 4,
+                "maxItems": 4,
+            },
+        },
+        "required": ["question_ref", "kind", "transcription", "normalized_math", "confidence", "source", "bbox"],
+        "additionalProperties": False,
+    }
+    mark_change = {
+        "type": "object",
+        "properties": {
+            "question_ref": {"type": ["string", "null"]},
+            "level": {"type": "string", "enum": ["item", "subtotal", "document_total"]},
+            "printed_value": {"type": ["integer", "null"]},
+            "visual_value": {"type": "integer", "minimum": 0, "maximum": 999},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "requires_confirmation": {"type": "boolean", "enum": [True]},
+            "bbox": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+        },
+        "required": ["question_ref", "level", "printed_value", "visual_value", "confidence", "requires_confirmation", "bbox"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "schema_version": {"type": "string", "enum": [SCHEMA_VERSION]},
+            "page": {"type": "integer", "enum": [page_number]},
+            "visual_content_present": {"type": "boolean"},
+            "evidence": {"type": "array", "items": evidence_item, "maxItems": 40},
+            "mark_changes": {"type": "array", "items": mark_change, "maxItems": 20},
+            "warnings": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        },
+        "required": ["schema_version", "page", "visual_content_present", "evidence", "mark_changes", "warnings"],
+        "additionalProperties": False,
+    }
+
+
+def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
+    if configured_provider() != "groq":
+        raise ProviderError("AI_PROVIDER_UNSUPPORTED", "Only approved Groq vision is supported.", retryable=False)
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    encoded = base64.b64encode(region["image_bytes"]).decode("ascii")
+    prompt = visual_system_prompt() + "\n\nKnown question anchors: " + json.dumps(region["question_refs"])
+    prompt += "\nDigitally extracted printed text (context only):\n" + str(region["printed_text"])[:12000]
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{region['mime_type']};base64,{encoded}"}},
+        ]}],
+        "temperature": 0,
+        "max_completion_tokens": 4096,
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": "memo_visual_evidence", "strict": True,
+            "schema": _vision_schema(int(region["page"])),
+        }},
+    }
+    payload, elapsed_ms = _post_json(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {"Authorization": f"Bearer {key}"}, body,
+    )
+    try:
+        result = json.loads(payload["choices"][0]["message"]["content"])
+    except Exception as exc:
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "The visual response was not valid structured evidence.") from exc
+    result["provider"] = "groq"
+    result["model"] = model
+    result["elapsed_ms"] = elapsed_ms
+    result["usage"] = payload.get("usage") or {}
+    return result
+
+
+def _bounded_text(value: Any, *, maximum: int = 2000) -> str:
+    if not isinstance(value, str):
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual transcription must be text.")
+    return value.strip()[:maximum]
+
+
+def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response must be an object.")
+    required = {"schema_version", "page", "visual_content_present", "evidence", "mark_changes", "warnings"}
+    allowed = required | {"provider", "model", "elapsed_ms", "usage"}
+    if set(payload) - allowed or not required.issubset(payload):
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response fields do not match the closed schema.")
+    if payload["schema_version"] != SCHEMA_VERSION or payload["page"] != region["page"]:
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response identity is invalid.")
+    if not isinstance(payload["visual_content_present"], bool):
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual presence must be boolean.")
+    evidence: list[dict[str, Any]] = []
+    for item in payload["evidence"]:
+        if not isinstance(item, dict) or set(item) != {"question_ref", "kind", "transcription", "normalized_math", "confidence", "source", "bbox"}:
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual evidence item is invalid.")
+        question_ref = item["question_ref"]
+        if question_ref is not None and not QUESTION_REF_RE.fullmatch(str(question_ref)):
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual question reference is invalid.")
+        if item["kind"] not in EVIDENCE_KINDS or item["source"] != "visual_overlay":
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual evidence kind or source is invalid.")
+        confidence = float(item["confidence"])
+        if not 0 <= confidence <= 1:
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual confidence is invalid.")
+        bbox = item["bbox"]
+        if bbox is not None and (not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox)):
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual evidence bounding box is invalid.")
+        normalized_math = item["normalized_math"]
+        if normalized_math is not None:
+            normalized_math = _bounded_text(normalized_math)
+        evidence.append({
+            **item,
+            "question_ref": question_ref,
+            "transcription": _bounded_text(item["transcription"]),
+            "normalized_math": normalized_math,
+            "confidence": confidence,
+            "page": region["page"],
+            "rendered_asset_ref": region["asset_path"],
+            "extractor_provider": str(payload.get("provider") or "groq"),
+            "extractor_model": str(payload.get("model") or "unknown"),
+        })
+
+    mark_changes: list[dict[str, Any]] = []
+    for item in payload["mark_changes"]:
+        expected = {"question_ref", "level", "printed_value", "visual_value", "confidence", "requires_confirmation", "bbox"}
+        if not isinstance(item, dict) or set(item) != expected or item["requires_confirmation"] is not True:
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark change is invalid.")
+        question_ref = item["question_ref"]
+        if question_ref is not None and not QUESTION_REF_RE.fullmatch(str(question_ref)):
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark-change question reference is invalid.")
+        if item["level"] not in {"item", "subtotal", "document_total"}:
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark-change level is invalid.")
+        confidence = float(item["confidence"])
+        if not 0 <= confidence <= 1:
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark-change confidence is invalid.")
+        bbox = item["bbox"]
+        if bbox is not None and (not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox)):
+            raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark-change bounding box is invalid.")
+        mark_changes.append({
+            **item,
+            "confidence": confidence,
+            "page": region["page"],
+            "rendered_asset_ref": region["asset_path"],
+            "extractor_provider": str(payload.get("provider") or "groq"),
+            "extractor_model": str(payload.get("model") or "unknown"),
+        })
+    warnings = [_bounded_text(item, maximum=300) for item in payload["warnings"] if isinstance(item, str)]
+    return {**payload, "evidence": evidence, "mark_changes": mark_changes, "warnings": warnings}
+
+
+def extract_visual_evidence(
+    source_bytes: bytes,
+    normalized: dict[str, Any],
+    *,
+    runner: Callable[[dict[str, Any], str], dict[str, Any]] = groq_visual_extract,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    screened_pages = normalized.get("content", {}).get("pages", [])
+    flagged_pages = [page for page in screened_pages if page.get("visual_inspection_required")]
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "phase": "phase2_visual_evidence",
+        "job_id": normalized.get("job_id"),
+        "source_sha256": normalized.get("source", {}).get("sha256"),
+        "evidence": [],
+        "mark_changes": [],
+        "warnings": [],
+        "runs": [],
+        "summary": {
+            "pages_screened": len(screened_pages),
+            "pages_flagged": len(flagged_pages),
+            "regions_rendered": 0,
+            "vision_calls": 0,
+            "image_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "visual_content_count": 0,
+        },
+    }
+    if not flagged_pages:
+        return record, []
+
+    model = os.environ.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip() or "qwen/qwen3.8-27b"
+    try:
+        regions = _render_regions(source_bytes, normalized)
+    except VisualEvidenceError as exc:
+        record["warnings"].append({"code": exc.code, "message": exc.public_message})
+        record["summary"]["failure_count"] += 1
+        return record, []
+
+    artifacts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for region in regions:
+        digest = hashlib.sha256(region["image_bytes"]).hexdigest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        artifacts.append({
+            "path": region["asset_path"],
+            "data": region["image_bytes"],
+            "content_type": region["mime_type"],
+            "sha256": digest,
+        })
+        record["summary"]["regions_rendered"] += 1
+        record["summary"]["image_count"] += 1
+        record["summary"]["vision_calls"] += 1
+        try:
+            raw = runner(region, model)
+            result = validate_visual_response(raw, region)
+        except (ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
+            code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
+            record["warnings"].append({
+                "code": code,
+                "message": "Detected visual memo evidence could not be read reliably.",
+                "page": region["page"],
+                "rendered_asset_ref": region["asset_path"],
+            })
+            record["runs"].append({
+                "provider": "groq", "model": model, "page": region["page"],
+                "image_count": 1, "success": False, "error_code": code,
+            })
+            record["summary"]["failure_count"] += 1
+            continue
+        record["evidence"].extend(result["evidence"])
+        record["mark_changes"].extend(result["mark_changes"])
+        record["warnings"].extend({"code": "VISUAL_MODEL_WARNING", "message": item, "page": region["page"]} for item in result["warnings"])
+        record["runs"].append({
+            "provider": str(result.get("provider") or "groq"),
+            "model": str(result.get("model") or model),
+            "page": region["page"], "image_count": 1, "success": True,
+            "elapsed_ms": result.get("elapsed_ms"),
+        })
+        record["summary"]["success_count"] += 1
+        if result["visual_content_present"]:
+            record["summary"]["visual_content_count"] += 1
+    return record, artifacts
+
+
+def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
+    questions = {str(item.get("question_id")): item for item in structure.get("questions", [])}
+    attached = 0
+    for item in visual.get("evidence", []):
+        question_ref = item.get("question_ref")
+        target = questions.get(str(question_ref)) if question_ref is not None else None
+        confidence = float(item.get("confidence") or 0)
+        if target is None:
+            structure.setdefault("exceptions", []).append({
+                "level": "amber", "category": "visual_evidence_association_uncertain",
+                "affected_id": question_ref,
+                "message": "Visible memo evidence could not be associated with a confirmed question.",
+                "suggestions": [{
+                    "rendered_asset_ref": item.get("rendered_asset_ref"),
+                    "page": item.get("page"),
+                    "transcription": item.get("transcription"),
+                }],
+            })
+            continue
+        target.setdefault("visual_evidence", []).append(item)
+        attached += 1
+        if item.get("kind") in {"answer", "answer_working", "diagram_entry"} and confidence >= VISUAL_REVIEW_THRESHOLD:
+            text = str(item.get("normalized_math") or item.get("transcription") or "").strip()
+            if text:
+                target.setdefault("visual_solution_segments", []).append({
+                    "text": text,
+                    "raw_transcription": item.get("transcription"),
+                    "source_ref": {"file_id": "source_1", "page": item.get("page")},
+                    "rendered_asset_ref": item.get("rendered_asset_ref"),
+                    "confidence": confidence,
+                })
+        if confidence < VISUAL_REVIEW_THRESHOLD:
+            structure.setdefault("exceptions", []).append({
+                "level": "amber", "category": "visual_evidence_uncertain",
+                "affected_id": question_ref,
+                "message": "Handwritten or visual memo evidence requires teacher confirmation.",
+                "suggestions": [{
+                    "rendered_asset_ref": item.get("rendered_asset_ref"),
+                    "page": item.get("page"),
+                    "transcription": item.get("transcription"),
+                }],
+            })
+
+    for change in visual.get("mark_changes", []):
+        structure.setdefault("exceptions", []).append({
+            "level": "amber", "category": "visual_mark_change_review",
+            "affected_id": change.get("question_ref"),
+            "message": "A handwritten mark allocation differs from the printed value and requires confirmation.",
+            "suggestions": [{
+                "printed_value": change.get("printed_value"),
+                "visual_value": change.get("visual_value"),
+                "level": change.get("level"),
+                "rendered_asset_ref": change.get("rendered_asset_ref"),
+            }],
+        })
+    for warning in visual.get("warnings", []):
+        if warning.get("code") in {"VISUAL_MODEL_WARNING"}:
+            continue
+        structure.setdefault("exceptions", []).append({
+            "level": "red", "category": "visual_evidence_unread",
+            "affected_id": None,
+            "message": "We found handwritten or visual memo information that could not be read reliably.",
+            "suggestions": [{"rendered_asset_ref": warning.get("rendered_asset_ref"), "page": warning.get("page")}],
+        })
+    summary = structure.setdefault("summary", {})
+    summary["visual_evidence_count"] = len(visual.get("evidence", []))
+    summary["visual_evidence_attached_count"] = attached
+    summary["visual_mark_change_count"] = len(visual.get("mark_changes", []))
+    summary["visual_review_required"] = any(
+        item.get("category", "").startswith("visual_")
+        for item in structure.get("exceptions", [])
+    )
+    summary["review_required"] = bool(structure.get("exceptions"))
+    summary["amber_count"] = sum(1 for item in structure.get("exceptions", []) if item.get("level") == "amber")
+    summary["red_count"] = sum(1 for item in structure.get("exceptions", []) if item.get("level") == "red")
+    return structure
