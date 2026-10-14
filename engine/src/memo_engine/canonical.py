@@ -769,6 +769,29 @@ def _content_segments(
     source_segments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Return teacher-confirmed item content while retaining source provenance."""
+    override = qdata.get("content_override")
+    if isinstance(override, dict):
+        lines: list[str] = []
+        question_text = str(override.get("question_text") or "").strip()
+        if question_text:
+            lines.append(question_text)
+        raw_solution = override.get("solution_lines")
+        if isinstance(raw_solution, list):
+            lines.extend(str(line).strip() for line in raw_solution if str(line).strip())
+        if lines:
+            source_ref = next(
+                (segment.get("source_ref") for segment in source_segments if isinstance(segment.get("source_ref"), dict)),
+                None,
+            )
+            return [
+                {
+                    "text": line,
+                    "source_ref": source_ref,
+                    "teacher_correction_id": override.get("correction_id"),
+                }
+                for line in lines
+            ]
+
     visual_segments = qdata.get("visual_solution_segments")
     if isinstance(visual_segments, list) and visual_segments:
         return [
@@ -784,30 +807,7 @@ def _content_segments(
             for segment in visual_segments
             if str(segment.get("text") or "").strip()
         ]
-    override = qdata.get("content_override")
-    if not isinstance(override, dict):
-        return source_segments
-    lines: list[str] = []
-    question_text = str(override.get("question_text") or "").strip()
-    if question_text:
-        lines.append(question_text)
-    raw_solution = override.get("solution_lines")
-    if isinstance(raw_solution, list):
-        lines.extend(str(line).strip() for line in raw_solution if str(line).strip())
-    if not lines:
-        return source_segments
-    source_ref = next(
-        (segment.get("source_ref") for segment in source_segments if isinstance(segment.get("source_ref"), dict)),
-        None,
-    )
-    return [
-        {
-            "text": line,
-            "source_ref": source_ref,
-            "teacher_correction_id": override.get("correction_id"),
-        }
-        for line in lines
-    ]
+    return source_segments
 
 
 def _marking_text(qdata: dict[str, Any], record: dict[str, Any]) -> str:

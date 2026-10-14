@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 from pathlib import Path
 
@@ -193,6 +194,79 @@ def test_canonical_content_uses_visual_answer_without_repeating_printed_prompt()
     fused = _content_segments({"visual_solution_segments": visual}, source)
     assert [item["text"] for item in fused] == ["y = 0,72x + 6,71"]
     assert fused[0]["visual_evidence"]["raw_transcription"] == "y = 0,72x + 6,71"
+
+
+def test_confirmed_teacher_content_override_outweighs_visual_solution_and_preserves_both_origins():
+    source_ref = {"file_id": "source_1", "page": 1}
+    source = [{"text": "3.1 Printed source answer", "source_ref": source_ref}]
+    visual = [{
+        "text": "AI visual interpretation",
+        "raw_transcription": "AI visual interpretation",
+        "source_ref": source_ref,
+        "rendered_asset_ref": "internal/visual/regions/page-0001-q3_1.png",
+        "confidence": 0.94,
+    }]
+    visual_artifact = [{
+        "question_ref": "3.1",
+        "kind": "answer_working",
+        "transcription": "AI visual interpretation",
+        "normalized_math": "AI visual interpretation",
+        "confidence": 0.94,
+        "rendered_asset_ref": "internal/visual/regions/page-0001-q3_1.png",
+    }]
+    question = {
+        "visual_solution_segments": visual,
+        "visual_evidence": visual_artifact,
+        "content_override": {
+            "correction_id": "corr-teacher-3-1",
+            "question_text": "Teacher-corrected question",
+            "solution_lines": ["Teacher-corrected solution"],
+        },
+    }
+    original_visual_artifact = copy.deepcopy(visual_artifact)
+
+    content = _content_segments(question, source)
+
+    assert [segment["text"] for segment in content] == [
+        "Teacher-corrected question", "Teacher-corrected solution",
+    ]
+    assert all(segment["source_ref"] == source_ref for segment in content)
+    assert all(segment["teacher_correction_id"] == "corr-teacher-3-1" for segment in content)
+    assert all("visual_evidence" not in segment for segment in content)
+    assert question["visual_evidence"] == original_visual_artifact
+
+
+def test_teacher_correction_outweighs_low_confidence_visual_review_content():
+    source_ref = {"file_id": "source_1", "page": 2}
+    source = [{"text": "Printed source fallback", "source_ref": source_ref}]
+    question = {
+        "visual_solution_segments": [{
+            "text": "Uncertain visual reading",
+            "raw_transcription": "Uncertain visual reading",
+            "source_ref": source_ref,
+            "rendered_asset_ref": "internal/visual/regions/page-0002-q3_1.png",
+            "confidence": 0.55,
+        }],
+        "visual_evidence": [{
+            "question_ref": "3.1",
+            "confidence": 0.55,
+            "requires_confirmation": True,
+            "rendered_asset_ref": "internal/visual/regions/page-0002-q3_1.png",
+        }],
+        "content_override": {
+            "correction_id": "corr-after-visual-review",
+            "question_text": "Confirmed teacher wording",
+            "solution_lines": ["Confirmed teacher answer"],
+        },
+    }
+
+    content = _content_segments(question, source)
+
+    assert [segment["text"] for segment in content] == [
+        "Confirmed teacher wording", "Confirmed teacher answer",
+    ]
+    assert all(segment["teacher_correction_id"] == "corr-after-visual-review" for segment in content)
+    assert question["visual_evidence"][0]["confidence"] == 0.55
 
 
 def test_low_confidence_symbol_requires_review_with_private_crop():
