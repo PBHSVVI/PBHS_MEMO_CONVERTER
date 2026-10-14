@@ -38,7 +38,16 @@ function ownerName(user) {
 }
 
 export function ownerJobPaper(job, user) {
-  const metadata = job?.teacher_metadata?.values || {};
+  const canonical = job?.teacher_metadata?.values || {};
+  const filing = job?.filing_metadata || {};
+  const metadata = filing.schema_version === "1.0" ? {
+    subject: filing.subject_scope === "fs_mathematics" ? "FS MATHEMATICS" : filing.subject_scope === "mathematics" ? "MATHEMATICS" : null,
+    exam_type: filing.assessment_type,
+    paper: filing.paper?.value ? `PAPER ${filing.paper.value}` : null,
+    grade_label: filing.form ? `FORM ${filing.form}` : null,
+    term: filing.term ? `TERM ${filing.term}` : null,
+    year: filing.year,
+  } : canonical;
   return {
     job_id: job.id,
     owner_user_id: job.user_id,
@@ -56,6 +65,7 @@ export function ownerJobPaper(job, user) {
     stage_source: job.stage,
     updated_at: job.updated_at || job.created_at,
     source_filename: job.source_filename || null,
+    display_name: job.display_name || null,
     source: "owner_job",
     owner_job: job,
   };
@@ -80,6 +90,7 @@ export function libraryPaper(row, ownerJobs = new Map()) {
     stage_source: row.stage_source,
     updated_at: row.updated_at || row.created_at,
     source_filename: row.source_filename || null,
+    display_name: row.display_name || null,
     source: "department_summary",
     owner_job: ownerJob,
   };
@@ -109,6 +120,7 @@ export function unclassifiedOwnerPapers(papers, { ownerId, workState }) {
 }
 
 export function paperIdentity(paper) {
+  if (paper.display_name) return paper.display_name;
   const metadataTitle = [paper.assessment_type, paper.paper].filter(Boolean).join(" · ");
   return metadataTitle || paper.source_filename || "Memo details not recorded";
 }

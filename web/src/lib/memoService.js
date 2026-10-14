@@ -1,5 +1,6 @@
 import { outputPath } from "./urls";
 import { safeFilename, validateMemoFile } from "./jobContracts";
+import { outputDownloadName } from "./filingMetadata";
 
 const JOB_COLUMNS = [
   "id",
@@ -17,13 +18,17 @@ const JOB_COLUMNS = [
   "teacher_metadata",
   "teacher_metadata_revision",
   "teacher_metadata_updated_at",
+  "filing_contract_version",
+  "filing_metadata",
+  "display_name",
   "created_at",
   "updated_at",
 ].join(",");
 
 const LIBRARY_COLUMNS = [
   "job_id", "owner_user_id", "owner_display_name", "subject_scope", "subject_display",
-  "assessment_type", "term", "year", "paper", "grade_label", "workflow_bucket",
+  "assessment_type", "assessment_number", "term", "year", "paper", "grade_label",
+  "duration_value", "duration_unit", "duration_minutes", "display_name", "workflow_bucket",
   "status_source", "stage_source", "updated_at", "created_at", "source_filename",
 ].join(",");
 
@@ -70,7 +75,7 @@ export async function getJob(client, jobId) {
   return data;
 }
 
-export async function createAndDispatchJob({ client, user, file, teacherMetadata, onStep = () => {}, onJobCreated = () => {} }) {
+export async function createAndDispatchJob({ client, user, file, filingMetadata, displayName, onStep = () => {}, onJobCreated = () => {} }) {
   const validation = validateMemoFile(file);
   if (!validation.ok) throw new PilotAppError("FILE_INVALID", validation.message);
   if (!user?.id) throw new PilotAppError("AUTH_REQUIRED", "Sign in before uploading a memo.");
@@ -91,6 +96,7 @@ export async function createAndDispatchJob({ client, user, file, teacherMetadata
       source_mime: validation.mime,
       source_path: sourcePath,
       source_size_bytes: file.size,
+      filing_contract_version: "1.0",
     })
     .select(JOB_COLUMNS)
     .single();
@@ -115,7 +121,7 @@ export async function createAndDispatchJob({ client, user, file, teacherMetadata
   onStep("dispatching");
   const { data: dispatch, error: dispatchError } = await client.functions.invoke(
     "dispatch-memo",
-    { body: { job_id: jobId, teacher_metadata: teacherMetadata || { schema_version: "1.0", values: {}, confirmed_absent: [] } } },
+    { body: { job_id: jobId, filing_metadata: filingMetadata, display_name: displayName } },
   );
   if (dispatchError) {
     throw new PilotAppError(
@@ -180,11 +186,12 @@ export async function fetchCanonicalMetadata(client, userId, jobId) {
   };
 }
 
-export async function fetchOutput(client, userId, jobId, format) {
+export async function fetchOutput(client, userId, job, format) {
+  const jobId = typeof job === "string" ? job : job.id;
   const path = outputPath(userId, jobId, format);
   const { data, error } = await client.storage.from("memo-files").download(path);
   fail(error, "DOWNLOAD_FAILED", `The ${format.toUpperCase()} file could not be downloaded.`);
-  return { blob: data, filename: `memo.${format}` };
+  return { blob: data, filename: outputDownloadName(typeof job === "string" ? null : job, format) };
 }
 
 export function saveBlob({ blob, filename }) {

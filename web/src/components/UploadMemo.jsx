@@ -1,12 +1,8 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createAndDispatchJob } from "../lib/memoService";
 import { validateMemoFile } from "../lib/jobContracts";
-import {
-  EMPTY_TEACHER_METADATA,
-  uploadMetadataFromDashboard,
-  validateTeacherMetadata,
-} from "../lib/documentMetadata";
-import { DocumentDetails } from "./DocumentDetails";
+import { serializeFilingMetadata } from "../lib/filingMetadata";
+import { DepartmentDetails } from "./DepartmentDetails";
 import { SupportIncident } from "./SupportIncident";
 
 const STEP_COPY = {
@@ -19,16 +15,13 @@ const STEP_COPY = {
 export function UploadMemo({ client, user, onBack, onCreated, onJobCreated = () => {}, initialContext = null }) {
   const [file, setFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
-  const [teacherMetadata, setTeacherMetadata] = useState(() => initialContext
-    ? uploadMetadataFromDashboard(initialContext)
-    : EMPTY_TEACHER_METADATA);
-  const [metadataErrors, setMetadataErrors] = useState({});
-  const [focusField, setFocusField] = useState(null);
+  const [filing, setFiling] = useState({ draft: null, displayName: "", validation: { valid: false, errors: {} } });
   const [currentJob, setCurrentJob] = useState(null);
   const [state, setState] = useState({ busy: false, message: "", error: "", errorCode: null });
   const dragDepth = useRef(0);
   const submissionLock = useRef(false);
   const currentJobRef = useRef(null);
+  const updateFiling = useCallback((next) => setFiling(next), []);
 
   function acceptFile(selected) {
     const validation = validateMemoFile(selected);
@@ -90,17 +83,11 @@ export function UploadMemo({ client, user, onBack, onCreated, onJobCreated = () 
       setState({ busy: false, message: "", error: validation.message, errorCode: "FILE_INVALID" });
       return;
     }
-    const metadataValidation = validateTeacherMetadata(teacherMetadata);
-    if (!metadataValidation.valid) {
-      const firstField = Object.keys(metadataValidation.errors)[0] || null;
-      setMetadataErrors(metadataValidation.errors);
-      setFocusField(firstField);
-      setState({ busy: false, message: "", error: "Please correct the highlighted document details before uploading.", errorCode: "DOCUMENT_DETAILS_INVALID" });
+    if (!filing.validation.valid || !filing.draft) {
+      setState({ busy: false, message: "", error: "Please complete the highlighted department details before uploading.", errorCode: "DEPARTMENT_DETAILS_INVALID" });
       return;
     }
     submissionLock.current = true;
-    setMetadataErrors({});
-    setFocusField(null);
     setDragActive(false);
     setState({ busy: true, message: "Preparing upload…", error: "", errorCode: null });
     try {
@@ -108,7 +95,8 @@ export function UploadMemo({ client, user, onBack, onCreated, onJobCreated = () 
         client,
         user,
         file,
-        teacherMetadata,
+        filingMetadata: serializeFilingMetadata(filing.draft),
+        displayName: filing.validation.displayName,
         onStep: (step) => setState({ busy: true, message: STEP_COPY[step], error: "", errorCode: null }),
         onJobCreated: (job) => {
           currentJobRef.current = job;
@@ -154,18 +142,7 @@ export function UploadMemo({ client, user, onBack, onCreated, onJobCreated = () 
               disabled={state.busy}
             />
           </label>
-          <details className="metadata-optional">
-            <summary>Document details (optional)</summary>
-            <p>Supply details only when you know them. Information printed in the memo remains authoritative.</p>
-            <DocumentDetails
-              mode="upload"
-              teacherMetadata={teacherMetadata}
-              onChange={setTeacherMetadata}
-              busy={state.busy}
-              errors={metadataErrors}
-              focusField={focusField}
-            />
-          </details>
+          <DepartmentDetails initialContext={initialContext} busy={state.busy} onChange={updateFiling} />
           {state.message && <p className="notice info" aria-live="polite">{state.message}</p>}
           {state.error && <p className="notice danger" role="alert">{state.error}</p>}
           {state.error && (
@@ -181,7 +158,7 @@ export function UploadMemo({ client, user, onBack, onCreated, onJobCreated = () 
           )}
           <div className="button-row">
             <button type="button" className="button secondary" onClick={onBack} disabled={state.busy}>Cancel</button>
-            <button className="button primary" disabled={!file || state.busy}>
+            <button className="button primary" disabled={!file || !filing.validation.valid || state.busy}>
               {state.busy ? "Working…" : "Upload and convert"}
             </button>
           </div>

@@ -56,4 +56,5 @@ def test_expected_migration_history_is_explicit():
         "0009_scanner_safe_onboarding.sql",
         "0010_support_incident_source_filename.sql",
         "20261013121004_temporary_first_login_password.sql",
+        "20261014094701_department_filing_metadata.sql",
     }

@@ -270,3 +270,35 @@ def test_summary_contract_uses_the_safe_browser_relation_without_profile_access(
     service = (ROOT / "web" / "src" / "lib" / "memoService.js").read_text(encoding="utf-8")
     assert '.from("paper_library_summary")' in service
     assert "department_profiles" not in service
+
+
+def test_filing_metadata_is_projected_for_department_library_without_rewriting_canonical():
+    filing = {
+        "schema_version": "1.0",
+        "subject_scope": "fs_mathematics",
+        "form": 4,
+        "assessment_type": "class_test",
+        "term": 3,
+        "year": 2026,
+        "assessment_number": {"applicability": "required", "value": 2},
+        "paper": {"applicability": "not_applicable", "value": None},
+        "duration": {"value": 2, "unit": "periods", "duration_minutes": None},
+    }
+    canonical = _canonical({"subject": "MATHEMATICS", "paper": "PAPER 1", "duration_minutes": 60})
+    summary = paper_library_summary(_job(filing_metadata=filing, display_name="Form 4 Class Test 2 Term 3 2026"), canonical)
+    assert canonical["document_metadata"]["subject"] == "MATHEMATICS"
+    assert summary == {
+        **summary,
+        "subject_scope": "fs_mathematics",
+        "subject_display": "FS MATHEMATICS",
+        "assessment_type": "CLASS TEST",
+        "assessment_number": 2,
+        "paper": None,
+        "grade_label": "FORM 4",
+        "term": "TERM 3",
+        "year": 2026,
+        "duration_value": 2,
+        "duration_unit": "periods",
+        "duration_minutes": None,
+        "display_name": "Form 4 Class Test 2 Term 3 2026",
+    }

@@ -7,6 +7,12 @@ import {
   TeacherMetadataError,
   type TeacherMetadata,
 } from "../_shared/teacher-metadata.ts";
+import {
+  FilingMetadataError,
+  normalizeDisplayName,
+  normalizeFilingMetadata,
+  type FilingMetadata,
+} from "../_shared/filing-metadata.ts";
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" &&
@@ -19,7 +25,7 @@ export default {
       return Response.json({ error: "method_not_allowed" }, { status: 405 });
     }
 
-    let body: { job_id?: string; teacher_metadata?: unknown };
+    let body: { job_id?: string; teacher_metadata?: unknown; filing_metadata?: unknown; display_name?: unknown };
     try {
       body = await req.json();
     } catch {
@@ -30,10 +36,12 @@ export default {
     }
 
     const hasMetadata = Object.prototype.hasOwnProperty.call(body, "teacher_metadata");
+    const hasFilingMetadata = Object.prototype.hasOwnProperty.call(body, "filing_metadata");
+    const hasDisplayName = Object.prototype.hasOwnProperty.call(body, "display_name");
     const jobId = body.job_id;
     const { data: visibleJob, error: lookupError } = await ctx.supabase
       .from("jobs")
-      .select("id,user_id,status,stage,attempt_count,teacher_metadata,teacher_metadata_revision,teacher_metadata_updated_at,dispatched_at,error_code,error_message")
+      .select("id,user_id,status,stage,attempt_count,teacher_metadata,teacher_metadata_revision,teacher_metadata_updated_at,filing_contract_version,filing_metadata,display_name,dispatched_at,error_code,error_message")
       .eq("id", jobId)
       .maybeSingle();
     if (lookupError) {
@@ -89,6 +97,28 @@ export default {
       }
     }
 
+    let normalizedFiling: FilingMetadata | null = null;
+    let normalizedDisplayName: string | null = null;
+    const filingRequired = visibleJob.filing_contract_version === "1.0";
+    const storedFilingComplete = Boolean(visibleJob.filing_metadata && visibleJob.display_name);
+    if (filingRequired && !storedFilingComplete && (!hasFilingMetadata || !hasDisplayName)) {
+      await markInitialDispatchRetry("INVALID_FILING_METADATA", "Required department filing details were not supplied", { detail: "missing_required_filing_contract" });
+      return Response.json({ error: "invalid_filing_metadata", detail: "missing_required_filing_contract" }, { status: 400 });
+    }
+    if (hasFilingMetadata || hasDisplayName) {
+      if (!filingRequired || !hasFilingMetadata || !hasDisplayName) {
+        return Response.json({ error: "invalid_filing_metadata", detail: "unexpected_or_incomplete_filing_contract" }, { status: 400 });
+      }
+      try {
+        normalizedFiling = normalizeFilingMetadata(body.filing_metadata);
+        normalizedDisplayName = normalizeDisplayName(body.display_name);
+      } catch (error) {
+        const detail = error instanceof FilingMetadataError ? error.code : "invalid_payload";
+        await markInitialDispatchRetry("INVALID_FILING_METADATA", "Department filing details did not satisfy the dispatch contract", { detail });
+        return Response.json({ error: "invalid_filing_metadata", detail }, { status: 400 });
+      }
+    }
+
     const githubToken = Deno.env.get("GITHUB_TOKEN");
     const githubRepository =
       Deno.env.get("GITHUB_REPOSITORY") ?? "PBHSVVI/PBHS_MEMO_CONVERTER";
@@ -104,7 +134,7 @@ export default {
       );
     }
 
-    const policy = metadataDispatchPolicy(visibleJob, hasMetadata);
+    const policy = metadataDispatchPolicy(visibleJob, hasMetadata || hasFilingMetadata);
     if (!policy.allowed) {
       return Response.json(
         { error: policy.error, status: visibleJob.status, stage: visibleJob.stage },
@@ -130,6 +160,10 @@ export default {
       claimValues.teacher_metadata = normalizedMetadata;
       claimValues.teacher_metadata_revision = nextRevision;
       claimValues.teacher_metadata_updated_at = now;
+    }
+    if (normalizedFiling && normalizedDisplayName) {
+      claimValues.filing_metadata = normalizedFiling;
+      claimValues.display_name = normalizedDisplayName;
     }
 
     const { data: claimedJob, error: claimError } = await ctx.supabaseAdmin
@@ -195,6 +229,42 @@ export default {
       }
     }
 
+    if (normalizedFiling && normalizedDisplayName) {
+      const { error: filingEventError } = await ctx.supabaseAdmin.from("job_events").insert({
+        job_id: jobId,
+        user_id: claimedJob.user_id,
+        event_type: "filing_metadata_submitted",
+        stage: "upload",
+        payload: {
+          schema_version: normalizedFiling.schema_version,
+          subject_scope: normalizedFiling.subject_scope,
+          form: normalizedFiling.form,
+          assessment_type: normalizedFiling.assessment_type,
+          term: normalizedFiling.term,
+          year: normalizedFiling.year,
+          assessment_number: normalizedFiling.assessment_number,
+          paper: normalizedFiling.paper,
+          duration: normalizedFiling.duration,
+          display_name: normalizedDisplayName,
+        },
+      });
+      if (filingEventError) {
+        await ctx.supabaseAdmin.from("jobs").update({
+          status: claimedFromStatus,
+          stage: "dispatch_retry",
+          attempt_count: Number(visibleJob.attempt_count ?? 0),
+          filing_metadata: visibleJob.filing_metadata,
+          display_name: visibleJob.display_name,
+          dispatched_at: visibleJob.dispatched_at,
+          error_code: "FILING_METADATA_AUDIT_FAILED",
+          error_message: "Department filing details could not be audited before dispatch",
+          updated_at: now,
+        }).eq("id", jobId).eq("status", "dispatched");
+        console.error("filing metadata audit failed", filingEventError.code);
+        return Response.json({ error: "filing_metadata_audit_failed" }, { status: 502 });
+      }
+    }
+
     const dispatch = await fetch(
       `https://api.github.com/repos/${githubRepository}/actions/workflows/process-memo.yml/dispatches`,
       {
@@ -241,6 +311,7 @@ export default {
         payload: {
           github_http_status: dispatch.status,
           teacher_metadata_retained: hasMetadata,
+          filing_metadata_retained: Boolean(normalizedFiling),
           teacher_metadata_revision: nextRevision,
         },
       });
@@ -258,6 +329,7 @@ export default {
         ref: githubRef,
         dispatch_mode: policy.mode,
         teacher_metadata_revision: nextRevision,
+        filing_contract_version: visibleJob.filing_contract_version,
       },
     });
 

@@ -8,6 +8,13 @@ const job = {
   status: "queued",
   stage: "upload",
 };
+const filingMetadata = {
+  schema_version: "1.0", subject_scope: "mathematics", form: 4,
+  assessment_type: "class_test", term: 4, year: 2026,
+  assessment_number: { applicability: "required", value: 2 },
+  paper: { applicability: "not_applicable", value: null },
+  duration: { value: 45, unit: "minutes", duration_minutes: 45 },
+};
 
 function uploadClient(order, dispatchError = null) {
   const single = vi.fn(async () => {
@@ -41,6 +48,8 @@ describe("conversion creation", () => {
       client,
       user,
       file: new File(["memo"], "Paper 1 Memo.pdf", { type: "application/pdf" }),
+      filingMetadata,
+      displayName: "Form 4 Class Test 2 Term 4 2026",
     });
 
     expect(order).toEqual(["job", "upload", "dispatch"]);
@@ -48,6 +57,7 @@ describe("conversion creation", () => {
       id: job.id,
       user_id: user.id,
       status: "queued",
+      filing_contract_version: "1.0",
       source_path: `${user.id}/${job.id}/source/Paper-1-Memo.pdf`,
     }));
     expect(client.spies.upload).toHaveBeenCalledWith(
@@ -58,7 +68,8 @@ describe("conversion creation", () => {
     expect(client.spies.invoke).toHaveBeenCalledWith("dispatch-memo", {
       body: {
         job_id: job.id,
-        teacher_metadata: { schema_version: "1.0", values: {}, confirmed_absent: [] },
+        filing_metadata: filingMetadata,
+        display_name: "Form 4 Class Test 2 Term 4 2026",
       },
     });
     expect(result.status).toBe("dispatched");
@@ -73,6 +84,8 @@ describe("conversion creation", () => {
       client,
       user,
       file: new File(["memo"], "Paper 1 Memo.pdf", { type: "application/pdf" }),
+      filingMetadata,
+      displayName: "Form 4 Class Test 2 Term 4 2026",
       onJobCreated,
     })).rejects.toMatchObject({
       code: "DISPATCH_FAILED",
@@ -104,9 +117,10 @@ describe("private downloads", () => {
   it("requests the authenticated user's output object and does not create a public URL", async () => {
     const download = vi.fn(async () => ({ data: new Blob(["docx"]), error: null }));
     const client = { storage: { from: vi.fn(() => ({ download })) } };
-    await fetchOutput(client, user.id, job.id, "docx");
+    const result = await fetchOutput(client, user.id, { ...job, display_name: "Form 4 Test" }, "docx");
     expect(download).toHaveBeenCalledWith(`${user.id}/${job.id}/output/memo.docx`);
     expect(client.storage.from).toHaveBeenCalledWith("memo-files");
+    expect(result.filename).toBe("Form 4 Test - GDE Memo.docx");
   });
 });
 

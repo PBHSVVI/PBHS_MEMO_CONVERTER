@@ -132,7 +132,7 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
   async function download(format) {
     setState({ busy: format, error: "" });
     try {
-      saveBlob(await fetchOutput(client, user.id, job.id, format));
+      saveBlob(await fetchOutput(client, user.id, job, format));
     } catch (error) {
       setState({ busy: "", error: error.message });
       return;
@@ -158,7 +158,7 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
           <div className="completion-heading">
             <p className="eyebrow">Conversion complete</p>
             <h1>Ready</h1>
-            <p className="completion-filename">{job.source_filename || "Converted memo"}</p>
+            <p className="completion-filename">{job.display_name || job.source_filename || "Converted memo"}</p>
           </div>
         ) : (
           <>
