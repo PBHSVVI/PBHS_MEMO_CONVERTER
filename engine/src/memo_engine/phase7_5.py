@@ -1285,6 +1285,9 @@ def _major_for_subtotal(
     structure: dict[str, Any],
     subtotal: dict[str, Any],
 ) -> int | None:
+    explicit_owner = str(subtotal.get("after_question") or "").strip()
+    if QUESTION_ID_RE.fullmatch(explicit_owner):
+        return qtuple(explicit_owner)[0]
     block_index = int(subtotal.get("block_index", -1))
     eligible = [
         (

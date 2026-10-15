@@ -165,6 +165,7 @@ def _question_regions(page: Any) -> list[dict[str, Any]]:
         if bottom - top < 18:
             continue
         margin = 24.0
+        owned_bbox = [0.0, top, float(page.rect.width), bottom]
         result.append({
             "question_refs": [question_ref],
             "bbox": [
@@ -173,6 +174,7 @@ def _question_regions(page: Any) -> list[dict[str, Any]]:
                 float(page.rect.width),
                 min(float(page.rect.height), bottom + margin),
             ],
+            "owned_bbox": owned_bbox,
         })
     return result
 
@@ -229,6 +231,9 @@ def _render_regions(source_bytes: bytes, normalized: dict[str, Any]) -> list[dic
                     "page": page_number,
                     "question_refs": region["question_refs"],
                     "bbox": region["bbox"],
+                    "render_bbox": region["bbox"],
+                    "owned_bbox": region.get("owned_bbox"),
+                    "render_scale": 2.0,
                     "asset_path": asset_path,
                     "image_bytes": image_bytes,
                     "mime_type": "image/png",
@@ -250,6 +255,9 @@ teacher-note, or mark-change evidence from the supplied image.
 DO NOT solve a missing answer. DO NOT infer an answer merely because the printed
 question is visible. DO NOT invent marking allocations.
 DO NOT reproduce printed question text as handwritten evidence.
+Printed allocations such as (2) and printed subtotals such as [7] are already
+represented by the digital text layer. Do not return them as new evidence. If
+handwriting visibly changes a printed mark, return only a mark_changes item.
 DO NOT assume a tick means an unseen mark
 criterion. DO NOT silently repair unclear handwriting. Preserve decimal commas and
 visible fraction meaning. For normalized_math, output mathematical notation rather
@@ -317,6 +325,12 @@ def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
     key = os.environ.get("GROQ_API_KEY", "").strip()
     encoded = base64.b64encode(region["image_bytes"]).decode("ascii")
     prompt = visual_system_prompt() + "\n\nKnown question anchors: " + json.dumps(region["question_refs"])
+    if region.get("question_refs"):
+        prompt += (
+            "\nThis is an anchored crop. The named question owns the central region. "
+            "The crop margins may show neighbouring questions for context; do not "
+            "return their content as evidence for this crop."
+        )
     prompt += "\nDigitally extracted printed text (context only):\n" + str(region["printed_text"])[:12000]
     body = {
         "model": model,
@@ -350,6 +364,124 @@ def _bounded_text(value: Any, *, maximum: int = 2000) -> str:
     if not isinstance(value, str):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual transcription must be text.")
     return value.strip()[:maximum]
+
+
+def _page_bbox(bbox: Any, region: dict[str, Any]) -> list[float] | None:
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return None
+    render_bbox = region.get("render_bbox") or region.get("bbox")
+    if not isinstance(render_bbox, list) or len(render_bbox) != 4:
+        return [float(value) for value in bbox]
+    scale = float(region.get("render_scale") or 1.0)
+    if scale <= 0:
+        scale = 1.0
+    return [
+        float(render_bbox[0]) + float(bbox[0]) / scale,
+        float(render_bbox[1]) + float(bbox[1]) / scale,
+        float(render_bbox[0]) + float(bbox[2]) / scale,
+        float(render_bbox[1]) + float(bbox[3]) / scale,
+    ]
+
+
+def _association_status(
+    question_ref: Any,
+    source_page_bbox: list[float] | None,
+    region: dict[str, Any],
+) -> tuple[str, str | None]:
+    anchors = [str(value) for value in region.get("question_refs") or []]
+    owner = anchors[0] if len(anchors) == 1 else None
+    if owner is None:
+        return "unanchored", None
+    if question_ref is not None and str(question_ref) != owner:
+        return "cross_anchor_mismatch", owner
+    owned_bbox = region.get("owned_bbox")
+    if source_page_bbox is not None and isinstance(owned_bbox, list) and len(owned_bbox) == 4:
+        center_x = (source_page_bbox[0] + source_page_bbox[2]) / 2
+        center_y = (source_page_bbox[1] + source_page_bbox[3]) / 2
+        if not (
+            float(owned_bbox[0]) <= center_x <= float(owned_bbox[2])
+            and float(owned_bbox[1]) <= center_y < float(owned_bbox[3])
+        ):
+            return "context_only", owner
+    return "owned", owner
+
+
+def _is_printed_numeric_rediscovery(item: dict[str, Any], region: dict[str, Any]) -> bool:
+    transcription = re.sub(r"\s+", "", str(item.get("transcription") or ""))
+    if not re.fullmatch(r"(?:\(\d{1,3}\)|\[\d{1,3}\])", transcription):
+        return False
+    printed = re.sub(r"\s+", "", str(region.get("printed_text") or ""))
+    return transcription in printed
+
+
+def _bbox_iou(left: Any, right: Any) -> float:
+    if not (
+        isinstance(left, list) and len(left) == 4
+        and isinstance(right, list) and len(right) == 4
+    ):
+        return 0.0
+    x1, y1 = max(left[0], right[0]), max(left[1], right[1])
+    x2, y2 = min(left[2], right[2]), min(left[3], right[3])
+    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    left_area = max(0.0, left[2] - left[0]) * max(0.0, left[3] - left[1])
+    right_area = max(0.0, right[2] - right[0]) * max(0.0, right[3] - right[1])
+    union = left_area + right_area - intersection
+    return intersection / union if union else 0.0
+
+
+def _normalized_evidence_text(item: dict[str, Any]) -> str:
+    if "level" in item and "visual_value" in item:
+        return (
+            f"{item.get('level')}:{item.get('printed_value')}"
+            f"->{item.get('visual_value')}"
+        )
+    value = item.get("normalized_math") or item.get("transcription") or ""
+    return re.sub(r"\s+", " ", str(value)).strip().casefold()
+
+
+def _deduplicate_visual_items(items: list[dict[str, Any]]) -> None:
+    effective: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        item.setdefault("effective", True)
+        item.setdefault("evidence_id", hashlib.sha256(json.dumps({
+            "page": item.get("page"),
+            "question_ref": item.get("question_ref"),
+            "kind": item.get("kind"),
+            "text": _normalized_evidence_text(item),
+            "bbox": item.get("source_page_bbox") or item.get("bbox"),
+            "rendered_asset_ref": item.get("rendered_asset_ref"),
+            "index": index,
+        }, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16])
+        if not item.get("effective"):
+            continue
+        duplicate = next((candidate for candidate in effective if (
+            candidate.get("page") == item.get("page")
+            and str(candidate.get("question_ref")) == str(item.get("question_ref"))
+            and candidate.get("kind") == item.get("kind")
+            and _normalized_evidence_text(candidate) == _normalized_evidence_text(item)
+            and (
+                (
+                    candidate.get("source_page_bbox") is not None
+                    and item.get("source_page_bbox") is not None
+                )
+                or candidate.get("rendered_asset_ref") == item.get("rendered_asset_ref")
+            )
+            and _bbox_iou(
+                candidate.get("source_page_bbox") or candidate.get("bbox"),
+                item.get("source_page_bbox") or item.get("bbox"),
+            ) >= 0.35
+        )), None)
+        if duplicate is None:
+            effective.append(item)
+            continue
+        item["effective"] = False
+        item["evidence_status"] = "semantic_duplicate"
+        item["duplicate_of"] = duplicate["evidence_id"]
+        duplicate.setdefault("duplicate_provenance", []).append({
+            "evidence_id": item["evidence_id"],
+            "rendered_asset_ref": item.get("rendered_asset_ref"),
+            "source_page_bbox": item.get("source_page_bbox"),
+        })
 
 
 def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, Any]:
@@ -386,7 +518,11 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             normalized_math, normalization_issue = normalize_visual_math(
                 model_normalized_math
             )
-        evidence.append({
+        source_page_bbox = _page_bbox(bbox, region)
+        association_status, owned_question_ref = _association_status(
+            question_ref, source_page_bbox, region
+        )
+        validated_item = {
             **item,
             "question_ref": question_ref,
             "transcription": _bounded_text(item["transcription"]),
@@ -396,9 +532,21 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "confidence": confidence,
             "page": region["page"],
             "rendered_asset_ref": region["asset_path"],
+            "source_page_bbox": source_page_bbox,
+            "owned_question_ref": owned_question_ref,
+            "association_status": association_status,
             "extractor_provider": str(payload.get("provider") or "groq"),
             "extractor_model": str(payload.get("model") or "unknown"),
-        })
+        }
+        if association_status in {"cross_anchor_mismatch", "context_only"}:
+            validated_item["effective"] = False
+            validated_item["evidence_status"] = association_status
+        elif _is_printed_numeric_rediscovery(validated_item, region):
+            validated_item["effective"] = False
+            validated_item["evidence_status"] = "printed_source_rediscovery"
+        else:
+            validated_item["effective"] = True
+        evidence.append(validated_item)
 
     mark_changes: list[dict[str, Any]] = []
     for item in payload["mark_changes"]:
@@ -416,11 +564,28 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         bbox = item["bbox"]
         if bbox is not None and (not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox)):
             raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark-change bounding box is invalid.")
+        source_page_bbox = _page_bbox(bbox, region)
+        association_status, owned_question_ref = _association_status(
+            question_ref, source_page_bbox, region
+        )
+        effective = (
+            association_status not in {"cross_anchor_mismatch", "context_only"}
+            and item.get("printed_value") != item.get("visual_value")
+        )
         mark_changes.append({
             **item,
             "confidence": confidence,
             "page": region["page"],
             "rendered_asset_ref": region["asset_path"],
+            "source_page_bbox": source_page_bbox,
+            "owned_question_ref": owned_question_ref,
+            "association_status": association_status,
+            "effective": effective,
+            "evidence_status": (
+                association_status
+                if association_status in {"cross_anchor_mismatch", "context_only"}
+                else ("printed_source_rediscovery" if not effective else "mark_change")
+            ),
             "extractor_provider": str(payload.get("provider") or "groq"),
             "extractor_model": str(payload.get("model") or "unknown"),
         })
@@ -512,16 +677,43 @@ def extract_visual_evidence(
         record["summary"]["success_count"] += 1
         if result["visual_content_present"]:
             record["summary"]["visual_content_count"] += 1
+    _deduplicate_visual_items(record["evidence"])
+    _deduplicate_visual_items(record["mark_changes"])
+    record["summary"]["effective_evidence_count"] = sum(
+        1 for item in record["evidence"] if item.get("effective", True)
+    )
+    record["summary"]["suppressed_evidence_count"] = sum(
+        1 for item in record["evidence"] if not item.get("effective", True)
+    )
     return record, artifacts
 
 
 def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     questions = {str(item.get("question_id")): item for item in structure.get("questions", [])}
     attached = 0
-    for item in visual.get("evidence", []):
+    evidence_items = visual.get("evidence", [])
+    _deduplicate_visual_items(evidence_items)
+    mark_changes = visual.get("mark_changes", [])
+    _deduplicate_visual_items(mark_changes)
+    for item in evidence_items:
         question_ref = item.get("question_ref")
         target = questions.get(str(question_ref)) if question_ref is not None else None
         confidence = float(item.get("confidence") or 0)
+        if not item.get("effective", True):
+            if item.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}:
+                structure.setdefault("exceptions", []).append({
+                    "level": "amber", "category": "visual_evidence_association_uncertain",
+                    "affected_id": item.get("owned_question_ref") or question_ref,
+                    "message": "Visible memo evidence falls outside the owned question region and requires confirmation.",
+                    "suggestions": [{
+                        "claimed_question_ref": question_ref,
+                        "owned_question_ref": item.get("owned_question_ref"),
+                        "rendered_asset_ref": item.get("rendered_asset_ref"),
+                        "page": item.get("page"),
+                        "transcription": item.get("transcription"),
+                    }],
+                })
+            continue
         if target is None:
             structure.setdefault("exceptions", []).append({
                 "level": "amber", "category": "visual_evidence_association_uncertain",
@@ -574,7 +766,20 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
                 }],
             })
 
-    for change in visual.get("mark_changes", []):
+    for change in mark_changes:
+        if not change.get("effective", True):
+            if change.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}:
+                structure.setdefault("exceptions", []).append({
+                    "level": "amber", "category": "visual_evidence_association_uncertain",
+                    "affected_id": change.get("owned_question_ref") or change.get("question_ref"),
+                    "message": "A possible handwritten mark change falls outside the owned question region and requires confirmation.",
+                    "suggestions": [{
+                        "claimed_question_ref": change.get("question_ref"),
+                        "owned_question_ref": change.get("owned_question_ref"),
+                        "rendered_asset_ref": change.get("rendered_asset_ref"),
+                    }],
+                })
+            continue
         structure.setdefault("exceptions", []).append({
             "level": "amber", "category": "visual_mark_change_review",
             "affected_id": change.get("question_ref"),
@@ -596,9 +801,15 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             "suggestions": [{"rendered_asset_ref": warning.get("rendered_asset_ref"), "page": warning.get("page")}],
         })
     summary = structure.setdefault("summary", {})
-    summary["visual_evidence_count"] = len(visual.get("evidence", []))
+    summary["visual_evidence_count"] = len(evidence_items)
+    summary["visual_evidence_effective_count"] = sum(
+        1 for item in evidence_items if item.get("effective", True)
+    )
     summary["visual_evidence_attached_count"] = attached
-    summary["visual_mark_change_count"] = len(visual.get("mark_changes", []))
+    summary["visual_mark_change_observation_count"] = len(mark_changes)
+    summary["visual_mark_change_count"] = sum(
+        1 for change in mark_changes if change.get("effective", True)
+    )
     summary["visual_review_required"] = any(
         item.get("category", "").startswith("visual_")
         for item in structure.get("exceptions", [])

@@ -28,11 +28,7 @@ MARK_DESCRIPTOR_PREFIXES = (
 
 
 def find_question_ids(text: str) -> list[str]:
-    matches: list[tuple[int, str]] = []
-    for pattern in (QUESTION_RE, JAMMED_QUESTION_RE):
-        for m in pattern.finditer(text):
-            matches.append((m.start(), m.group(1)))
-    matches.sort(key=lambda item: item[0])
+    matches = _question_occurrences(text)
     result: list[str] = []
     seen: set[str] = set()
     for _, qid in matches:
@@ -40,6 +36,16 @@ def find_question_ids(text: str) -> list[str]:
             result.append(qid)
             seen.add(qid)
     return result
+
+
+def _question_occurrences(text: str) -> list[tuple[int, str]]:
+    """Return source-ordered question identifiers without discarding position."""
+    matches: list[tuple[int, str]] = []
+    for pattern in (QUESTION_RE, JAMMED_QUESTION_RE):
+        for m in pattern.finditer(text):
+            matches.append((m.start(), m.group(1)))
+    matches.sort(key=lambda item: item[0])
+    return matches
 
 
 def qtuple(qid: str) -> tuple[int, ...]:
@@ -436,14 +442,25 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
 
         qids = block_qids[idx]
         allocs = printed_allocations(allocation_text)
-        subtotal_vals = [int(x) for x in SUBTOTAL_RE.findall(combined)]
+        subtotal_matches = list(SUBTOTAL_RE.finditer(combined))
         all_points = parse_mark_points(marking)
 
-        for s in subtotal_vals:
+        question_occurrences = _question_occurrences(combined)
+        for match in subtotal_matches:
+            preceding = [
+                qid for offset, qid in question_occurrences
+                if offset < match.start()
+            ]
+            owner = preceding[-1] if preceding else previous_leaf_qid
             subtotals.append({
-                "value": s,
-                "after_question": previous_leaf_qid,
+                "value": int(match.group(1)),
+                "after_question": owner,
                 "block_index": idx,
+                "source_provenance": {
+                    "kind": "explicit_bracketed_subtotal",
+                    "question_id": owner,
+                    "character_offset": match.start(),
+                },
             })
 
         if not qids:

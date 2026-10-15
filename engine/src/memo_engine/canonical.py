@@ -2260,6 +2260,10 @@ def build_canonical_memo(
         if (source_index := safe_source_block_index(q.get("source_block_index"))) is not None
     ]
     for subtotal in structure.get("subtotals", []):
+        explicit_owner = str(subtotal.get("after_question") or "").strip()
+        if re.fullmatch(r"\d{1,2}(?:\.\d{1,2}){0,2}", explicit_owner):
+            subtotal_by_major[int(explicit_owner.split(".")[0])] = int(subtotal["value"])
+            continue
         block_index = int(subtotal.get("block_index", -1))
         eligible = [item for item in question_positions if item[0] <= block_index]
         if eligible:
