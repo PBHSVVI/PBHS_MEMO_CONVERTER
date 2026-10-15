@@ -107,6 +107,46 @@ describe("conversion outcomes", () => {
     expect(screen.queryByText(/phase/i)).not.toBeInTheDocument();
   });
 
+  it("shows region/page visual progress and a delayed-heartbeat support path", async () => {
+    const job = {
+      ...base,
+      status: "processing",
+      stage: "visual_evidence",
+      started_at: base.created_at,
+      updated_at: "2000-01-01T00:00:00Z",
+    };
+    const progress = {
+      event_type: "phase2_visual_region_progress",
+      stage: "visual_evidence",
+      payload: { status: "processing", region_index: 7, region_count: 21, page: 2 },
+      created_at: "2000-01-01T00:00:00Z",
+    };
+    const single = vi.fn(async () => ({ data: job, error: null }));
+    const client = {
+      from: vi.fn((table) => ({
+        select: () => table === "jobs"
+          ? { eq: () => ({ single }) }
+          : {
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: [progress], error: null }),
+                }),
+              }),
+            }),
+          },
+      })),
+      functions: { invoke: vi.fn() },
+      storage: { from: vi.fn() },
+    };
+
+    render(<ConversionProgress client={client} user={user} initialJob={job} onBack={() => {}} />);
+    expect(await screen.findByText("Region 7 of 21 · Page 2")).toBeInTheDocument();
+    expect(screen.getByText("Reading visual annotations…")).toBeInTheDocument();
+    expect(screen.getByText("Visual reading is taking longer than expected.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Report delayed processing" })).toBeInTheDocument();
+  });
+
   it("offers the supported retry action for failed_retryable", async () => {
     const job = { ...base, status: "failed_retryable", stage: "worker_failed", error_code: "WORKER_INTERNAL_ERROR" };
     const client = clientFor(job);

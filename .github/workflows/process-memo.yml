@@ -34,6 +34,8 @@ jobs:
       MEMO_AI_BATCH_SIZE: "6"
       MEMO_AI_MIN_INTERVAL_SECONDS: "20"
       MEMO_AI_MAX_RATE_RETRIES: "5"
+      MEMO_VISUAL_PHASE_TIMEOUT_SECONDS: "900"
+      MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS: "45"
 
     steps:
       - name: Checkout
@@ -80,4 +82,10 @@ jobs:
         run: python -m pytest -q engine/tests
 
       - name: Run hosted memo worker
+        id: hosted_worker
+        timeout-minutes: 38
         run: python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
+
+      - name: Recover interrupted hosted worker
+        if: ${{ always() && steps.hosted_worker.outcome != 'success' }}
+        run: python -m engine.src.memo_engine.cli finalize-interrupted-job "$MEMO_JOB_ID"

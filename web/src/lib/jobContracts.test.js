@@ -47,6 +47,7 @@ describe("teacher job states", () => {
 
   it("maps durable stages to teacher language", () => {
     expect(teacherStage({ status: "processing", stage: "ingestion" })).toBe("Reading your memo");
+    expect(teacherStage({ status: "processing", stage: "visual_evidence" })).toBe("Reading visual annotations");
     expect(teacherStage({ status: "processing", stage: "semantic_interpretation" })).toBe("Interpreting the marking guideline");
     expect(teacherStage({ status: "processing", stage: "rendering" })).toBe("Creating Word and PDF files");
   });

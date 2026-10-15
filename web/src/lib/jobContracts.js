@@ -102,6 +102,7 @@ export function teacherStage(job) {
     dispatch_retry: "Waiting to retry",
     ingestion: "Reading your memo",
     normalization: "Reading your memo",
+    visual_evidence: "Reading visual annotations",
     structure: "Checking question structure",
     semantic_interpretation: "Interpreting the marking guideline",
     canonicalization: "Preparing your document",

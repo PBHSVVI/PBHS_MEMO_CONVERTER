@@ -142,6 +142,8 @@ def _post_json(
     url: str,
     headers: dict[str, str],
     body: dict[str, Any],
+    *,
+    timeout_seconds: float = 90.0,
 ) -> tuple[dict[str, Any], int]:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     started = time.monotonic()
@@ -166,7 +168,7 @@ def _post_json(
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=90) as response:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                 raw = response.read()
                 elapsed_ms = int((time.monotonic() - started) * 1000)
                 break

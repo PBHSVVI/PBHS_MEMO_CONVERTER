@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import time
 from typing import Any, Callable
 
 from PIL import Image, ImageStat
@@ -26,6 +27,9 @@ EVIDENCE_KINDS = {
     "other_visible_annotation",
 }
 VISUAL_REVIEW_THRESHOLD = 0.85
+DEFAULT_VISUAL_PHASE_TIMEOUT_SECONDS = 900.0
+DEFAULT_VISION_REQUEST_TIMEOUT_SECONDS = 45.0
+VISUAL_FAILURE_CIRCUIT_THRESHOLD = 3
 QUESTION_REF_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 QUESTION_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})\.?(?!\d)")
 WRITE_ON_RE = re.compile(r"\bWRITE[ -]?ON\s+(?:TEST|ASSESSMENT|PAPER)\b", re.I)
@@ -348,6 +352,12 @@ def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
     payload, elapsed_ms = _post_json(
         "https://api.groq.com/openai/v1/chat/completions",
         {"Authorization": f"Bearer {key}"}, body,
+        timeout_seconds=_bounded_env_seconds(
+            "MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS",
+            DEFAULT_VISION_REQUEST_TIMEOUT_SECONDS,
+            minimum=5.0,
+            maximum=75.0,
+        ),
     )
     try:
         result = json.loads(payload["choices"][0]["message"]["content"])
@@ -358,6 +368,20 @@ def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
     result["elapsed_ms"] = elapsed_ms
     result["usage"] = payload.get("usage") or {}
     return result
+
+
+def _bounded_env_seconds(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _bounded_text(value: Any, *, maximum: int = 2000) -> str:
@@ -598,7 +622,20 @@ def extract_visual_evidence(
     normalized: dict[str, Any],
     *,
     runner: Callable[[dict[str, Any], str], dict[str, Any]] = groq_visual_extract,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    checkpoint_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+    checkpoint_record: dict[str, Any] | None = None,
+    phase_timeout_seconds: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    phase_started = clock()
+    if phase_timeout_seconds is None:
+        phase_timeout_seconds = _bounded_env_seconds(
+            "MEMO_VISUAL_PHASE_TIMEOUT_SECONDS",
+            DEFAULT_VISUAL_PHASE_TIMEOUT_SECONDS,
+            minimum=30.0,
+            maximum=1800.0,
+        )
     screened_pages = normalized.get("content", {}).get("pages", [])
     flagged_pages = [page for page in screened_pages if page.get("visual_inspection_required")]
     record: dict[str, Any] = {
@@ -621,6 +658,29 @@ def extract_visual_evidence(
             "visual_content_count": 0,
         },
     }
+    if (
+        isinstance(checkpoint_record, dict)
+        and checkpoint_record.get("schema_version") == SCHEMA_VERSION
+        and checkpoint_record.get("source_sha256") == record["source_sha256"]
+    ):
+        successful_runs = [
+            item for item in checkpoint_record.get("runs", [])
+            if isinstance(item, dict)
+            and item.get("success") is True
+            and isinstance(item.get("rendered_asset_ref"), str)
+        ]
+        record["evidence"] = list(checkpoint_record.get("evidence") or [])
+        record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
+        record["warnings"] = [
+            item for item in checkpoint_record.get("warnings", [])
+            if isinstance(item, dict) and item.get("code") == "VISUAL_MODEL_WARNING"
+        ]
+        record["runs"] = successful_runs
+        record["summary"]["vision_calls"] = len(successful_runs)
+        record["summary"]["success_count"] = len(successful_runs)
+        record["summary"]["visual_content_count"] = int(
+            (checkpoint_record.get("summary") or {}).get("visual_content_count") or 0
+        )
     if not flagged_pages:
         return record, []
 
@@ -633,38 +693,107 @@ def extract_visual_evidence(
         return record, []
 
     artifacts: list[dict[str, Any]] = []
+    unique_regions: list[tuple[dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = set()
     for region in regions:
         digest = hashlib.sha256(region["image_bytes"]).hexdigest()
         if digest in seen:
             continue
         seen.add(digest)
-        artifacts.append({
+        artifact = {
             "path": region["asset_path"],
             "data": region["image_bytes"],
             "content_type": region["mime_type"],
             "sha256": digest,
-        })
+        }
+        artifacts.append(artifact)
+        unique_regions.append((region, artifact))
         record["summary"]["regions_rendered"] += 1
         record["summary"]["image_count"] += 1
+
+    total_regions = len(unique_regions)
+    completed_refs = {
+        item["rendered_asset_ref"]
+        for item in record["runs"]
+        if item.get("success") is True
+    }
+    consecutive_transport_failures = 0
+    stop_code: str | None = None
+
+    def emit_progress(
+        status: str,
+        index: int,
+        region: dict[str, Any],
+        *,
+        error_code: str | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        payload = {
+            "status": status,
+            "region_index": index,
+            "region_count": total_regions,
+            "page": int(region["page"]),
+            "question_refs": [
+                str(value) for value in (region.get("question_refs") or [])[:4]
+            ],
+        }
+        if error_code:
+            payload["error_code"] = error_code
+        progress_callback(payload)
+
+    def record_failure(
+        region: dict[str, Any],
+        artifact: dict[str, Any],
+        index: int,
+        code: str,
+    ) -> None:
+        record["warnings"].append({
+            "code": code,
+            "message": "Detected visual memo evidence could not be read reliably.",
+            "page": region["page"],
+            "rendered_asset_ref": region["asset_path"],
+        })
+        record["runs"].append({
+            "provider": "groq", "model": model, "page": region["page"],
+            "image_count": 1, "success": False, "error_code": code,
+            "rendered_asset_ref": region["asset_path"],
+        })
+        record["summary"]["failure_count"] += 1
+        emit_progress("failed", index, region, error_code=code)
+        if checkpoint_callback is not None:
+            checkpoint_callback(record, artifact)
+
+    for index, (region, artifact) in enumerate(unique_regions, start=1):
+        if region["asset_path"] in completed_refs:
+            emit_progress("checkpointed", index, region)
+            continue
+        if stop_code:
+            record_failure(region, artifact, index, stop_code)
+            continue
+        if clock() - phase_started >= phase_timeout_seconds:
+            stop_code = "VISUAL_PHASE_BUDGET_EXCEEDED"
+            record_failure(
+                region, artifact, index, stop_code
+            )
+            continue
+
+        emit_progress("processing", index, region)
         record["summary"]["vision_calls"] += 1
         try:
             raw = runner(region, model)
             result = validate_visual_response(raw, region)
         except (ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
             code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
-            record["warnings"].append({
-                "code": code,
-                "message": "Detected visual memo evidence could not be read reliably.",
-                "page": region["page"],
-                "rendered_asset_ref": region["asset_path"],
-            })
-            record["runs"].append({
-                "provider": "groq", "model": model, "page": region["page"],
-                "image_count": 1, "success": False, "error_code": code,
-            })
-            record["summary"]["failure_count"] += 1
+            record_failure(region, artifact, index, code)
+            if isinstance(exc, ProviderError) and exc.retryable:
+                consecutive_transport_failures += 1
+                if consecutive_transport_failures >= VISUAL_FAILURE_CIRCUIT_THRESHOLD:
+                    stop_code = "VISUAL_PROVIDER_CIRCUIT_OPEN"
+            else:
+                consecutive_transport_failures = 0
             continue
+        consecutive_transport_failures = 0
         record["evidence"].extend(result["evidence"])
         record["mark_changes"].extend(result["mark_changes"])
         record["warnings"].extend({"code": "VISUAL_MODEL_WARNING", "message": item, "page": region["page"]} for item in result["warnings"])
@@ -672,11 +801,15 @@ def extract_visual_evidence(
             "provider": str(result.get("provider") or "groq"),
             "model": str(result.get("model") or model),
             "page": region["page"], "image_count": 1, "success": True,
+            "rendered_asset_ref": region["asset_path"],
             "elapsed_ms": result.get("elapsed_ms"),
         })
         record["summary"]["success_count"] += 1
         if result["visual_content_present"]:
             record["summary"]["visual_content_count"] += 1
+        emit_progress("success", index, region)
+        if checkpoint_callback is not None:
+            checkpoint_callback(record, artifact)
     _deduplicate_visual_items(record["evidence"])
     _deduplicate_visual_items(record["mark_changes"])
     record["summary"]["effective_evidence_count"] = sum(

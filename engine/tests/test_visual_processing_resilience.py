@@ -1,0 +1,308 @@
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+
+import pytest
+
+from engine.src.memo_engine.ai_router import ProviderError, _post_json
+from engine.src.memo_engine.cli import finalize_interrupted_job
+from engine.src.memo_engine import cli, visual_evidence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _normalized() -> dict:
+    return {
+        "job_id": "job-visual",
+        "source": {"sha256": "sha"},
+        "content": {
+            "pages": [
+                {"page_number": 1, "visual_inspection_required": True},
+                {"page_number": 2, "visual_inspection_required": True},
+            ]
+        },
+    }
+
+
+def _regions(count: int) -> list[dict]:
+    return [
+        {
+            "page": 1 + (index // 2),
+            "question_refs": [f"{index + 1}.1"],
+            "printed_text": "",
+            "image_bytes": f"image-{index}".encode(),
+            "mime_type": "image/png",
+            "asset_path": f"internal/visual/regions/region-{index + 1}.png",
+        }
+        for index in range(count)
+    ]
+
+
+def _success(region: dict, _model: str) -> dict:
+    return {
+        "schema_version": "1.0",
+        "page": region["page"],
+        "visual_content_present": False,
+        "evidence": [],
+        "mark_changes": [],
+        "warnings": [],
+        "provider": "groq",
+        "model": "test-vision",
+        "elapsed_ms": 5,
+        "usage": {},
+    }
+
+
+def test_each_visual_region_emits_reading_and_completed_heartbeats(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(21))
+    events = []
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source",
+        _normalized(),
+        runner=_success,
+        progress_callback=lambda payload: events.append(payload),
+    )
+
+    assert len(events) == 42
+    assert events[0] == {
+        "status": "processing", "region_index": 1, "region_count": 21,
+        "page": 1, "question_refs": ["1.1"],
+    }
+    assert events[-1]["status"] == "success"
+    assert events[-1]["region_index"] == 21
+    assert all(item["region_count"] == 21 for item in events)
+    assert record["summary"]["success_count"] == 21
+
+
+def test_one_vision_timeout_becomes_review_and_next_region_proceeds(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
+    calls = []
+
+    def one_timeout(region, model):
+        calls.append(region["asset_path"])
+        if len(calls) == 1:
+            raise ProviderError("AI_PROVIDER_NETWORK_ERROR", "timed out", retryable=True)
+        return _success(region, model)
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=one_timeout
+    )
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+
+    assert len(calls) == 2
+    assert record["summary"]["failure_count"] == 1
+    assert record["summary"]["success_count"] == 1
+    assert any(item["category"] == "visual_evidence_unread" for item in fused["exceptions"])
+
+
+def test_visual_request_uses_its_bounded_timeout(monkeypatch):
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{}'
+
+    def urlopen(_request, timeout):
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    _post_json("https://example.invalid", {}, {}, timeout_seconds=45)
+    assert observed["timeout"] == 45
+
+
+def test_visual_phase_budget_degrades_remaining_regions_to_review(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(3))
+    values = iter([0.0, 1.0, 16.0])
+    calls = []
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source",
+        _normalized(),
+        runner=lambda region, model: calls.append(region) or _success(region, model),
+        phase_timeout_seconds=15,
+        clock=lambda: next(values),
+    )
+
+    assert len(calls) == 1
+    assert record["summary"]["success_count"] == 1
+    assert record["summary"]["failure_count"] == 2
+    assert {item["code"] for item in record["warnings"]} == {
+        "VISUAL_PHASE_BUDGET_EXCEEDED"
+    }
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+    assert sum(
+        item["category"] == "visual_evidence_unread"
+        for item in fused["exceptions"]
+    ) == 2
+
+
+def test_repeated_transport_failures_open_circuit(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(6))
+    calls = []
+
+    def unavailable(region, _model):
+        calls.append(region)
+        raise ProviderError("AI_PROVIDER_NETWORK_ERROR", "unavailable", retryable=True)
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=unavailable
+    )
+
+    assert len(calls) == 3
+    assert record["summary"]["failure_count"] == 6
+    assert [item["error_code"] for item in record["runs"]][3:] == [
+        "VISUAL_PROVIDER_CIRCUIT_OPEN"
+    ] * 3
+
+
+def test_partial_success_is_checkpointed_before_later_failure(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
+    checkpoints = []
+    call_count = 0
+
+    def mixed(region, model):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise ProviderError("AI_PROVIDER_NETWORK_ERROR", "unavailable")
+        result = _success(region, model)
+        result["visual_content_present"] = True
+        result["evidence"] = [{
+            "question_ref": "1.1", "kind": "answer", "transcription": "x=2",
+            "normalized_math": "x=2", "confidence": 0.95,
+            "source": "visual_overlay", "bbox": None,
+        }]
+        return result
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source",
+        _normalized(),
+        runner=mixed,
+        checkpoint_callback=lambda partial, artifact: checkpoints.append(
+            (copy.deepcopy(partial), artifact["path"])
+        ),
+    )
+
+    assert len(checkpoints) == 2
+    assert checkpoints[0][0]["evidence"][0]["transcription"] == "x=2"
+    assert checkpoints[0][1].endswith("region-1.png")
+    assert record["summary"]["success_count"] == 1
+    assert record["summary"]["failure_count"] == 1
+
+
+def test_retry_reuses_successful_checkpoint_and_retries_failed_region(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
+    checkpoint = {
+        "schema_version": "1.0",
+        "source_sha256": "sha",
+        "evidence": [{"question_ref": "1.1", "transcription": "saved"}],
+        "mark_changes": [],
+        "warnings": [{"code": "AI_PROVIDER_NETWORK_ERROR"}],
+        "runs": [
+            {
+                "success": True,
+                "rendered_asset_ref": "internal/visual/regions/region-1.png",
+                "page": 1,
+            },
+            {
+                "success": False,
+                "rendered_asset_ref": "internal/visual/regions/region-2.png",
+                "page": 1,
+            },
+        ],
+        "summary": {"visual_content_count": 1},
+    }
+    called = []
+    progress = []
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source",
+        _normalized(),
+        runner=lambda region, model: called.append(region["asset_path"]) or _success(region, model),
+        checkpoint_record=checkpoint,
+        progress_callback=lambda payload: progress.append(payload),
+    )
+
+    assert called == ["internal/visual/regions/region-2.png"]
+    assert progress[0]["status"] == "checkpointed"
+    assert record["summary"]["success_count"] == 2
+    assert record["summary"]["failure_count"] == 0
+    assert not any(item.get("code") == "AI_PROVIDER_NETWORK_ERROR" for item in record["warnings"])
+
+
+class _FinalizerDatabase:
+    def __init__(self, status="processing", stage="visual_evidence"):
+        self.job = {"id": "job", "user_id": "user", "status": status, "stage": stage}
+        self.patch = None
+        self.event = None
+
+    def get_job(self, _job_id):
+        return self.job
+
+    def patch_job(self, job_id, expected_status, values):
+        assert expected_status == "processing"
+        self.patch = values
+        return {**self.job, **values}
+
+    def add_event(self, _job, event_type, stage, payload):
+        self.event = (event_type, stage, payload)
+
+
+def test_worker_finalizer_recovers_only_still_processing_visual_job(monkeypatch):
+    database = _FinalizerDatabase()
+    monkeypatch.setattr(cli, "SupabaseRest", lambda: database)
+    assert finalize_interrupted_job("job") == 0
+    assert database.patch["status"] == "failed_retryable"
+    assert database.patch["stage"] == "visual_evidence_failed"
+    assert database.patch["error_code"] == "VISUAL_PROCESSING_TIMEOUT"
+    assert database.event[0] == "worker_failed"
+
+
+@pytest.mark.parametrize("status", ["complete", "needs_review", "failed_retryable"])
+def test_worker_finalizer_never_overwrites_terminal_or_review_state(monkeypatch, status):
+    database = _FinalizerDatabase(status=status)
+    monkeypatch.setattr(cli, "SupabaseRest", lambda: database)
+    assert finalize_interrupted_job("job") == 0
+    assert database.patch is None
+    assert database.event is None
+
+
+def test_hosted_workflow_bounds_worker_and_always_runs_finalizer():
+    workflow = (ROOT / ".github" / "workflows" / "process-memo.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'MEMO_VISUAL_PHASE_TIMEOUT_SECONDS: "900"' in workflow
+    assert 'MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS: "45"' in workflow
+    assert "id: hosted_worker\n        timeout-minutes: 38" in workflow
+    assert "always() && steps.hosted_worker.outcome != 'success'" in workflow
+    assert "finalize-interrupted-job" in workflow
+
+
+def test_worker_persists_visual_stage_heartbeats_and_private_checkpoint():
+    source = (ROOT / "engine" / "src" / "memo_engine" / "cli.py").read_text(
+        encoding="utf-8"
+    )
+    visual_section = source[
+        source.index('"stage": "visual_evidence"'):
+        source.index('job = db.patch_job(\n            job_id,\n            "processing",\n            {"stage": "structure"')
+    ]
+    assert visual_section.index("phase2_visual_evidence_started") < visual_section.index(
+        "extract_visual_evidence("
+    )
+    assert "phase2_visual_region_progress" in visual_section
+    assert "internal/visual/evidence.checkpoint.json" in visual_section
+    assert "checkpoint_record=visual_checkpoint_record" in visual_section

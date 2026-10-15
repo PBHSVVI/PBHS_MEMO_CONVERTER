@@ -11,6 +11,7 @@ import {
   fetchCanonicalMetadata,
   fetchOutput,
   getJob,
+  getLatestVisualProgress,
   retryJob,
   saveBlob,
   sourceObjectExists,
@@ -21,6 +22,7 @@ import { DocumentDetails } from "./DocumentDetails";
 import { SupportIncident } from "./SupportIncident";
 
 const POLL_MS = 6000;
+const VISUAL_HEARTBEAT_DELAY_MS = 120000;
 const NOOP = () => {};
 const PROCESSING_STEPS = [
   "Reading your memo",
@@ -33,6 +35,7 @@ const PROCESSING_STEPS = [
 const STAGE_STEP = {
   ingestion: 0,
   normalization: 0,
+  visual_evidence: 0,
   structure: 1,
   semantic_interpretation: 2,
   canonicalization: 3,
@@ -52,6 +55,7 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
   const [state, setState] = useState({ busy: "", error: "" });
   const [metadataDetails, setMetadataDetails] = useState(null);
   const [sourceAvailable, setSourceAvailable] = useState(null);
+  const [visualProgress, setVisualProgress] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const uploadedBeforeDispatch = job?.status === "queued" && job?.stage === "upload" && sourceAvailable === true;
   const status = teacherStatus(uploadedBeforeDispatch ? { ...job, stage: "dispatch_retry" } : job);
@@ -74,6 +78,28 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
     const timer = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(timer);
   }, [job?.status, refresh]);
+
+  useEffect(() => {
+    if (job?.status !== "processing" || job?.stage !== "visual_evidence") {
+      setVisualProgress(null);
+      return undefined;
+    }
+    let active = true;
+    async function refreshVisualProgress() {
+      try {
+        const progress = await getLatestVisualProgress(client, job.id);
+        if (active) setVisualProgress(progress);
+      } catch (error) {
+        if (active) setState((current) => ({ ...current, error: error.message }));
+      }
+    }
+    refreshVisualProgress();
+    const timer = window.setInterval(refreshVisualProgress, POLL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [client, job?.id, job?.stage, job?.status]);
 
   useEffect(() => {
     if (!ACTIVE_JOB_STATUSES.has(job?.status)) return undefined;
@@ -148,6 +174,13 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
     : [];
   const processingStep = STAGE_STEP[job?.stage] ?? 0;
   const complete = canDownload(job);
+  const visualHeartbeatAt = new Date(
+    visualProgress?.created_at || job?.updated_at || job?.created_at
+  ).getTime();
+  const visualDelayed = job?.status === "processing" &&
+    job?.stage === "visual_evidence" &&
+    Number.isFinite(visualHeartbeatAt) && now - visualHeartbeatAt >= VISUAL_HEARTBEAT_DELAY_MS;
+  const visualPayload = visualProgress?.payload || null;
 
   return (
     <main className="page-shell narrow">
@@ -178,6 +211,28 @@ export function ConversionProgress({ client, user, initialJob, onBack, onRevise 
             )}
           </div>
         </div>
+
+        {job?.status === "processing" && job?.stage === "visual_evidence" && (
+          <div className="visual-progress" role="status" aria-live="polite">
+            <strong>Reading visual annotations…</strong>
+            {visualPayload?.region_index && visualPayload?.region_count ? (
+              <span>
+                Region {visualPayload.region_index} of {visualPayload.region_count}
+                {visualPayload.page ? ` · Page ${visualPayload.page}` : ""}
+              </span>
+            ) : (
+              <span>Preparing visual regions…</span>
+            )}
+          </div>
+        )}
+
+        {visualDelayed && (
+          <div className="notice info visual-delay" role="alert">
+            <strong>Visual reading is taking longer than expected.</strong>
+            <p>Your uploaded memo and completed progress are saved. If processing pauses, the normal Retry conversion action will appear safely.</p>
+            <SupportIncident client={client} user={user} label="Report delayed processing" context={{ job, currentView: "visual_processing_delayed", visualProgress }} />
+          </div>
+        )}
 
         {ACTIVE_JOB_STATUSES.has(job.status) && (
           <ol className="progress-steps" aria-label="Conversion stages">

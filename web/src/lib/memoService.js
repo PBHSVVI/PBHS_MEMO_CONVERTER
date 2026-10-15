@@ -75,6 +75,18 @@ export async function getJob(client, jobId) {
   return data;
 }
 
+export async function getLatestVisualProgress(client, jobId) {
+  const { data, error } = await client
+    .from("job_events")
+    .select("event_type,stage,payload,created_at")
+    .eq("job_id", jobId)
+    .eq("event_type", "phase2_visual_region_progress")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  fail(error, "VISUAL_PROGRESS_LOAD_FAILED", "Visual processing progress could not be refreshed.");
+  return data?.[0] || null;
+}
+
 export async function createAndDispatchJob({ client, user, file, filingMetadata, displayName, onStep = () => {}, onJobCreated = () => {} }) {
   const validation = validateMemoFile(file);
   if (!validation.ok) throw new PilotAppError("FILE_INVALID", validation.message);

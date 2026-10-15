@@ -177,6 +177,9 @@ p { line-height: 1.55; }
 .progress-track { display: flex; gap: var(--space-3); align-items: flex-start; margin: var(--space-4) 0; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .progress-track.complete { margin-bottom: var(--space-3); }
 .progress-track p { margin: 3px 0 0; color: var(--ink-muted); font-size: var(--text-sm); }
+.visual-progress { display: flex; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-4); padding: 11px 13px; border: 1px solid #c9d7e0; border-radius: var(--radius-md); background: var(--pbhs-blue-soft); color: var(--navy); }
+.visual-progress span { color: var(--ink-muted); font-size: var(--text-sm); }
+.visual-delay p { margin: 5px 0 10px; }
 .progress-dot { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 3px; border: 3px solid #a8bdca; border-radius: 50%; background: var(--navy); box-shadow: 0 0 0 4px var(--pbhs-blue-soft); }
 .progress-dot.done { border-color: #9bc7ad; background: var(--green); box-shadow: 0 0 0 4px var(--green-bg); }
 .progress-steps { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; margin: 0 0 var(--space-4); padding: 0; list-style: none; }

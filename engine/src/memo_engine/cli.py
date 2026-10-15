@@ -48,7 +48,7 @@ def fail_processing_job(
     message: str,
     stage: str,
     diagnostics: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     try:
         failed = db.patch_job(
             job["id"],
@@ -65,8 +65,35 @@ def fail_processing_job(
         if diagnostics:
             payload["diagnostics"] = diagnostics
         db.add_event(failed, "worker_failed", stage, payload)
+        return True
     except Exception:
-        pass
+        return False
+
+
+def finalize_interrupted_job(job_id: str) -> int:
+    """Recover a hosted worker that the outer shell stopped unexpectedly."""
+    db = SupabaseRest()
+    job = db.get_job(job_id)
+    if job.get("status") != "processing":
+        print(f"Worker finalizer left terminal job {job_id} unchanged.")
+        return 0
+
+    visual = job.get("stage") == "visual_evidence"
+    updated = fail_processing_job(
+        db,
+        job,
+        code=("VISUAL_PROCESSING_TIMEOUT" if visual else "WORKER_EXECUTION_TIMEOUT"),
+        message=(
+            "Visual memo reading took too long and paused safely."
+            if visual
+            else "Memo processing was interrupted and paused safely."
+        ),
+        stage=("visual_evidence_failed" if visual else "worker_failed"),
+    )
+    print(
+        f"Worker finalizer {'recovered' if updated else 'did not change'} job {job_id}."
+    )
+    return 0 if updated else 1
 
 
 def _semantic_signature(structure: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
@@ -257,6 +284,13 @@ def run_job(job_id: str) -> int:
         normalized_path = f"{job['user_id']}/{job['id']}/internal/normalized.json"
         db.upload_json(BUCKET, normalized_path, normalized)
 
+        job = db.patch_job(
+            job_id,
+            "processing",
+            {"stage": "visual_evidence", "updated_at": utc_now()},
+        )
+        db.add_event(job, "phase2_visual_evidence_started", "visual_evidence")
+
         visual_path = f"{job['user_id']}/{job['id']}/internal/visual/evidence.json"
         visual_cache_hit = False
         try:
@@ -272,8 +306,45 @@ def run_job(job_id: str) -> int:
             visual_artifacts: list[dict[str, Any]] = []
             visual_cache_hit = True
         else:
+            checkpoint_path = (
+                f"{job['user_id']}/{job['id']}/internal/visual/evidence.checkpoint.json"
+            )
+            try:
+                visual_checkpoint_record = db.download_json(BUCKET, checkpoint_path)
+            except Exception:
+                visual_checkpoint_record = None
+
+            def visual_progress(payload: dict[str, Any]) -> None:
+                nonlocal job
+                job = db.patch_job(
+                    job_id,
+                    "processing",
+                    {"stage": "visual_evidence", "updated_at": utc_now()},
+                )
+                db.add_event(
+                    job,
+                    "phase2_visual_region_progress",
+                    "visual_evidence",
+                    payload,
+                )
+
+            def visual_checkpoint(
+                partial: dict[str, Any], artifact: dict[str, Any]
+            ) -> None:
+                db.upload_object(
+                    BUCKET,
+                    f"{job['user_id']}/{job['id']}/{artifact['path']}",
+                    artifact["data"],
+                    content_type=artifact["content_type"],
+                )
+                db.upload_json(BUCKET, checkpoint_path, partial)
+
             visual, visual_artifacts = extract_visual_evidence(
-                source_bytes, normalized
+                source_bytes,
+                normalized,
+                progress_callback=visual_progress,
+                checkpoint_callback=visual_checkpoint,
+                checkpoint_record=visual_checkpoint_record,
             )
             for artifact in visual_artifacts:
                 db.upload_object(
@@ -288,7 +359,7 @@ def run_job(job_id: str) -> int:
         db.add_event(
             job,
             "phase2_visual_evidence_complete",
-            "normalization",
+            "visual_evidence",
             {
                 "visual_path": visual_path,
                 "pages_screened": visual_summary.get("pages_screened", 0),
@@ -868,9 +939,15 @@ def run_job(job_id: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] != "run-job":
-        print("usage: python -m engine.src.memo_engine.cli run-job <job_id>", file=sys.stderr)
+    if len(argv) != 3 or argv[1] not in {"run-job", "finalize-interrupted-job"}:
+        print(
+            "usage: python -m engine.src.memo_engine.cli "
+            "{run-job|finalize-interrupted-job} <job_id>",
+            file=sys.stderr,
+        )
         return 2
+    if argv[1] == "finalize-interrupted-job":
+        return finalize_interrupted_job(argv[2])
     return run_job(argv[2])
 
 
