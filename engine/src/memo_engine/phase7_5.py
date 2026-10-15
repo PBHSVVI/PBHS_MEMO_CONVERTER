@@ -727,7 +727,11 @@ def _apply_replace_item_content(
     target_id = str(patch.get("target_id") or affected_id or "").strip()
     active_id = str(affected_id or "").strip()
     replacement_id = str(patch.get("replacement_id") or target_id).strip()
-    child_repair = patch.get("reconciliation_scope") == "suspicious_child"
+    scope = patch.get("reconciliation_scope") or patch.get("correction_scope")
+    child_repair = scope == "suspicious_child"
+    structured_mark_repair = scope in {
+        "suspicious_child", "bounded_item_editor", "teacher_initiated_item",
+    }
     valid_child_scope = (
         child_repair
         and category == "question_total_mismatch"
@@ -789,7 +793,7 @@ def _apply_replace_item_content(
         # Reuse the strict mark-point validator on a temporary structure so the
         # content mutation remains atomic if the marking scheme is invalid.
         supplied_total = patch.get("printed_marks")
-        if child_repair:
+        if structured_mark_repair:
             try:
                 supplied_total = int(supplied_total)
             except (TypeError, ValueError):

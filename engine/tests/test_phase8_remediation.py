@@ -220,7 +220,8 @@ def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
     html = PAGE.read_text(encoding="utf-8")
     assert "configureCorrectionTools(ex,rendered)" in html
     assert "options.push(['content','Content'],['file','Evidence / Photo'])" in html
-    assert "row.inserted||row.staged||!boundedItemEditorAllowed(ex,row.question_id)" in html
+    assert "(!parentContext&&!boundedItemEditorAllowed(ex,row.question_id))" in html
+    assert "Edit saved correction" in html
 
 def test_long_processing_has_no_fixed_timeout_and_remains_resumable():
     html = PAGE.read_text(encoding="utf-8")
@@ -252,7 +253,7 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
     html = PAGE.read_text(encoding="utf-8")
     edge = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
     assert 'id="questionWorkspace"' in html
-    assert "Total after your changes" in html
+    assert "Current staged total" in html
     assert "Saved changes keep their own audit history" in html
     assert "Review this item" in html
     assert 'id="applyBatch"' in html
@@ -375,12 +376,12 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     html = PAGE.read_text(encoding="utf-8")
     submit = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
     confirm = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
-    assert ">Edit</button>" in html
+    assert "row.staged?'Edit saved correction':'Edit'" in html
     assert "Add a missing subquestion" in html
     assert "Review this correction" in html
     assert "SHOW-BACK — not applied yet" in html
     assert 'id="confirm"' in html
-    assert 'reconciliation_scope: parentReview ? "suspicious_child" : "bounded_item_editor"' in submit
+    assert 'reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor"' in submit
     assert 'operation: "insert_missing_child_question"' in submit
     assert 'reconciliation_scope: "missing_child"' in submit
     assert 'exceptionStatus = "awaiting_confirmation"' in submit

@@ -13,7 +13,8 @@ function stagedTarget(patch: Record<string, unknown> | null): string | null {
   }
   if (operation === "withdraw_confirmed_correction") return `revision:${String(patch.supersedes_correction_id ?? "")}`;
   const target = String(patch.target_id ?? patch.affected_id ?? "");
-  return target ? `question:${target}` : null;
+  const occurrence = patch.source_block_index == null ? "" : `@${String(patch.source_block_index)}`;
+  return target ? `question:${target}${occurrence}` : null;
 }
 
 async function dispatchJob(ctx: any, jobId: string, userId: string, attemptCount: number) {
@@ -108,6 +109,9 @@ export default {
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
       (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child") ||
       (patch.operation === "rename_question_identifier" && patch.correction_scope === "numbering_only")
+    ) || deferRevalidation && (
+      patch.correction_scope === "teacher_initiated_item" ||
+      patch.reconciliation_scope === "teacher_initiated_item"
     );
     if (deferRevalidation) {
       const { data: currentJob } = await ctx.supabaseAdmin.from("jobs")
@@ -120,12 +124,22 @@ export default {
       if (stagedError) return Response.json({ error: "staged_correction_lookup_failed" }, { status: 502 });
       const target = stagedTarget(correction.proposed_patch);
       const supersedes = String(patch.supersedes_correction_id ?? "");
-      const numberingSource = patch.operation === "rename_question_identifier" ? String(patch.affected_id ?? patch.source_id ?? "") : "";
+      const questionTarget = String(patch.target_id ?? patch.affected_id ?? "");
+      const questionSourceIndex = patch.source_block_index == null ? null : Number(patch.source_block_index);
+      const numberingSource = patch.operation === "rename_question_identifier"
+        ? `${String(patch.affected_id ?? patch.source_id ?? "")}@${String(patch.source_block_index ?? "")}` : "";
       const conflict = (staged ?? []).some((item: any) => {
         if (String(item.id ?? "") === supersedes) return false;
         const other = item.proposed_patch && typeof item.proposed_patch === "object" ? item.proposed_patch as Record<string, unknown> : {};
-        const sameTarget = target && stagedTarget(other) === target;
-        const sameNumberingSource = numberingSource && other.operation === "rename_question_identifier" && String(other.affected_id ?? other.source_id ?? "") === numberingSource;
+        const otherQuestionTarget = String(other.target_id ?? other.affected_id ?? "");
+        const otherSourceIndex = other.source_block_index == null ? null : Number(other.source_block_index);
+        const sameQuestionTarget = questionTarget && otherQuestionTarget === questionTarget && (
+          questionSourceIndex === null || otherSourceIndex === null || questionSourceIndex === otherSourceIndex
+        );
+        const sameTarget = sameQuestionTarget || target && stagedTarget(other) === target;
+        const otherNumberingSource = other.operation === "rename_question_identifier"
+          ? `${String(other.affected_id ?? other.source_id ?? "")}@${String(other.source_block_index ?? "")}` : "";
+        const sameNumberingSource = numberingSource && otherNumberingSource === numberingSource;
         return Boolean(sameTarget || sameNumberingSource);
       });
       if (conflict) {

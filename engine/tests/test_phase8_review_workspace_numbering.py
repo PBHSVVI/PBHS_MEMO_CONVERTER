@@ -115,6 +115,8 @@ console.log(JSON.stringify({
     assert result["ok"] == {
         "current_id": "4.1",
         "correct_id": "6.1",
+        "source_block_index": 0,
+        "occurrence_count": 1,
         "operation": "rename_question_identifier",
         "display": "Rename Question 4.1 → Question 6.1",
     }
@@ -134,7 +136,8 @@ def test_numbering_uses_confirmation_ready_deterministic_edge_path():
         '} else if (parentResolution', 1
     )[0]
     assert "dispatchReinterpretation" not in branch
-    assert "sourceMatches.length !== 1" in branch
+    assert '"ambiguous_numbering_source"' in branch
+    assert "selectedMatches.length === 1" in branch
     assert "replacementConflict" in branch
     assert "currentId.startsWith" in branch
 
@@ -174,7 +177,7 @@ def test_numbering_showback_and_edit_are_plain_teacher_language():
     assert "Rename Question ${esc(model.target_id)} → Question ${esc(model.replacement_id)}" in page
     assert "No other question wording, answer or mark allocation will change." in page
     assert "numbering?'Confirm':'Save & next'" in page
-    assert "numbering?'Edit':'Edit / resubmit'" in page
+    assert "numbering||amendment?'Edit':'Edit / resubmit'" in page
     assert "editCurrentProposal" in page
     assert "$('#numberingCurrent').value=model.target_id" in page
     assert "$('#numberingCorrect').value=model.replacement_id" in page
@@ -213,7 +216,8 @@ def test_durable_save_feedback_and_parent_workspace_retention_contract():
     assert "Done with Question ${esc(major)} / Recheck Question ${esc(major)}" in page
     assert "blockUnsavedWorkspaceNavigation()" in page
     assert "before moving away" in page
-    assert "row.inserted||row.staged||!boundedItemEditorAllowed" in page
+    assert "Edit saved correction" in page
+    assert "row.staged?'Edit saved correction':'Edit'" in page
     assert 'patch.correction_scope === "numbering_only"' in confirm
     assert "sameNumberingSource" in confirm
     assert "correction: confirmedCorrection" in confirm

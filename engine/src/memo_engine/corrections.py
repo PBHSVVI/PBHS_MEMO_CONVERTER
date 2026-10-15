@@ -307,11 +307,18 @@ def _rename_question_identifier(
     category: str,
     affected_id: str | None,
     target_id: str,
+    source_block_index: int | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     source_id = str(affected_id or "")
     if not QUESTION_ID_RE.fullmatch(source_id) or not QUESTION_ID_RE.fullmatch(target_id):
         return None, _issue("correction_target_invalid", affected_id, f"Confirmed correction {correction_id} contains an invalid numbering patch.")
     matches = [q for q in structure.get("questions", []) if str(q.get("question_id")) == source_id]
+    if source_block_index is not None:
+        matches = [
+            q for q in matches
+            if q.get("source_block_index") is not None
+            and int(q.get("source_block_index")) == source_block_index
+        ]
     if len(matches) != 1:
         return None, _issue("correction_evidence_unresolved", source_id, f"Confirmed correction {correction_id} could not resolve exactly one question {source_id}.")
     if any(str(q.get("question_id")) == target_id for q in structure.get("questions", []) if q is not matches[0]):
@@ -325,7 +332,12 @@ def _rename_question_identifier(
     q["question_id"] = target_id
     q["path"] = list(qtuple(target_id))
     q["depth"] = len(q["path"])
-    q["correction_overlay"] = {"correction_id": correction_id, "operation": "rename_question_identifier", "source_id": source_id}
+    q["correction_overlay"] = {
+        "correction_id": correction_id,
+        "operation": "rename_question_identifier",
+        "source_id": source_id,
+        "source_block_index": q.get("source_block_index"),
+    }
     structure["questions"].sort(key=lambda item: (int(item.get("source_block_index", 10**9)), tuple(item.get("path") or (999,))))
     _remove_exception(structure, category, affected_id)
     return {
@@ -373,11 +385,25 @@ def apply_confirmed_corrections(
                 result, normalized, correction_id=correction_id, category=category,
                 affected_id=affected_id, target_id=target_id,
             )
-        elif category in {"numbering_jump", "suspicious_question_identifier", "scored_major_precedes_subquestions"} and operation in {"accept_suggestion", "rename_question_identifier"} and target_id:
-            applied_item, issue = _rename_question_identifier(
-                result, correction_id=correction_id, category=category,
-                affected_id=affected_id, target_id=target_id,
-            )
+        elif category in {"numbering_jump", "suspicious_question_identifier", "scored_major_precedes_subquestions", "duplicate_question_identifier"} and operation in {"accept_suggestion", "rename_question_identifier"} and target_id:
+            source_block_index = None
+            if patch.get("source_block_index") is not None:
+                try:
+                    source_block_index = int(patch["source_block_index"])
+                except (TypeError, ValueError):
+                    issue = _issue(
+                        "correction_target_invalid", affected_id,
+                        f"Confirmed correction {correction_id} contains an invalid source occurrence locator.",
+                    )
+                    source_block_index = None
+            if issue:
+                applied_item = None
+            else:
+                applied_item, issue = _rename_question_identifier(
+                    result, correction_id=correction_id, category=category,
+                    affected_id=affected_id, target_id=target_id,
+                    source_block_index=source_block_index,
+                )
         else:
             applied_item, issue, handled = apply_phase7_5_patch(
                 result,

@@ -414,31 +414,46 @@ export default {
         const value = numbering as Record<string, unknown>;
         const currentId = typeof value.current_id === "string" ? value.current_id.trim() : "";
         const correctId = typeof value.correct_id === "string" ? value.correct_id.trim() : "";
+        const suppliedSourceIndex = value.source_block_index == null ? null : Number(value.source_block_index);
+        const teacherInitiated = value.teacher_initiated === true;
         const affectedId = String(exception.affected_id ?? "");
-        const inReviewScope = currentId === affectedId || (
+        const inReviewScope = teacherInitiated || currentId === affectedId || (
           exception.category === "question_total_mismatch" &&
           QUESTION_ID_RE.test(affectedId) && currentId.startsWith(`${affectedId}.`)
         );
         const structure = await loadStructure(ctx, job.user_id, jobId);
         const questions = Array.isArray(structure?.questions) ? structure.questions : [];
         const sourceMatches = questions.filter((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === currentId);
-        const replacementConflict = questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === correctId);
-        if (!QUESTION_ID_RE.test(currentId) || !QUESTION_ID_RE.test(correctId) || currentId === correctId || !inReviewScope || sourceMatches.length !== 1 || replacementConflict) {
+        if (sourceMatches.length > 1 && suppliedSourceIndex === null) {
+          return Response.json({ error: "ambiguous_numbering_source", current_id: currentId }, { status: 409 });
+        }
+        if (suppliedSourceIndex !== null && (!Number.isInteger(suppliedSourceIndex) || suppliedSourceIndex < 0)) {
+          return Response.json({ error: "invalid_numbering_source_locator" }, { status: 400 });
+        }
+        const selectedMatches = suppliedSourceIndex === null ? sourceMatches : sourceMatches.filter((entry) =>
+          Number((entry as Record<string, unknown>).source_block_index) === suppliedSourceIndex
+        );
+        const selected = selectedMatches.length === 1 ? selectedMatches[0] as Record<string, unknown> : null;
+        const selectedSourceIndex = selected?.source_block_index == null ? null : Number(selected.source_block_index);
+        const replacementConflict = questions.some((entry) => entry && typeof entry === "object" && entry !== selected && String((entry as Record<string, unknown>).question_id ?? "") === correctId);
+        if (!QUESTION_ID_RE.test(currentId) || !QUESTION_ID_RE.test(correctId) || currentId === correctId || !inReviewScope || !selected || replacementConflict || (sourceMatches.length > 1 && (!Number.isInteger(selectedSourceIndex) || Number(selectedSourceIndex) < 0))) {
           return Response.json({ error: replacementConflict ? "numbering_identifier_conflict" : "invalid_numbering_correction" }, { status: 400 });
         }
         proposedPatch = {
           schema_version: "1.0",
           operation: "rename_question_identifier",
-          category: "suspicious_question_identifier",
+          category: teacherInitiated ? "suspicious_question_identifier" : exception.category,
           source_exception_category: exception.category,
           affected_id: currentId,
           source_id: currentId,
           target_id: correctId,
           replacement_id: correctId,
-          correction_scope: "numbering_only",
+          ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
+          correction_scope: teacherInitiated ? "teacher_initiated_item" : "numbering_only",
           reinterpretation_method: "deterministic_structured_numbering_editor",
         };
-        displayText = `Rename Question ${currentId} → Question ${correctId}`;
+        const occurrence = sourceMatches.length > 1 ? ` (selected source occurrence ${selectedSourceIndex})` : "";
+        displayText = `Rename Question ${currentId}${occurrence} → Question ${correctId}`;
         exceptionStatus = "awaiting_confirmation";
       } else if (parentResolution && typeof parentResolution === "object") {
         if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
@@ -494,24 +509,42 @@ export default {
         const affectedId = String(exception.affected_id ?? "");
         const parentReview = exception.category === "question_total_mismatch";
         const directItemReview = ["item_total_mismatch", "mark_arithmetic_mismatch"].includes(exception.category);
-        if ((!parentReview && !directItemReview) || !QUESTION_ID_RE.test(affectedId)) {
+        const value = childRepair as Record<string, unknown>;
+        const teacherInitiated = value.teacher_initiated === true;
+        if (!teacherInitiated && ((!parentReview && !directItemReview) || !QUESTION_ID_RE.test(affectedId))) {
           return Response.json({ error: "child_repair_category_mismatch" }, { status: 400 });
         }
-        const value = childRepair as Record<string, unknown>;
+        const suppliedSourceIndex = value.source_block_index == null ? null : Number(value.source_block_index);
+        const supersedesCorrectionId = typeof value.supersedes_correction_id === "string" ? value.supersedes_correction_id.trim() : "";
         const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
         const replacementId = typeof value.replacement_id === "string" ? value.replacement_id.trim() : "";
         const markingText = typeof value.marking_text === "string" ? value.marking_text.trim() : "";
         const printedMarks = value.printed_marks == null || value.printed_marks === "" ? null : Number(value.printed_marks);
         const parentId = parentReview ? affectedId : affectedId.split(".")[0];
-        const withinScope = (id: string) => parentReview
+        const withinScope = (id: string) => teacherInitiated ? true : parentReview
           ? id.startsWith(`${parentId}.`) && id !== parentId
           : id === affectedId || (id.split(".")[0] === parentId && id !== parentId);
         const structure = await loadStructure(ctx, job.user_id, jobId);
         const questions = Array.isArray(structure?.questions) ? structure.questions : [];
-        const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown> | undefined;
-        const replacementConflict = replacementId !== targetId && questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === replacementId);
-        if (!QUESTION_ID_RE.test(targetId) || !QUESTION_ID_RE.test(replacementId) || !withinScope(targetId) || !withinScope(replacementId) || (directItemReview && targetId !== affectedId) || !question || replacementConflict) {
+        const matches = questions.filter((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown>[];
+        const selected = suppliedSourceIndex === null ? matches : matches.filter((entry) => Number(entry.source_block_index) === suppliedSourceIndex);
+        const question = selected.length === 1 ? selected[0] : undefined;
+        const selectedSourceIndex = question?.source_block_index == null ? null : Number(question.source_block_index);
+        const replacementConflict = replacementId !== targetId && questions.some((entry) => entry && typeof entry === "object" && entry !== question && String((entry as Record<string, unknown>).question_id ?? "") === replacementId);
+        if (!QUESTION_ID_RE.test(targetId) || !QUESTION_ID_RE.test(replacementId) || !withinScope(targetId) || !withinScope(replacementId) || (!teacherInitiated && directItemReview && targetId !== affectedId) || !question || replacementConflict || (suppliedSourceIndex !== null && (!Number.isInteger(suppliedSourceIndex) || suppliedSourceIndex < 0))) {
           return Response.json({ error: "invalid_child_repair_target" }, { status: 400 });
+        }
+        let priorPatch: Record<string, unknown> | null = null;
+        if (supersedesCorrectionId) {
+          const { data: prior } = await ctx.supabaseAdmin.from("corrections")
+            .select("id,job_id,proposed_patch,confirmation_status,applied_at")
+            .eq("id", supersedesCorrectionId).eq("job_id", jobId).maybeSingle();
+          priorPatch = prior?.proposed_patch && typeof prior.proposed_patch === "object" ? prior.proposed_patch as Record<string, unknown> : null;
+          const priorTarget = String(priorPatch?.target_id ?? priorPatch?.affected_id ?? "");
+          const priorSourceIndex = priorPatch?.source_block_index == null ? null : Number(priorPatch.source_block_index);
+          if (!UUID_RE.test(supersedesCorrectionId) || !prior || prior.confirmation_status !== "confirmed" || prior.applied_at || priorPatch?.operation !== "replace_item_content" || priorTarget !== targetId || (priorSourceIndex !== null && priorSourceIndex !== Number(question.source_block_index))) {
+            return Response.json({ error: "prior_correction_not_revisable" }, { status: 400 });
+          }
         }
         const renameRequested = replacementId !== targetId;
         let parsed: ReturnType<typeof parseMarkingScheme> = null;
@@ -522,10 +555,12 @@ export default {
         proposedPatch = {
           schema_version: "1.0",
           operation: "replace_item_content",
-          category: exception.category,
-          affected_id: affectedId,
+          category: teacherInitiated ? "teacher_initiated_item_edit" : exception.category,
+          source_exception_category: exception.category,
+          affected_id: teacherInitiated ? targetId : affectedId,
           target_id: targetId,
           replacement_id: replacementId,
+          ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
           question_text: null,
           solution_lines: [],
           ...(parsed ? {
@@ -534,11 +569,18 @@ export default {
             expected_total: parsed.total,
             mark_calculation_mode: parsed.mode,
           } : {}),
-          reconciliation_scope: parentReview ? "suspicious_child" : "bounded_item_editor",
+          ...(supersedesCorrectionId ? {
+            supersedes_correction_id: supersedesCorrectionId,
+            supersession_reason: "teacher_amended_previous_change",
+            previous_expected_total: priorPatch?.expected_total ?? priorPatch?.printed_marks ?? null,
+          } : {}),
+          reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor",
           reinterpretation_method: "structured_child_repair_editor",
         };
         const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");
-        displayText = `Question ${targetId}: ${actions}.`;
+        displayText = supersedesCorrectionId
+          ? `Replace the currently staged correction for Question ${targetId}: ${actions}. The earlier correction remains in the audit history.`
+          : `Question ${targetId}: ${actions}.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (allocationResolution && typeof allocationResolution === "object") {
         if (exception.category !== "question_allocation_pairing_ambiguous") {
@@ -590,6 +632,7 @@ export default {
           return Response.json({ error: "grouped_allocation_requires_structured_editor" }, { status: 400 });
         }
         const value = content as Record<string, unknown>;
+        const teacherInitiated = value.teacher_initiated === true;
         const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
         const questionText = typeof value.question_text === "string" ? value.question_text.trim() : "";
         const solutionLines = Array.isArray(value.solution_lines)
@@ -613,8 +656,10 @@ export default {
             notation: "teacher_confirmed",
           };
         });
-        const invalidTarget = !QUESTION_ID_RE.test(targetId) ||
-          (typeof exception.affected_id === "string" && QUESTION_ID_RE.test(exception.affected_id) && targetId !== exception.affected_id);
+        const invalidTarget = !QUESTION_ID_RE.test(targetId) || !question || (
+          !teacherInitiated && typeof exception.affected_id === "string" &&
+          QUESTION_ID_RE.test(exception.affected_id) && targetId !== exception.affected_id
+        );
         const invalidContent = (!questionText && !solutionLines.length) || questionText.length > 2000 ||
           solutionLines.length > 80 || solutionLines.some((line) => line.length > 1000);
         const invalidMarks = markPoints.some((point) =>
@@ -633,16 +678,20 @@ export default {
         proposedPatch = {
           schema_version: "1.0",
           operation: "replace_item_content",
-          category: exception.category,
-          affected_id: exception.affected_id,
+          category: teacherInitiated ? "teacher_initiated_item_edit" : exception.category,
+          source_exception_category: exception.category,
+          affected_id: teacherInitiated ? targetId : exception.affected_id,
           target_id: targetId,
+          source_block_index: Number(question?.source_block_index),
           question_text: questionText || null,
           solution_lines: solutionLines,
           ...(markPoints.length ? {
+            printed_marks: expectedTotal,
             mark_points: markPoints,
             expected_total: expectedTotal,
             mark_calculation_mode: conditionalAccuracy ? "conditional_accuracy" : "additive",
           } : {}),
+          correction_scope: teacherInitiated ? "teacher_initiated_item" : "content",
           reinterpretation_method: "structured_content_editor",
         };
         displayText = `Replace the question or memo content for Question ${targetId}${markPoints.length ? " and use the supplied marking scheme" : ""}.`;

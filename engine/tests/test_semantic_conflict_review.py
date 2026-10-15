@@ -209,7 +209,7 @@ def test_legacy_pending_semantic_suggestion_requires_cancel_and_explicit_choice(
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert "Cancel and reopen conflict choices" in html
     assert "older suggestion attempt does not contain an explicit marking-code choice" in html
-    assert "!corr.proposed_patch&&ex.category==='ambiguous_mark_semantics'" in html
+    assert "if(ex.category==='ambiguous_mark_semantics'){showRecovery(p)" in html
 
 
 def test_selected_semantic_choice_has_readable_confirmation_showback():
