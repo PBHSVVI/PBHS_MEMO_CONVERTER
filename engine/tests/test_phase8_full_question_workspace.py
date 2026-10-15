@@ -98,6 +98,61 @@ console.log(JSON.stringify({projected:model.projected_total,rows:model.rows.map(
     assert result["rows"][1] == {"id": "1.2", "total": 3, "scheme": "3A new", "correction": "new"}
 
 
+def test_parent_overlay_reconciles_against_effective_staged_children():
+    dependency = _section("REVIEW DEPENDENCY MODEL")
+    child = _section("CHILD REPAIR MODEL")
+    support = r"""
+function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
+"""
+    program = dependency + support + child + r"""
+const x=JSON.parse(process.argv[1]);
+console.log(JSON.stringify(effectiveParentOverlay(x.structure,x.exceptions,x.staged,x.major)));
+"""
+    q1 = {
+        "major": "1",
+        "structure": {"questions": [_question("1.1", 1, 0), _question("1.2", 2, 0)]},
+        "exceptions": [{"id": "parent-1", "category": "question_total_mismatch", "affected_id": "1", "message": "Question 1 observed subtotal 7 does not equal computed 0."}],
+        "staged": [
+            {"id": "one", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.1", "expected_total": 4}},
+            {"id": "old", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.2", "expected_total": 4}},
+            {"id": "new", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.2", "expected_total": 3, "supersedes_correction_id": "old"}},
+            {"id": "pending", "confirmation_status": "pending", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.2", "expected_total": 9}},
+            {"id": "rejected", "confirmation_status": "rejected", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.1", "expected_total": 8}},
+            {"id": "applied", "confirmation_status": "confirmed", "applied_at": "2026-10-15T01:00:00Z", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.1", "expected_total": 6}},
+        ],
+    }
+    q3 = {
+        "major": "3",
+        "structure": {"questions": [_question("3.1", 3, 0), _question("3.2", 4, 0), _question("3.3", 5, 0)]},
+        "exceptions": [{"id": "parent-3", "category": "question_total_mismatch", "affected_id": "3", "message": "Question 3 observed subtotal 9 does not equal computed 0."}],
+        "staged": [
+            {"id": "31", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "3.1", "expected_total": 3}},
+            {"id": "32", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "3.2", "expected_total": 2}},
+            {"id": "33", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "3.3", "expected_total": 2}},
+        ],
+    }
+    one = _node(program, q1)
+    three = _node(program, q3)
+    assert (one["source_subtotal"], one["original_converter_total"], one["effective_staged_total"], one["difference"]) == ("7", 0, 7, 0)
+    assert (three["source_subtotal"], three["original_converter_total"], three["effective_staged_total"], three["difference"]) == ("9", 0, 7, 2)
+
+
+def test_parent_reconciliation_uses_shared_overlay_and_server_recomputation():
+    page = PAGE.read_text(encoding="utf-8")
+    submit = SUBMIT.read_text(encoding="utf-8")
+    assert "Original converter total" in page
+    assert "Current staged child total" in page
+    assert "The memo total is wrong — use ${esc(effective)}" in page
+    assert "parent_reconciliation:{choice:'source_wrong',effective_total:Number(effective)}" in page
+    assert "No child marks will change." in page
+    assert 'function effectiveChildTotal(' in submit
+    assert '.eq("confirmation_status", "confirmed").is("applied_at", null)' in submit
+    assert 'correctionQuery.gte("confirmed_at", job.started_at)' in submit
+    assert 'error: "stale_review_state"' in submit
+    assert "submittedEffectiveTotal !== serverEffectiveTotal" in submit
+    assert "Number(match[1]) !==" not in submit
+
+
 def test_duplicate_numbering_requires_and_applies_stable_occurrence_locator():
     structure = {
         "questions": [_question("4.1", 4, 2), _question("4.1", 9, 3)],

@@ -91,6 +91,82 @@ async function loadStructure(ctx: any, userId: string, jobId: string): Promise<R
   }
 }
 
+// BEGIN EFFECTIVE PARENT TOTAL MODEL
+function effectiveConfirmedCorrections(rows) {
+  const superseded = new Set(rows.map((row) => {
+    const patch = row?.proposed_patch && typeof row.proposed_patch === "object"
+      ? row.proposed_patch : {};
+    return typeof patch.supersedes_correction_id === "string" ? patch.supersedes_correction_id : "";
+  }).filter(Boolean));
+  return rows.filter((row) => {
+    const patch = row?.proposed_patch && typeof row.proposed_patch === "object"
+      ? row.proposed_patch : {};
+    return !superseded.has(String(row.id ?? "")) && patch.operation !== "withdraw_confirmed_correction";
+  });
+}
+
+function numericQuestionTotal(question) {
+  const stored = question.computed_shorthand_marks == null ? Number.NaN : Number(question.computed_shorthand_marks);
+  if (Number.isInteger(stored) && stored >= 0) return stored;
+  const points = Array.isArray(question.mark_points) ? question.mark_points : [];
+  return points.reduce((total, point) => {
+    const count = point && typeof point === "object" ? Number(point.count) : 0;
+    return total + (Number.isInteger(count) && count > 0 ? count : 0);
+  }, 0);
+}
+
+function effectiveChildTotal(
+  structure,
+  corrections,
+  parentId,
+) {
+  const patches = effectiveConfirmedCorrections(corrections).map((row) => ({
+    ...(row.proposed_patch && typeof row.proposed_patch === "object" ? row.proposed_patch : {}),
+    _correction_id: row.id,
+  }));
+  const questions = Array.isArray(structure.questions) ? structure.questions : [];
+  let total = 0;
+  for (const rawQuestion of questions) {
+    if (!rawQuestion || typeof rawQuestion !== "object") continue;
+    const question = rawQuestion;
+    const questionId = String(question.question_id ?? "");
+    const sourceIndex = Number(question.source_block_index);
+    const patch = [...patches].reverse().find((item) => {
+      if (item.source_block_index != null && Number(item.source_block_index) !== sourceIndex) return false;
+      if (item.operation === "rename_question_identifier") {
+        return String(item.affected_id ?? item.source_id ?? "") === questionId;
+      }
+      return item.operation === "replace_item_content" && String(item.target_id ?? item.affected_id ?? "") === questionId;
+    });
+    let allocation;
+    for (const item of [...patches].reverse()) {
+      if (item.operation !== "resolve_question_allocation_pairing" || !Array.isArray(item.allocations)) continue;
+      const candidate = item.allocations.find((entry) => entry && typeof entry === "object" && String(entry.question_id ?? "") === questionId);
+      if (candidate && typeof candidate === "object") { allocation = candidate; break; }
+    }
+    const projectedId = String(
+      patch?.operation === "rename_question_identifier"
+        ? patch.target_id
+        : patch?.replacement_id ?? questionId,
+    );
+    if (!projectedId.startsWith(`${parentId}.`)) continue;
+    const projected = Number(patch?.expected_total ?? patch?.printed_marks ?? allocation?.printed_marks ?? numericQuestionTotal(question));
+    if (!Number.isInteger(projected) || projected < 0 || projected > 999) throw new Error("invalid_effective_child_total");
+    total += projected;
+  }
+  for (const patch of patches) {
+    if (patch.operation !== "insert_missing_child_question") continue;
+    const questionId = String(patch.question_id ?? patch.target_id ?? "");
+    if (!questionId.startsWith(`${parentId}.`)) continue;
+    const projected = Number(patch.expected_total ?? patch.printed_marks);
+    if (!Number.isInteger(projected) || projected < 0 || projected > 999) throw new Error("invalid_effective_child_total");
+    total += projected;
+  }
+  if (!Number.isInteger(total) || total < 0 || total > 999) throw new Error("invalid_effective_child_total");
+  return total;
+}
+// END EFFECTIVE PARENT TOTAL MODEL
+
 function compositeQuestionIds(value: unknown): string[] | null {
   if (typeof value !== "string") return null;
   const ids = value.split(",").map((item) => item.trim());
@@ -224,7 +300,7 @@ export default {
     }
 
     const { data: job, error: jobError } = await ctx.supabase
-      .from("jobs").select("id,user_id,status").eq("id", jobId).maybeSingle();
+      .from("jobs").select("id,user_id,status,started_at").eq("id", jobId).maybeSingle();
     if (jobError) return Response.json({ error: "job_lookup_failed" }, { status: 502 });
     if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
     if (!["needs_review", "correction_pending"].includes(job.status)) {
@@ -460,14 +536,33 @@ export default {
           return Response.json({ error: "parent_reconciliation_category_mismatch" }, { status: 400 });
         }
         const value = parentResolution as Record<string, unknown>;
-        const computedTotal = Number(value.computed_total);
+        const submittedEffectiveTotal = Number(value.effective_total ?? value.computed_total);
         const message = String(exception.message ?? "");
-        const match = message.match(/computed(?:\s+(?:sub)?total)?\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i) ?? message.match(/converter(?:\s+calculated)?\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i);
-        if (value.choice !== "source_wrong" || !Number.isInteger(computedTotal) || computedTotal < 0 || computedTotal > 999 || !match || Number(match[1]) !== computedTotal) {
+        if (value.choice !== "source_wrong" || !Number.isInteger(submittedEffectiveTotal) || submittedEffectiveTotal < 0 || submittedEffectiveTotal > 999) {
           return Response.json({ error: "invalid_parent_reconciliation" }, { status: 400 });
         }
-        proposedPatch = { schema_version: "1.0", operation: "set_question_subtotal", category: exception.category, affected_id: exception.affected_id, target_id: exception.affected_id, subtotal: computedTotal, reinterpretation_method: "deterministic_parent_ledger" };
-        displayText = `Question ${exception.affected_id}: record the deterministic child total ${computedTotal} because the printed source subtotal is wrong.`;
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        if (!structure) return Response.json({ error: "effective_parent_total_unavailable" }, { status: 409 });
+        let correctionQuery = ctx.supabaseAdmin.from("corrections")
+          .select("id,proposed_patch,confirmed_at")
+          .eq("job_id", jobId).eq("confirmation_status", "confirmed").is("applied_at", null)
+          .order("confirmed_at", { ascending: true });
+        if (job.started_at) correctionQuery = correctionQuery.gte("confirmed_at", job.started_at);
+        const { data: confirmedRows, error: correctionError } = await correctionQuery;
+        if (correctionError) return Response.json({ error: "effective_parent_total_unavailable" }, { status: 502 });
+        let serverEffectiveTotal: number;
+        try {
+          serverEffectiveTotal = effectiveChildTotal(structure, confirmedRows ?? [], String(exception.affected_id));
+        } catch {
+          return Response.json({ error: "invalid_effective_parent_state" }, { status: 409 });
+        }
+        if (submittedEffectiveTotal !== serverEffectiveTotal) {
+          return Response.json({ error: "stale_review_state", effective_total: serverEffectiveTotal }, { status: 409 });
+        }
+        const sourceMatch = message.match(/observed\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i) ?? message.match(/source\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i);
+        const originalMatch = message.match(/computed(?:\s+(?:sub)?total)?\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i) ?? message.match(/converter(?:\s+calculated)?\s+(?:sub)?total\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)/i);
+        proposedPatch = { schema_version: "1.0", operation: "set_question_subtotal", category: exception.category, affected_id: exception.affected_id, target_id: exception.affected_id, subtotal: serverEffectiveTotal, source_subtotal: sourceMatch ? Number(sourceMatch[1]) : null, original_converter_total: originalMatch ? Number(originalMatch[1]) : null, effective_child_total: serverEffectiveTotal, reinterpretation_method: "deterministic_parent_ledger" };
+        displayText = `Question ${exception.affected_id}: change the printed subtotal${sourceMatch ? ` from ${Number(sourceMatch[1])}` : ""} to ${serverEffectiveTotal}, the current effective child total. No child marks will change.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (missingChild && typeof missingChild === "object") {
         const parentId = String(exception.affected_id ?? "");
