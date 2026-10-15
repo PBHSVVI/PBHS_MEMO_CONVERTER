@@ -82,7 +82,7 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "reconcileReviewQueue(list,saved,staged)" in html
+    assert "reconcileReviewQueue(list,saved,staged,parentCompletionTargetSet())" in html
     assert "Saved ✓ — advanced to" in html
     assert "lastDecisionKey()" in html
 
@@ -152,7 +152,7 @@ def test_progress_uses_server_backed_staged_subtraction_and_remaining_workload()
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert ".eq('confirmation_status','confirmed').is('applied_at',null)" in html
     assert "loadReviewState()" in html
-    assert "remaining=actionableReviewQueue(currentActive,staged).length" in html
+    assert "remaining=actionableReviewQueue(currentActive,staged,parentCompletionTargetSet()).length" in html
     assert "Review ${position} / ${count}" in html
     assert "total=stagedDecisionCount+count" not in html
 
@@ -188,10 +188,10 @@ def test_staged_target_removes_all_rows_and_progress_is_monotonic():
     ]
     assert first_save["actionable"] == ["geometry", "other"]
     assert first_save["first"] == "geometry"
-    assert second_save["actionable"] == ["other"]
-    assert second_save["first"] == "other"
+    assert second_save["actionable"] == ["parent", "other"]
+    assert second_save["first"] == "parent"
     assert reload["actionable"] == second_save["actionable"]
-    assert len(initial["actionable"]) > len(first_save["actionable"]) > len(second_save["actionable"])
+    assert len(initial["actionable"]) > len(first_save["actionable"]) >= len(second_save["actionable"])
     assert first_save["targets"] == ["question:2.4"]
 
 
@@ -221,22 +221,21 @@ def test_structured_and_semantic_corrections_share_normalized_targets():
     assert grouped["targets"] == ["question:8.1", "question:8.2"]
 
 
-def test_staged_child_keeps_parent_validation_deferred_until_revalidation():
+def test_staged_child_keeps_parent_validation_actionable_until_explicit_done():
     active = [{"id": "parent", "category": "question_total_mismatch", "affected_id": "3"}]
     staged = [{"proposed_patch": {
         "operation": "replace_item_content", "target_id": "3.2"
     }}]
-    assert _evaluate(active, staged)["actionable"] == []
+    assert _evaluate(active, staged)["actionable"] == ["parent"]
     assert _evaluate(active, [])["actionable"] == ["parent"]
 
 
-def test_confirmation_records_locally_then_reloads_server_state():
+def test_confirmation_requires_server_confirmed_row_then_reloads_server_state():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     confirm = html.split("async function confirmCurrent()", 1)[1].split(
         "async function applyStagedBatch", 1
     )[0]
-    assert confirm.index("recordStagedCorrection(correction)") < confirm.index(
-        "await loadReviewState()"
-    )
-    assert "refreshReviewQueue(currentActive,currentStaged)" in confirm
-    assert "currentStaged=[...currentStaged.filter" in html
+    assert "r?.correction?.confirmation_status!=='confirmed'" in confirm
+    assert "await loadReviewState()" in confirm
+    assert "currentStaged.some(item=>item.id===correction.id)" in confirm
+    assert "Saved ✓ — not applied yet" in confirm

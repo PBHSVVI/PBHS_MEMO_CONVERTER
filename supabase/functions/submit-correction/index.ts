@@ -375,6 +375,7 @@ export default {
       const missingChild = body.missing_child;
       const correctionRevision = body.correction_revision;
       const content = body.content_correction;
+      const numbering = body.numbering_correction;
       if (correctionRevision && typeof correctionRevision === "object") {
         if (!String(exception.category ?? "").startsWith("correction_")) {
           return Response.json({ error: "correction_revision_category_mismatch" }, { status: 400 });
@@ -409,6 +410,36 @@ export default {
           displayText = `Replace the previous request with: add Question ${questionId} to Question ${parentId} using the supplied ${parsed.total}-mark scheme. The earlier request remains in the audit history.`;
           exceptionStatus = "awaiting_confirmation";
         } else return Response.json({ error: "invalid_correction_revision_action" }, { status: 400 });
+      } else if (numbering && typeof numbering === "object") {
+        const value = numbering as Record<string, unknown>;
+        const currentId = typeof value.current_id === "string" ? value.current_id.trim() : "";
+        const correctId = typeof value.correct_id === "string" ? value.correct_id.trim() : "";
+        const affectedId = String(exception.affected_id ?? "");
+        const inReviewScope = currentId === affectedId || (
+          exception.category === "question_total_mismatch" &&
+          QUESTION_ID_RE.test(affectedId) && currentId.startsWith(`${affectedId}.`)
+        );
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const sourceMatches = questions.filter((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === currentId);
+        const replacementConflict = questions.some((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === correctId);
+        if (!QUESTION_ID_RE.test(currentId) || !QUESTION_ID_RE.test(correctId) || currentId === correctId || !inReviewScope || sourceMatches.length !== 1 || replacementConflict) {
+          return Response.json({ error: replacementConflict ? "numbering_identifier_conflict" : "invalid_numbering_correction" }, { status: 400 });
+        }
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "rename_question_identifier",
+          category: "suspicious_question_identifier",
+          source_exception_category: exception.category,
+          affected_id: currentId,
+          source_id: currentId,
+          target_id: correctId,
+          replacement_id: correctId,
+          correction_scope: "numbering_only",
+          reinterpretation_method: "deterministic_structured_numbering_editor",
+        };
+        displayText = `Rename Question ${currentId} → Question ${correctId}`;
+        exceptionStatus = "awaiting_confirmation";
       } else if (parentResolution && typeof parentResolution === "object") {
         if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
           return Response.json({ error: "parent_reconciliation_category_mismatch" }, { status: 400 });

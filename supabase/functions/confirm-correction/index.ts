@@ -106,7 +106,8 @@ export default {
     const patch = correction.proposed_patch as Record<string, unknown>;
     const retainParentReview = deferRevalidation && exception.category === "question_total_mismatch" && (
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
-      (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child")
+      (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child") ||
+      (patch.operation === "rename_question_identifier" && patch.correction_scope === "numbering_only")
     );
     if (deferRevalidation) {
       const { data: currentJob } = await ctx.supabaseAdmin.from("jobs")
@@ -119,15 +120,28 @@ export default {
       if (stagedError) return Response.json({ error: "staged_correction_lookup_failed" }, { status: 502 });
       const target = stagedTarget(correction.proposed_patch);
       const supersedes = String(patch.supersedes_correction_id ?? "");
-      if (target && (staged ?? []).some((item: any) => String(item.id ?? "") !== supersedes && stagedTarget(item.proposed_patch) === target)) {
+      const numberingSource = patch.operation === "rename_question_identifier" ? String(patch.affected_id ?? patch.source_id ?? "") : "";
+      const conflict = (staged ?? []).some((item: any) => {
+        if (String(item.id ?? "") === supersedes) return false;
+        const other = item.proposed_patch && typeof item.proposed_patch === "object" ? item.proposed_patch as Record<string, unknown> : {};
+        const sameTarget = target && stagedTarget(other) === target;
+        const sameNumberingSource = numberingSource && other.operation === "rename_question_identifier" && String(other.affected_id ?? other.source_id ?? "") === numberingSource;
+        return Boolean(sameTarget || sameNumberingSource);
+      });
+      if (conflict) {
         return Response.json({ error: "conflicting_staged_correction", target }, { status: 409 });
       }
     }
 
     const now = new Date().toISOString();
-    await ctx.supabaseAdmin.from("corrections").update({
+    const { data: confirmedCorrection, error: confirmError } = await ctx.supabaseAdmin.from("corrections").update({
       confirmation_status: "confirmed", confirmed_at: now, updated_at: now,
-    }).eq("id", correctionId).eq("confirmation_status", "pending");
+    }).eq("id", correctionId).eq("confirmation_status", "pending")
+      .select("id,job_id,exception_id,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at")
+      .maybeSingle();
+    if (confirmError || !confirmedCorrection) {
+      return Response.json({ error: "correction_confirmation_failed" }, { status: 409 });
+    }
 
     await ctx.supabaseAdmin.from("exceptions").update(retainParentReview ? {
       status: "open", resolved_by_correction_id: null, updated_at: now,
@@ -167,6 +181,7 @@ export default {
     if (deferRevalidation) {
       return Response.json({
         ok: true, correction_id: correctionId, staged: true,
+        correction: confirmedCorrection,
         remaining_review_count: remaining,
         job_status: "needs_review", job_stage: "phase8_corrections_staged",
       });

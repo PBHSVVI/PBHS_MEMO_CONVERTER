@@ -124,7 +124,8 @@ def test_v410_recovery_and_progressive_disclosure_contract():
     assert 'id="reviewLogin"' in html and "addEventListener('submit',startReview)" in html
     assert 'id="correctionTool"' in html and "setCorrectionTool" in html
     assert "$('#correctionTool').onchange" in html
-    assert "['marks','numbering'].includes(selected)" in html
+    assert "selected==='marks'" in html
+    assert 'id="numberingCorrectionBlock"' in html
     assert "selected!=='content'" in html and "selected!=='file'" in html
     assert "selected!=='suggested'" in html
     assert "You can safely leave this page and return later" in html

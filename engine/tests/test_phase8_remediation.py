@@ -220,7 +220,7 @@ def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
     html = PAGE.read_text(encoding="utf-8")
     assert "configureCorrectionTools(ex,rendered)" in html
     assert "options.push(['content','Content'],['file','Evidence / Photo'])" in html
-    assert "row.inserted||!boundedItemEditorAllowed(ex,row.question_id)" in html
+    assert "row.inserted||row.staged||!boundedItemEditorAllowed(ex,row.question_id)" in html
 
 def test_long_processing_has_no_fixed_timeout_and_remains_resumable():
     html = PAGE.read_text(encoding="utf-8")
