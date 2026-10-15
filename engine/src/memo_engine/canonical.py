@@ -9,6 +9,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from .geometry_validation import geometry_consistency_issues
+from .math_notation import SUPPORTED_LATEX_COMMANDS, unsupported_latex_commands
 from .metadata import MetadataValidationError, resolve_document_metadata
 from .structure import find_question_ids, parse_mark_points
 
@@ -47,12 +48,6 @@ DEFAULT_DESCRIPTOR = {
     "selection": "selection",
     "progressive": "progressive step",
     "other": "reviewed mark",
-}
-
-SUPPORTED_LATEX_COMMANDS = {
-    "leq", "geq", "neq", "in", "infty", "pm", "times", "div", "to",
-    "therefore", "theta", "pi", "circ", "sum", "int", "prod", "frac",
-    "sqrt", "left", "right", "text", "hat", "bar", "vec",
 }
 
 QUESTION_TOKEN_RE = re.compile(
@@ -319,12 +314,12 @@ def validate_latex_subset(latex: str) -> None:
     if depth:
         raise CanonicalizationError("MATH_BRACES", "Canonical mathematics has unbalanced braces.")
 
-    for command in re.findall(r"\\([A-Za-z]+)", latex):
-        if command not in SUPPORTED_LATEX_COMMANDS:
-            raise CanonicalizationError(
-                "MATH_COMMAND_UNSUPPORTED",
-                f"Canonical mathematics contains unsupported command \\{command}.",
-            )
+    unsupported = unsupported_latex_commands(latex)
+    if unsupported:
+        raise CanonicalizationError(
+            "MATH_COMMAND_UNSUPPORTED",
+            f"Canonical mathematics contains unsupported command \\{unsupported[0]}.",
+        )
 
 
 def _looks_math_like(text: str) -> bool:
@@ -803,6 +798,7 @@ def _content_segments(
                     "rendered_asset_ref": segment.get("rendered_asset_ref"),
                     "confidence": segment.get("confidence"),
                 },
+                "canonical_latex": segment.get("canonical_latex"),
             }
             for segment in visual_segments
             if str(segment.get("text") or "").strip()
@@ -872,6 +868,41 @@ def _blocks_from_segments(
             continue
         drawings = segment.get("drawing_assets") or []
         refs = _source_ref(segment)
+
+        visual_latex = segment.get("canonical_latex")
+        if isinstance(visual_latex, str) and visual_latex.strip():
+            try:
+                validate_latex_subset(visual_latex)
+            except CanonicalizationError as exc:
+                issues.append({
+                    "level": "amber",
+                    "category": "visual_math_notation_ambiguous",
+                    "affected_id": qid,
+                    "message": exc.public_message,
+                })
+                continue
+            visual = segment.get("visual_evidence") or {}
+            raw_text = _collapse(visual.get("raw_transcription") or text)
+            score = float(visual.get("confidence") or 0.95)
+            add_block({
+                "type": "math",
+                "semantic_role": "working",
+                "math": {
+                    "source_text": raw_text,
+                    "canonical_latex": visual_latex,
+                    "presentation_mathml": None,
+                    "plain_text": raw_text,
+                    "display_mode": "display",
+                },
+                "source_refs": refs,
+                "confidence": {
+                    "score": score,
+                    "band": "green" if score >= 0.85 else "amber",
+                    "rationale": "Visual mathematics passed the closed deterministic notation boundary.",
+                },
+                "warnings": ["VISUAL_MATH_SOURCE"],
+            })
+            continue
 
         for asset_id in drawings:
             add_block({

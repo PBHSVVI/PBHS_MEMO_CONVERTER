@@ -39,6 +39,15 @@ bytes and provider request bodies are never logged. Identical rendered regions
 are sent once per run, and a source-hash-matched evidence record is reused on
 deterministic retry.
 
+Visual-model mathematics crosses a closed deterministic notation boundary
+before canonicalization. JSON decoding is handled as transport rather than
+visible notation, known commands and aliases are normalized against one shared
+allowlist, and unambiguous set difference may use `\setminus`. A literal or
+uncertain `\backslash`, an unsupported command, or malformed braces remains
+raw evidence and creates a notation-specific teacher review instead of flowing
+into the renderer. The model's original normalized value and raw transcription
+remain auditable.
+
 ## Fusion and review
 
 High-confidence answer evidence becomes a solution segment on its existing
@@ -47,9 +56,13 @@ Ticks and crosses remain supporting evidence and do not invent marking points.
 Handwritten mark changes remain candidates and require teacher confirmation;
 they never overwrite printed allocations automatically.
 
-The review application downloads a focused crop through authenticated private
-storage. Teachers can accept a readable transcription through the existing
-auditable content-correction path, edit/replace it, or submit new evidence.
+The review application downloads focused crops through authenticated private
+storage. It prefers an exception crop, then exact-question visual evidence,
+then safely associated child/parent evidence. When no crop exists, a reliable
+question source page is opened; page 1 is never assumed. A full-document view
+remains available as secondary evidence. Teachers can accept a readable
+transcription through the existing auditable content-correction path,
+edit/replace it, or submit new evidence.
 
 Phase 8 must not be declared accepted until a new private hybrid/write-on memo
 has completed controlled hosted acceptance. Existing live jobs are not reused

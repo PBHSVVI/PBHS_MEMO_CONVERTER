@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 from pathlib import Path
 
 import fitz
 from PIL import Image
 
 from engine.src.memo_engine.ai_router import ProviderError
-from engine.src.memo_engine.canonical import _content_segments
+from engine.src.memo_engine.canonical import _blocks_from_segments, _content_segments
+from engine.src.memo_engine.math_notation import normalize_visual_math
 from engine.src.memo_engine.normalization import normalize_pdf
 from engine.src.memo_engine.visual_evidence import (
     extract_visual_evidence,
     fuse_visual_evidence,
     image_visual_screen,
     screen_pdf_page,
+    validate_visual_response,
     visual_system_prompt,
 )
 
@@ -183,6 +186,100 @@ def test_handwritten_decimal_comma_and_fraction_semantics_are_preserved():
     assert item["normalized_math"] == "x = \\frac{1}{2}; y = 0,72"
 
 
+def test_visual_math_normalizer_handles_decoded_single_and_double_escaped_latex():
+    decoded = json.loads(r'"\\frac{1}{2}"')
+    assert normalize_visual_math(decoded) == (r"\frac{1}{2}", None)
+    assert normalize_visual_math(r"\frac{1}{2}") == (r"\frac{1}{2}", None)
+    assert normalize_visual_math(r"\\frac{1}{2}") == (r"\frac{1}{2}", None)
+
+
+def test_visual_math_normalizer_accepts_closed_common_notation_without_changing_decimal_commas():
+    value = r"\sqrt{9}=3; x \le 3,5; y \geq 2; A \cap B; C \notin D"
+    normalized, issue = normalize_visual_math(value)
+    assert issue is None
+    assert normalized == r"\sqrt{9}=3; x \leq 3,5; y \geq 2; A \cap B; C \notin D"
+
+
+def test_visual_math_normalizer_converts_only_unambiguous_set_difference():
+    assert normalize_visual_math(r"A \backslash B") == (r"A \setminus B", None)
+    assert normalize_visual_math(r"x \backslash y") == (None, "VISUAL_MATH_BACKSLASH_AMBIGUOUS")
+    assert normalize_visual_math(r"\backslash") == (None, "VISUAL_MATH_BACKSLASH_AMBIGUOUS")
+    assert normalize_visual_math(r"x = \unknown{1}") == (None, "VISUAL_MATH_COMMAND_UNSUPPORTED")
+
+
+def test_visual_response_preserves_raw_transcription_and_model_notation_at_boundary():
+    response = _response()
+    response["evidence"][0]["transcription"] = "x = 1/2; y = 0,72"
+    response["evidence"][0]["normalized_math"] = r"x = \\frac{1}{2}; y = 0,72"
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    item = validated["evidence"][0]
+    assert item["transcription"] == "x = 1/2; y = 0,72"
+    assert item["model_normalized_math"] == r"x = \\frac{1}{2}; y = 0,72"
+    assert item["normalized_math"] == r"x = \frac{1}{2}; y = 0,72"
+    assert item["math_normalization_issue"] is None
+
+
+def test_uncertain_or_unsupported_visual_notation_stays_a_specific_review_item():
+    response = _response(confidence=0.95)
+    response["evidence"][0]["transcription"] = "visible uncertain slash"
+    response["evidence"][0]["normalized_math"] = r"\backslash"
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    assert validated["evidence"][0]["normalized_math"] is None
+    structure = fuse_visual_evidence(_structure(), validated)
+    issue = next(item for item in structure["exceptions"] if item["category"] == "visual_math_notation_uncertain")
+    assert issue["affected_id"] == "3.1"
+    assert issue["suggestions"][0]["normalization_issue"] == "VISUAL_MATH_BACKSLASH_AMBIGUOUS"
+    assert "visual_solution_segments" not in structure["questions"][0]
+
+
+def test_non_solution_annotation_does_not_create_math_normalization_noise():
+    response = _response(kind="marking_note")
+    response["evidence"][0]["transcription"] = "✓"
+    response["evidence"][0]["normalized_math"] = r"\checkmark"
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    structure = fuse_visual_evidence(_structure(), validated)
+    assert not any(item["category"] == "visual_math_notation_uncertain" for item in structure["exceptions"])
+    assert structure["questions"][0]["visual_evidence"][0]["transcription"] == "✓"
+
+
+def test_valid_visual_latex_reaches_canonical_without_literal_backslash_warning():
+    response = _response()
+    response["evidence"][0]["transcription"] = "x = 1/2"
+    response["evidence"][0]["normalized_math"] = r"x = \frac{1}{2}"
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    question = fuse_visual_evidence(_structure(), validated)["questions"][0]
+    segments = _content_segments(question, [{"text": "printed fallback"}])
+    issues = []
+    blocks = _blocks_from_segments("3.1", "A", segments, issues)
+    assert issues == []
+    assert blocks[0]["math"]["canonical_latex"] == r"x = \frac{1}{2}"
+    assert blocks[0]["math"]["source_text"] == "x = 1/2"
+
+
+def test_null_visual_normalized_math_remains_reviewable_without_invention():
+    response = _response(confidence=0.55)
+    response["evidence"][0]["normalized_math"] = None
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    assert validated["evidence"][0]["normalized_math"] is None
+    structure = fuse_visual_evidence(_structure(), validated)
+    assert any(item["category"] == "visual_evidence_uncertain" for item in structure["exceptions"])
+
+
 def test_canonical_content_uses_visual_answer_without_repeating_printed_prompt():
     source = [{"text": "3.1 Find the regression equation. (3)", "source_ref": {"file_id": "source_1", "page": 1}}]
     visual = [{
@@ -334,6 +431,8 @@ def test_prompt_forbids_solving_and_invention():
         "DO NOT invent marking allocations",
         "DO NOT reproduce printed question text",
         "DO NOT silently repair unclear handwriting",
+        "Never use the command \\backslash",
+        "normalized_math to null",
     ):
         assert phrase in prompt
 

@@ -111,6 +111,96 @@ def test_structural_question_region_precedes_global_token_fallback():
     assert "made=structural||visibleCloneAround(currentStep)" in focused
 
 
+def test_pdf_focus_uses_direct_then_exact_visual_evidence_and_solution_crops():
+    model = _section("VISUAL EVIDENCE FOCUS MODEL")
+    program = (
+        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
+        + model
+        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+    )
+    value = {
+        "ex": {"affected_id": "4.2.1", "suggestions": [{"rendered_asset_ref": "internal/visual/regions/direct.png"}]},
+        "structure": {"questions": [
+            {"question_id": "4.2.1", "visual_evidence": [{"rendered_asset_ref": "internal/visual/regions/exact.png"}]},
+            {"question_id": "4.2.2", "visual_evidence": [{"rendered_asset_ref": "internal/visual/regions/sibling.png"}]},
+            {"question_id": "4.2", "visual_solution_segments": [{"rendered_asset_ref": "internal/visual/regions/parent.png"}]},
+        ]},
+    }
+    assert _node(program, value) == [
+        "internal/visual/regions/direct.png",
+        "internal/visual/regions/exact.png",
+        "internal/visual/regions/parent.png",
+    ]
+
+
+def test_pdf_focus_uses_exact_visual_solution_when_no_exception_crop_exists():
+    model = _section("VISUAL EVIDENCE FOCUS MODEL")
+    program = (
+        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
+        + model
+        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+    )
+    value = {
+        "ex": {"affected_id": "5.2.1", "suggestions": []},
+        "structure": {"questions": [{
+            "question_id": "5.2.1",
+            "visual_solution_segments": [{"rendered_asset_ref": "internal/visual/regions/q5_2_1.png"}],
+        }]},
+    }
+    assert _node(program, value) == ["internal/visual/regions/q5_2_1.png"]
+
+
+def test_pdf_focus_safely_uses_parent_crop_but_not_sibling_crop():
+    model = _section("VISUAL EVIDENCE FOCUS MODEL")
+    program = (
+        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
+        + model
+        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+    )
+    value = {
+        "ex": {"affected_id": "4.2.1"},
+        "structure": {"questions": [
+            {"question_id": "4.2", "visual_evidence": [{"rendered_asset_ref": "internal/visual/regions/q4_2.png"}]},
+            {"question_id": "4.2.2", "visual_evidence": [{"rendered_asset_ref": "internal/visual/regions/q4_2_2.png"}]},
+        ]},
+    }
+    assert _node(program, value) == ["internal/visual/regions/q4_2.png"]
+
+
+def test_pdf_focus_uses_known_source_page_and_never_defaults_to_page_one():
+    model = _section("VISUAL EVIDENCE FOCUS MODEL")
+    program = (
+        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
+        + model
+        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
+    )
+    value = {
+        "ex": {"affected_id": "5.2.1"},
+        "structure": {"questions": [{"question_id": "5.2.1", "source_block_index": 3}]},
+        "normalized": {"content": {"pages": [{"page": 1}, {"page": 2}, {"page": 3}, {"page": 4}]}},
+    }
+    assert _node(program, value) == 4
+    html = PAGE.read_text(encoding="utf-8")
+    focused = html.split("async function renderFocusedEvidence()", 1)[1].split("function renderFullMemo", 1)[0]
+    assert "#page=1&zoom=page-width" not in focused
+    assert "#page=${page}&zoom=page-width" in focused
+
+
+def test_pdf_focus_requires_reliable_association_before_page_fallback():
+    model = _section("VISUAL EVIDENCE FOCUS MODEL")
+    program = (
+        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
+        + model
+        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
+    )
+    value = {"ex": {"affected_id": "9.9"}, "structure": {"questions": []}, "normalized": {"content": {"pages": []}}}
+    assert _node(program, value) is None
+    html = PAGE.read_text(encoding="utf-8")
+    assert "No reliable question crop or source-page association was found" in html
+    assert 'id="toggleFull"' in html
+    assert "function renderFullMemo()" in html
+
+
 def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
     model = _section("BOUNDED EDITOR MODEL")
     program = (

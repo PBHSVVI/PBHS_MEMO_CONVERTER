@@ -11,6 +11,7 @@ from typing import Any, Callable
 from PIL import Image, ImageStat
 
 from .ai_router import ProviderError, _post_json, configured_provider
+from .math_notation import normalize_visual_math
 
 
 SCHEMA_VERSION = "1.0"
@@ -251,8 +252,14 @@ question is visible. DO NOT invent marking allocations.
 DO NOT reproduce printed question text as handwritten evidence.
 DO NOT assume a tick means an unseen mark
 criterion. DO NOT silently repair unclear handwriting. Preserve decimal commas and
-visible fraction meaning. If a symbol or association is unclear, lower confidence
-and add a warning. Use only the supplied closed kinds and question anchors."""
+visible fraction meaning. For normalized_math, output mathematical notation rather
+than prose descriptions of symbols. Never use the command \\backslash merely to
+describe a visible slash. Use only common closed notation such as \\frac, \\sqrt,
+\\times, \\cdot, \\leq, \\geq, \\neq, \\pm, \\in, \\notin, \\cup, \\cap, and
+\\setminus when the visible meaning is unambiguous. Raw transcription must retain
+what is actually visible. If notation is uncertain, set normalized_math to null,
+lower confidence, and add a warning. If a symbol or association is unclear, lower
+confidence and add a warning. Use only the supplied closed kinds and question anchors."""
 
 
 def _vision_schema(page_number: int) -> dict[str, Any]:
@@ -372,13 +379,20 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         if bbox is not None and (not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox)):
             raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual evidence bounding box is invalid.")
         normalized_math = item["normalized_math"]
+        model_normalized_math = normalized_math
+        normalization_issue = None
         if normalized_math is not None:
-            normalized_math = _bounded_text(normalized_math)
+            model_normalized_math = _bounded_text(normalized_math)
+            normalized_math, normalization_issue = normalize_visual_math(
+                model_normalized_math
+            )
         evidence.append({
             **item,
             "question_ref": question_ref,
             "transcription": _bounded_text(item["transcription"]),
             "normalized_math": normalized_math,
+            "model_normalized_math": model_normalized_math,
+            "math_normalization_issue": normalization_issue,
             "confidence": confidence,
             "page": region["page"],
             "rendered_asset_ref": region["asset_path"],
@@ -522,7 +536,22 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             continue
         target.setdefault("visual_evidence", []).append(item)
         attached += 1
-        if item.get("kind") in {"answer", "answer_working", "diagram_entry"} and confidence >= VISUAL_REVIEW_THRESHOLD:
+        normalization_issue = item.get("math_normalization_issue")
+        solution_kind = item.get("kind") in {"answer", "answer_working", "diagram_entry"}
+        if normalization_issue and solution_kind:
+            structure.setdefault("exceptions", []).append({
+                "level": "amber", "category": "visual_math_notation_uncertain",
+                "affected_id": question_ref,
+                "message": "Visible mathematical notation could not be normalized safely and requires teacher confirmation.",
+                "suggestions": [{
+                    "rendered_asset_ref": item.get("rendered_asset_ref"),
+                    "page": item.get("page"),
+                    "transcription": item.get("transcription"),
+                    "normalization_issue": normalization_issue,
+                }],
+            })
+            continue
+        if solution_kind and confidence >= VISUAL_REVIEW_THRESHOLD:
             text = str(item.get("normalized_math") or item.get("transcription") or "").strip()
             if text:
                 target.setdefault("visual_solution_segments", []).append({
@@ -531,6 +560,7 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
                     "source_ref": {"file_id": "source_1", "page": item.get("page")},
                     "rendered_asset_ref": item.get("rendered_asset_ref"),
                     "confidence": confidence,
+                    "canonical_latex": item.get("normalized_math"),
                 })
         if confidence < VISUAL_REVIEW_THRESHOLD:
             structure.setdefault("exceptions", []).append({
