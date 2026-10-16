@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import io
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -208,6 +211,7 @@ def test_retry_reuses_successful_checkpoint_and_retries_failed_region(monkeypatc
     monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
     checkpoint = {
         "schema_version": "1.0",
+        "ownership_algorithm_version": visual_evidence.OWNERSHIP_ALGORITHM_VERSION,
         "source_sha256": "sha",
         "evidence": [{"question_ref": "1.1", "transcription": "saved"}],
         "mark_changes": [],
@@ -242,6 +246,87 @@ def test_retry_reuses_successful_checkpoint_and_retries_failed_region(monkeypatc
     assert record["summary"]["success_count"] == 2
     assert record["summary"]["failure_count"] == 0
     assert not any(item.get("code") == "AI_PROVIDER_NETWORK_ERROR" for item in record["warnings"])
+
+
+def test_exhausted_rate_limit_opens_visual_circuit_immediately(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(6))
+    calls = []
+
+    def saturated(region, _model):
+        calls.append(region)
+        raise ProviderError(
+            "AI_PROVIDER_RATE_LIMITED",
+            "provider remains saturated",
+            provider_saturated=True,
+        )
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=saturated
+    )
+
+    assert len(calls) == 1
+    assert record["runs"][0]["error_code"] == "AI_PROVIDER_RATE_LIMITED"
+    assert [item["error_code"] for item in record["runs"][1:]] == [
+        "VISUAL_PROVIDER_CIRCUIT_OPEN"
+    ] * 5
+
+
+def test_retry_after_that_cannot_serve_remaining_regions_skips_wait(monkeypatch):
+    headers = Message()
+    headers["retry-after"] = "120"
+
+    def rate_limited(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "https://example.invalid", 429, "rate limited", headers, io.BytesIO(b"{}")
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", rate_limited)
+    sleeps = []
+    clock_values = iter([0.0, 0.0])
+
+    with pytest.raises(ProviderError, match="remaining visual processing budget") as caught:
+        _post_json(
+            "https://example.invalid",
+            {},
+            {},
+            timeout_seconds=45,
+            deadline_monotonic=180,
+            remaining_requests=16,
+            clock=lambda: next(clock_values),
+            sleeper=lambda seconds: sleeps.append(seconds),
+        )
+
+    assert caught.value.code == "AI_PROVIDER_RATE_LIMITED"
+    assert caught.value.provider_saturated is True
+    assert caught.value.retry_after_seconds == pytest.approx(120)
+    assert sleeps == []
+
+
+def test_stale_pre_ownership_checkpoint_is_not_reused(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(1))
+    checkpoint = {
+        "schema_version": "1.0",
+        "source_sha256": "sha",
+        "evidence": [{"question_ref": "1.1", "transcription": "legacy"}],
+        "mark_changes": [],
+        "warnings": [],
+        "runs": [{
+            "success": True,
+            "rendered_asset_ref": "internal/visual/regions/region-1.png",
+            "page": 1,
+        }],
+        "summary": {"visual_content_count": 1},
+    }
+    calls = []
+
+    visual_evidence.extract_visual_evidence(
+        b"source",
+        _normalized(),
+        runner=lambda region, model: calls.append(region["asset_path"]) or _success(region, model),
+        checkpoint_record=checkpoint,
+    )
+
+    assert calls == ["internal/visual/regions/region-1.png"]
 
 
 class _FinalizerDatabase:

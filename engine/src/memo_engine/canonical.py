@@ -2220,7 +2220,12 @@ def build_canonical_memo(
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     records, page_count, assets = _source_records(normalized, source_bytes)
     record_by_block = {record["block_index"]: record for record in records}
-    qmap = {str(q["question_id"]): q for q in structure.get("questions", [])}
+    # Keep the first source occurrence as the canonical representative. Genuine
+    # duplicate source identifiers remain review exceptions, but a later
+    # occurrence must not silently replace earlier question content/provenance.
+    qmap: dict[str, dict[str, Any]] = {}
+    for question in structure.get("questions", []):
+        qmap.setdefault(str(question["question_id"]), question)
 
     segments_by_qid: dict[str, list[dict[str, Any]]] = {qid: [] for qid in qmap}
     for record in records:
@@ -2260,9 +2265,15 @@ def build_canonical_memo(
         if (source_index := safe_source_block_index(q.get("source_block_index"))) is not None
     ]
     for subtotal in structure.get("subtotals", []):
+        resolved_major = str(subtotal.get("resolved_major_question") or "").strip()
+        if re.fullmatch(r"\d{1,2}", resolved_major):
+            subtotal_by_major.setdefault(int(resolved_major), int(subtotal["value"]))
+            continue
         explicit_owner = str(subtotal.get("after_question") or "").strip()
         if re.fullmatch(r"\d{1,2}(?:\.\d{1,2}){0,2}", explicit_owner):
-            subtotal_by_major[int(explicit_owner.split(".")[0])] = int(subtotal["value"])
+            subtotal_by_major.setdefault(
+                int(explicit_owner.split(".")[0]), int(subtotal["value"])
+            )
             continue
         block_index = int(subtotal.get("block_index", -1))
         eligible = [item for item in question_positions if item[0] <= block_index]
@@ -2272,7 +2283,9 @@ def build_canonical_memo(
             # Prefer the shallowest identifier on the latest source row. This
             # correctly associates a same-row major question subtotal such as Q3 [4].
             chosen = sorted(same_block, key=lambda value: (value.count("."), len(value)))[0]
-            subtotal_by_major[int(chosen.split(".")[0])] = int(subtotal["value"])
+            subtotal_by_major.setdefault(
+                int(chosen.split(".")[0]), int(subtotal["value"])
+            )
 
     questions: list[dict[str, Any]] = []
     for major in majors:
@@ -2280,7 +2293,7 @@ def build_canonical_memo(
         # A scored major question such as "3" has no child path. Represent it as a
         # synthetic item while keeping the printed number unchanged.
         major_qid = str(major)
-        if major_qid in qmap and not items:
+        if major_qid in qmap and not items and not qmap[major_qid].get("context_only"):
             qdata = qmap[major_qid]
             source_branches = _split_alternative_segments(
                 _content_segments(qdata, segments_by_qid.get(major_qid, []))
@@ -2447,7 +2460,10 @@ def build_canonical_memo(
             "expected": expected_final,
             "status": "missing_observed" if expected_final is None else ("match" if expected_final == computed_final else "mismatch"),
         },
-        "exceptions": [_exception_record(item) for item in inherited_exceptions + new_issues],
+        "exceptions": [
+            _exception_record(item)
+            for item in _dedupe_issues(inherited_exceptions + new_issues)
+        ],
         "corrections": [],
         "audit": {
             "job_id": normalized["job_id"],

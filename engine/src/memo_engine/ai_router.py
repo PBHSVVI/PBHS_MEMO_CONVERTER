@@ -11,11 +11,21 @@ from typing import Any
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = True) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = True,
+        retry_after_seconds: float | None = None,
+        provider_saturated: bool = False,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.public_message = message
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+        self.provider_saturated = provider_saturated
 
 
 SEMANTIC_TYPES = [
@@ -144,9 +154,13 @@ def _post_json(
     body: dict[str, Any],
     *,
     timeout_seconds: float = 90.0,
+    deadline_monotonic: float | None = None,
+    remaining_requests: int = 1,
+    clock: Any = time.monotonic,
+    sleeper: Any = time.sleep,
 ) -> tuple[dict[str, Any], int]:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    started = time.monotonic()
+    started = clock()
 
     max_rate_retries = max(
         0,
@@ -170,7 +184,7 @@ def _post_json(
         try:
             with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                 raw = response.read()
-                elapsed_ms = int((time.monotonic() - started) * 1000)
+                elapsed_ms = int((clock() - started) * 1000)
                 break
 
         except urllib.error.HTTPError as exc:
@@ -201,16 +215,36 @@ def _post_json(
                         "AI_PROVIDER_RATE_LIMITED",
                         "The AI provider remained rate limited after automatic backoff.",
                         retryable=True,
+                        provider_saturated=True,
                     ) from exc
 
                 wait_seconds = _rate_limit_wait_seconds(exc, rate_attempt)
+                if deadline_monotonic is not None:
+                    remaining_phase = max(0.0, deadline_monotonic - clock())
+                    request_count = max(1, int(remaining_requests))
+                    useful_wait = remaining_phase / request_count
+                    request_budget = min(timeout_seconds, useful_wait)
+                    if (
+                        wait_seconds > useful_wait
+                        or wait_seconds + request_budget > remaining_phase
+                    ):
+                        raise ProviderError(
+                            "AI_PROVIDER_RATE_LIMITED",
+                            (
+                                "The AI provider retry delay does not fit within "
+                                "the remaining visual processing budget."
+                            ),
+                            retryable=True,
+                            retry_after_seconds=wait_seconds,
+                            provider_saturated=True,
+                        ) from exc
                 rate_attempt += 1
                 print(
                     "Groq rate limit reached; "
                     f"waiting {wait_seconds:.1f}s before retry "
                     f"{rate_attempt}/{max_rate_retries}."
                 )
-                time.sleep(wait_seconds)
+                sleeper(wait_seconds)
                 continue
 
             if exc.code == 400 and provider_code == "tool_use_failed":

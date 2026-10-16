@@ -9,6 +9,8 @@ QUESTION_RE = re.compile(
 JAMMED_QUESTION_RE = re.compile(
     r"(?m)^[ \t]*(\d{1,2}\.\d{1,2}\.\d{1,2})(?=[A-Za-z])"
 )
+QUESTION_HEADING_RE = re.compile(r"(?im)^[ \t]*QUESTION[ \t]+(\d{1,2})\b")
+PAGE_LABEL_RE = re.compile(r"(?im)\bPage[ \t]+(\d{1,3})[ \t]+of[ \t]+\d{1,3}\b")
 SUBTOTAL_RE = re.compile(r"\[(\d{1,3})\]")
 DOCUMENT_TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
 PAREN_NUMBER_RE = re.compile(r"\((\d{1,2})\)")
@@ -39,13 +41,92 @@ def find_question_ids(text: str) -> list[str]:
 
 
 def _question_occurrences(text: str) -> list[tuple[int, str]]:
-    """Return source-ordered question identifiers without discarding position."""
-    matches: list[tuple[int, str]] = []
-    for pattern in (QUESTION_RE, JAMMED_QUESTION_RE):
-        for m in pattern.finditer(text):
-            matches.append((m.start(), m.group(1)))
-    matches.sort(key=lambda item: item[0])
-    return matches
+    """Return source-ordered question identifiers with structural evidence.
+
+    Explicit ``QUESTION n`` headings are authoritative. Dotted child labels are
+    also structurally strong. A bare integer at the start of a line is accepted
+    only when it looks like a prose question label; numeric data rows and numbered
+    instruction preambles are excluded.
+    """
+    headings = [(m.start(), m.group(1)) for m in QUESTION_HEADING_RE.finditer(text)]
+    first_heading = headings[0][0] if headings else None
+    instruction_start = re.search(r"(?im)^[ \t]*INSTRUCTIONS?\s*:", text)
+    matches: list[tuple[int, str]] = list(headings)
+
+    for m in QUESTION_RE.finditer(text):
+        qid = m.group(1)
+        if "." in qid:
+            matches.append((m.start(), qid))
+            continue
+
+        line_end = text.find("\n", m.end())
+        if line_end < 0:
+            line_end = len(text)
+        tail = text[m.end():line_end].strip()
+        matched_text = text[m.start():m.end()]
+        has_label_period = "." in matched_text
+
+        # Numbered instructions before the first actual question heading are not
+        # assessment question identifiers.
+        if (
+            first_heading is not None
+            and m.start() < first_heading
+            and instruction_start is not None
+            and instruction_start.start() < m.start()
+        ):
+            continue
+
+        # Statistics/data rows such as ``68 ; 29 ; 31 ; ...`` must never create
+        # a major question merely because a number begins the line.
+        if not tail or re.match(r"^[;,|]", tail):
+            continue
+        if re.match(r"^[\d.,;|+\-\s]+$", tail):
+            continue
+
+        child_support = bool(
+            re.search(rf"(?m)^[ \t]*{re.escape(qid)}\.\d{{1,2}}\b", text)
+        )
+        if has_label_period or child_support:
+            matches.append((m.start(), qid))
+
+    for m in JAMMED_QUESTION_RE.finditer(text):
+        matches.append((m.start(), m.group(1)))
+
+    matches.sort(key=lambda item: (item[0], item[1].count(".")))
+    result: list[tuple[int, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for item in matches:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
+def _source_page_at(text: str, offset: int, fallback: Any = None) -> int | None:
+    labels = [
+        int(match.group(1))
+        for match in PAGE_LABEL_RE.finditer(text)
+        if match.start() <= offset
+    ]
+    if labels:
+        return labels[-1]
+    try:
+        return int(fallback) if fallback is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_line_at(text: str, offset: int) -> str:
+    start = text.rfind("\n", 0, offset) + 1
+    end = text.find("\n", offset)
+    if end < 0:
+        end = len(text)
+    return re.sub(r"\s+", " ", text[start:end]).strip()
+
+
+def _occurrence_signature(text: str, offset: int) -> str:
+    line = _source_line_at(text, offset).lower()
+    return re.sub(r"\s+", " ", line).strip()
 
 
 def qtuple(qid: str) -> tuple[int, ...]:
@@ -428,11 +509,38 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
 
     current_major: int | None = None
     previous_leaf_qid: str | None = None
+    current_heading_major: int | None = None
     detected_qids: list[str] = []
     block_qids: dict[int, list[str]] = {}
+    block_occurrences: dict[int, list[dict[str, Any]]] = {}
+    seen_extracted_occurrences: dict[tuple[str, int | None, str], int] = {}
+    seen_extracted_subtotals: dict[tuple[int, int | None, str], int] = {}
 
     for idx, block in enumerate(blocks):
-        block_qids[idx] = find_question_ids(block["source"])
+        source = block["source"]
+        occurrences: list[dict[str, Any]] = []
+        for offset, qid in _question_occurrences(source):
+            source_page = _source_page_at(source, offset, block.get("page"))
+            signature = _occurrence_signature(source, offset)
+            extraction_key = (qid, source_page, signature)
+            prior_block = seen_extracted_occurrences.get(extraction_key)
+            if prior_block is not None and prior_block != idx:
+                continue
+            seen_extracted_occurrences.setdefault(extraction_key, idx)
+            occurrences.append({
+                "offset": offset,
+                "question_id": qid,
+                "source_block_index": idx,
+                "source_page": source_page,
+                "source_line": _source_line_at(source, offset),
+                "is_heading": bool(
+                    QUESTION_HEADING_RE.match(source, offset)
+                ),
+            })
+        block_occurrences[idx] = occurrences
+        block_qids[idx] = list(dict.fromkeys(
+            item["question_id"] for item in occurrences
+        ))
 
     for idx, block in enumerate(blocks):
         source = block["source"]
@@ -445,20 +553,51 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
         subtotal_matches = list(SUBTOTAL_RE.finditer(combined))
         all_points = parse_mark_points(marking)
 
-        question_occurrences = _question_occurrences(combined)
+        effective_occurrences = block_occurrences[idx]
+        heading_positions = [
+            (item["offset"], int(item["question_id"]))
+            for item in effective_occurrences
+            if item["is_heading"]
+        ]
         for match in subtotal_matches:
+            source_page = _source_page_at(combined, match.start(), block.get("page"))
+            context = _source_line_at(combined, match.start()).lower()
+            extraction_key = (int(match.group(1)), source_page, context)
+            prior_block = seen_extracted_subtotals.get(extraction_key)
+            if prior_block is not None and prior_block != idx:
+                continue
+            seen_extracted_subtotals.setdefault(extraction_key, idx)
             preceding = [
-                qid for offset, qid in question_occurrences
-                if offset < match.start()
+                item["question_id"] for item in effective_occurrences
+                if item["offset"] < match.start()
             ]
             owner = preceding[-1] if preceding else previous_leaf_qid
+            preceding_headings = [
+                major for offset, major in heading_positions
+                if offset < match.start()
+            ]
+            resolved_major = (
+                preceding_headings[-1]
+                if preceding_headings
+                else current_heading_major
+            )
+            if resolved_major is None and owner:
+                resolved_major = qtuple(owner)[0]
             subtotals.append({
                 "value": int(match.group(1)),
                 "after_question": owner,
+                "resolved_major_question": (
+                    str(resolved_major) if resolved_major is not None else None
+                ),
                 "block_index": idx,
                 "source_provenance": {
                     "kind": "explicit_bracketed_subtotal",
                     "question_id": owner,
+                    "resolved_major_question": (
+                        str(resolved_major) if resolved_major is not None else None
+                    ),
+                    "page": source_page,
+                    "source_block_index": idx,
                     "character_offset": match.start(),
                 },
             })
@@ -493,8 +632,29 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
             continue
 
         detected_qids.extend(qids)
+        occurrence_by_qid = {
+            item["question_id"]: item for item in effective_occurrences
+        }
         leaf_qids = [q for q in qids if not _is_parent_in_same_block(q, qids)]
         context_qids = [q for q in qids if q not in leaf_qids]
+        for position, item in enumerate(effective_occurrences):
+            if not item["is_heading"]:
+                continue
+            next_heading = next(
+                (
+                    later["offset"]
+                    for later in effective_occurrences[position + 1:]
+                    if later["is_heading"]
+                ),
+                len(source),
+            )
+            if any(
+                not later["is_heading"]
+                and item["offset"] < later["offset"] < next_heading
+                for later in effective_occurrences
+            ):
+                context_qids.append(item["question_id"])
+        context_qids = list(dict.fromkeys(context_qids))
 
         allocation_by_qid: dict[str, int | None] = {q: None for q in qids}
         points_by_qid: dict[str, list[dict[str, Any]]] = {q: [] for q in qids}
@@ -531,6 +691,38 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
             qt = qtuple(qid)
             major = qt[0]
             is_context = qid in context_qids
+            occurrence = occurrence_by_qid[qid]
+            preceding_heading = next(
+                (
+                    int(item["question_id"])
+                    for item in reversed(effective_occurrences)
+                    if item["is_heading"] and item["offset"] <= occurrence["offset"]
+                ),
+                current_heading_major,
+            )
+
+            if (
+                len(qt) >= 2
+                and preceding_heading is not None
+                and major != preceding_heading
+            ):
+                add_exception(
+                    exceptions,
+                    level="red",
+                    category="question_parent_heading_mismatch",
+                    affected_id=qid,
+                    message=(
+                        f"Question identifier {qid} appears under QUESTION "
+                        f"{preceding_heading}."
+                    ),
+                    suggestions=[{
+                        "source_question_id": qid,
+                        "heading_question_id": str(preceding_heading),
+                        "source_page": occurrence["source_page"],
+                        "source_block_index": idx,
+                        "character_offset": occurrence["offset"],
+                    }],
+                )
 
             if not is_context:
                 if current_major is not None and major > current_major + 1:
@@ -599,22 +791,48 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
                 "mark_calculation_mode": calc_mode,
                 "mark_points": pts,
                 "source_preview": source[:240],
+                "source_page": occurrence["source_page"],
+                "source_character_offset": occurrence["offset"],
+                "source_line": occurrence["source_line"],
+                "source_heading_major": (
+                    str(preceding_heading)
+                    if preceding_heading is not None else None
+                ),
             })
 
             if not is_context:
                 previous_leaf_qid = qid
 
-    seen: set[str] = set()
-    for q in detected_qids:
-        if q in seen:
-            add_exception(
-                exceptions,
-                level="red",
-                category="duplicate_question_identifier",
-                affected_id=q,
-                message=f"Question identifier {q} appears more than once.",
+        if heading_positions:
+            current_heading_major = heading_positions[-1][1]
+
+    occurrences_by_qid: dict[str, list[dict[str, Any]]] = {}
+    for occurrences in block_occurrences.values():
+        for occurrence in occurrences:
+            occurrences_by_qid.setdefault(occurrence["question_id"], []).append(
+                occurrence
             )
-        seen.add(q)
+    for qid, occurrences in occurrences_by_qid.items():
+        if len(occurrences) <= 1:
+            continue
+        add_exception(
+            exceptions,
+            level="red",
+            category="duplicate_question_identifier",
+            affected_id=qid,
+            message=f"Question identifier {qid} appears more than once.",
+            suggestions=[{
+                "occurrences": [
+                    {
+                        "source_page": item["source_page"],
+                        "source_block_index": item["source_block_index"],
+                        "character_offset": item["offset"],
+                        "source_line": item["source_line"],
+                    }
+                    for item in occurrences
+                ]
+            }],
+        )
 
     represented: set[tuple[int, ...]] = set()
     for q in detected_qids:

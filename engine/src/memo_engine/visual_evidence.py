@@ -16,6 +16,7 @@ from .math_notation import normalize_visual_math
 
 
 SCHEMA_VERSION = "1.0"
+OWNERSHIP_ALGORITHM_VERSION = "anchored-crop-v2"
 EVIDENCE_KINDS = {
     "answer",
     "answer_working",
@@ -323,7 +324,14 @@ def _vision_schema(page_number: int) -> dict[str, Any]:
     }
 
 
-def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
+def groq_visual_extract(
+    region: dict[str, Any],
+    model: str,
+    *,
+    deadline_monotonic: float | None = None,
+    remaining_requests: int = 1,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
     if configured_provider() != "groq":
         raise ProviderError("AI_PROVIDER_UNSUPPORTED", "Only approved Groq vision is supported.", retryable=False)
     key = os.environ.get("GROQ_API_KEY", "").strip()
@@ -358,6 +366,9 @@ def groq_visual_extract(region: dict[str, Any], model: str) -> dict[str, Any]:
             minimum=5.0,
             maximum=75.0,
         ),
+        deadline_monotonic=deadline_monotonic,
+        remaining_requests=remaining_requests,
+        clock=clock,
     )
     try:
         result = json.loads(payload["choices"][0]["message"]["content"])
@@ -640,6 +651,7 @@ def extract_visual_evidence(
     flagged_pages = [page for page in screened_pages if page.get("visual_inspection_required")]
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
+        "ownership_algorithm_version": OWNERSHIP_ALGORITHM_VERSION,
         "phase": "phase2_visual_evidence",
         "job_id": normalized.get("job_id"),
         "source_sha256": normalized.get("source", {}).get("sha256"),
@@ -658,10 +670,31 @@ def extract_visual_evidence(
             "visual_content_count": 0,
         },
     }
+
+    def checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool:
+        explicit = candidate.get("ownership_algorithm_version")
+        if explicit is not None:
+            return explicit == OWNERSHIP_ALGORITHM_VERSION
+        # The immediately preceding hosted format did not name the algorithm,
+        # but post-Q3-fix evidence carries all three ownership fields. This lets
+        # the protected job reuse its successful regions while rejecting older
+        # pre-fix visual evidence.
+        items = list(candidate.get("evidence") or []) + list(
+            candidate.get("mark_changes") or []
+        )
+        return bool(items) and all(
+            isinstance(item, dict)
+            and "source_page_bbox" in item
+            and "owned_question_ref" in item
+            and "association_status" in item
+            for item in items
+        )
+
     if (
         isinstance(checkpoint_record, dict)
         and checkpoint_record.get("schema_version") == SCHEMA_VERSION
         and checkpoint_record.get("source_sha256") == record["source_sha256"]
+        and checkpoint_ownership_is_compatible(checkpoint_record)
     ):
         successful_runs = [
             item for item in checkpoint_record.get("runs", [])
@@ -781,12 +814,26 @@ def extract_visual_evidence(
         emit_progress("processing", index, region)
         record["summary"]["vision_calls"] += 1
         try:
-            raw = runner(region, model)
+            if runner is groq_visual_extract:
+                raw = runner(
+                    region,
+                    model,
+                    deadline_monotonic=phase_started + phase_timeout_seconds,
+                    remaining_requests=total_regions - index + 1,
+                    clock=clock,
+                )
+            else:
+                raw = runner(region, model)
             result = validate_visual_response(raw, region)
         except (ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
             code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
             record_failure(region, artifact, index, code)
-            if isinstance(exc, ProviderError) and exc.retryable:
+            if isinstance(exc, ProviderError) and code == "AI_PROVIDER_RATE_LIMITED":
+                # This code is emitted only after provider retry handling is
+                # exhausted or the advertised wait no longer fits the shared
+                # phase budget. Treat it as strong saturation evidence.
+                stop_code = "VISUAL_PROVIDER_CIRCUIT_OPEN"
+            elif isinstance(exc, ProviderError) and exc.retryable:
                 consecutive_transport_failures += 1
                 if consecutive_transport_failures >= VISUAL_FAILURE_CIRCUIT_THRESHOLD:
                     stop_code = "VISUAL_PROVIDER_CIRCUIT_OPEN"

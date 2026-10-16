@@ -1285,6 +1285,9 @@ def _major_for_subtotal(
     structure: dict[str, Any],
     subtotal: dict[str, Any],
 ) -> int | None:
+    resolved_major = str(subtotal.get("resolved_major_question") or "").strip()
+    if re.fullmatch(r"\d{1,2}", resolved_major):
+        return int(resolved_major)
     explicit_owner = str(subtotal.get("after_question") or "").strip()
     if QUESTION_ID_RE.fullmatch(explicit_owner):
         return qtuple(explicit_owner)[0]
