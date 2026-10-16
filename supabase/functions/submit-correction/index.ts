@@ -73,6 +73,13 @@ function candidateText(value: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+async function normalizedSourceLineHash(value: unknown): Promise<string | null> {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, " ");
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  return [...new Uint8Array(bytes)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
 function ordinal(value: number): string {
   const mod100 = value % 100;
   if (mod100 >= 11 && mod100 <= 13) return `${value}th`;
@@ -511,6 +518,8 @@ export default {
         );
         const selected = selectedMatches.length === 1 ? selectedMatches[0] as Record<string, unknown> : null;
         const selectedSourceIndex = selected?.source_block_index == null ? null : Number(selected.source_block_index);
+        const selectedLineHash = typeof selected?.source_line_hash === "string" && /^[0-9a-f]{64}$/.test(selected.source_line_hash)
+          ? selected.source_line_hash : await normalizedSourceLineHash(selected?.source_line);
         const replacementConflict = questions.some((entry) => entry && typeof entry === "object" && entry !== selected && String((entry as Record<string, unknown>).question_id ?? "") === correctId);
         if (!QUESTION_ID_RE.test(currentId) || !QUESTION_ID_RE.test(correctId) || currentId === correctId || !inReviewScope || !selected || replacementConflict || (sourceMatches.length > 1 && (!Number.isInteger(selectedSourceIndex) || Number(selectedSourceIndex) < 0))) {
           return Response.json({ error: replacementConflict ? "numbering_identifier_conflict" : "invalid_numbering_correction" }, { status: 400 });
@@ -525,10 +534,21 @@ export default {
           target_id: correctId,
           replacement_id: correctId,
           ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
+          source_locator: {
+            schema_version: "1.0",
+            source_question_id: String(selected?.source_question_id ?? selected?.question_id ?? currentId),
+            source_page: selected?.source_page ?? null,
+            parent_heading: selected?.source_heading_major ?? null,
+            source_line_hash: selectedLineHash,
+            source_character_offset: selected?.source_character_offset ?? null,
+            original_source_block_index: selectedSourceIndex,
+          },
           correction_scope: teacherInitiated ? "teacher_initiated_item" : "numbering_only",
           reinterpretation_method: "deterministic_structured_numbering_editor",
         };
-        const occurrence = sourceMatches.length > 1 ? ` (selected source occurrence ${selectedSourceIndex})` : "";
+        const occurrence = sourceMatches.length > 1
+          ? ` — Question ${String(selected?.source_heading_major ?? currentId.split(".")[0])}, page ${String(selected?.source_page ?? "unknown")}`
+          : "";
         displayText = `Rename Question ${currentId}${occurrence} → Question ${correctId}`;
         exceptionStatus = "awaiting_confirmation";
       } else if (parentResolution && typeof parentResolution === "object") {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -127,6 +128,67 @@ def _source_line_at(text: str, offset: int) -> str:
 def _occurrence_signature(text: str, offset: int) -> str:
     line = _source_line_at(text, offset).lower()
     return re.sub(r"\s+", " ", line).strip()
+
+
+SOURCE_LOCATOR_SCHEMA_VERSION = "1.0"
+
+
+def normalized_source_line(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def source_line_hash(value: Any) -> str:
+    return hashlib.sha256(normalized_source_line(value).encode("utf-8")).hexdigest()
+
+
+def source_locator_for_question(
+    question: dict[str, Any], *, original_source_block_index: int | None = None
+) -> dict[str, Any]:
+    line_hash = str(question.get("source_line_hash") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", line_hash):
+        line_hash = source_line_hash(question.get("source_line"))
+    return {
+        "schema_version": SOURCE_LOCATOR_SCHEMA_VERSION,
+        "source_question_id": str(
+            question.get("source_question_id") or question.get("question_id") or ""
+        ),
+        "source_page": question.get("source_page"),
+        "parent_heading": question.get("source_heading_major"),
+        "source_line_hash": line_hash,
+        "source_character_offset": question.get("source_character_offset"),
+        "original_source_block_index": (
+            original_source_block_index
+            if original_source_block_index is not None
+            else question.get("source_block_index")
+        ),
+    }
+
+
+def derive_source_locator(
+    normalized: dict[str, Any], question_id: str, block_index: int
+) -> dict[str, Any] | None:
+    blocks = flatten_units(normalized)
+    if not 0 <= block_index < len(blocks):
+        return None
+    block = blocks[block_index]
+    source = str(block.get("source") or "")
+    occurrences = [item for item in _question_occurrences(source) if item[1] == question_id]
+    if len(occurrences) != 1:
+        return None
+    offset, _ = occurrences[0]
+    headings = [
+        (match.start(), match.group(1)) for match in QUESTION_HEADING_RE.finditer(source)
+        if match.start() <= offset
+    ]
+    line = _source_line_at(source, offset)
+    return source_locator_for_question({
+        "question_id": question_id,
+        "source_page": _source_page_at(source, offset, block.get("page")),
+        "source_heading_major": headings[-1][1] if headings else None,
+        "source_line": line,
+        "source_character_offset": offset,
+        "source_block_index": block_index,
+    }, original_source_block_index=block_index)
 
 
 def qtuple(qid: str) -> tuple[int, ...]:
@@ -794,6 +856,7 @@ def extract_structure(normalized: dict[str, Any]) -> dict[str, Any]:
                 "source_page": occurrence["source_page"],
                 "source_character_offset": occurrence["offset"],
                 "source_line": occurrence["source_line"],
+                "source_line_hash": source_line_hash(occurrence["source_line"]),
                 "source_heading_major": (
                     str(preceding_heading)
                     if preceding_heading is not None else None

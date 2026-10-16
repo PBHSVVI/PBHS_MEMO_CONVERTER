@@ -507,7 +507,7 @@ function flattenNormalized(normalized){
 }
 async function ensureNormalized(){if(normalizedCache)return normalizedCache;normalizedCache=await jsonFile(`${user.id}/${jobId}/internal/normalized.json`);return normalizedCache}
 async function ensureStructure(){if(structureCache)return structureCache;structureCache=await jsonFile(`${user.id}/${jobId}/internal/structure.json`);return structureCache}
-function questionOccurrenceLabel(question,index,total){const page=question?.source_page??question?.page_number??question?.page,where=page!=null?`Page ${page}`:`source block ${question?.source_block_index}`;return total>1?`Question ${question.question_id} — occurrence ${index+1} · ${where}`:`Question ${question.question_id} · ${where}`}
+function questionOccurrenceLabel(question,index,total){const page=question?.source_page??question?.page_number??question?.page,heading=question?.source_heading_major??majorQuestionId(question?.question_id),where=page!=null?`page ${page}`:'source location unavailable';return `${question?.question_id||'Question'} — Question ${heading||'?'} — ${where}`}
 function stagedPatchForQuestion(question){return [...effectiveStagedCorrections(currentStaged)].reverse().find(item=>{const patch=item?.proposed_patch||{},id=String(question?.question_id||''),source=patch.source_block_index;return String(patch.target_id||patch.affected_id||'')===id&&(source==null||Number(source)===Number(question?.source_block_index))})||null}
 async function renderManualQuestionNavigator(){const structure=await ensureStructure(),questions=Array.isArray(structure?.questions)?structure.questions:[],select=$('#manualQuestionSelect');select.innerHTML=questions.map((question,index)=>{const peers=questions.filter(item=>String(item?.question_id)===String(question?.question_id)),occurrence=peers.findIndex(item=>item===question);return `<option value="${esc(index)}">${esc(questionOccurrenceLabel(question,occurrence,peers.length))}</option>`}).join('');$('#manualQuestionEditor').classList.toggle('hide',!currentException||!questions.length)}
 function selectedManualQuestion(){const questions=Array.isArray(structureCache?.questions)?structureCache.questions:[],index=Number($('#manualQuestionSelect').value);return Number.isInteger(index)?questions[index]||null:null}
@@ -639,13 +639,15 @@ function questionSourcePages(question,normalized){
  const pages=[];const add=value=>{const page=Number(value);if(Number.isInteger(page)&&page>0)pages.push(page)};add(question?.source_page);add(pageFromRef(question?.source_ref));for(const ref of Array.isArray(question?.source_refs)?question.source_refs:[])add(pageFromRef(ref));for(const key of ['visual_evidence','visual_solution_segments'])for(const item of Array.isArray(question?.[key])?question[key]:[]){add(item?.page);add(pageFromRef(item?.source_ref))}
  const index=Number(question?.source_block_index),sourcePages=normalized?.content?.pages;if(Number.isInteger(index)&&index>=0&&Array.isArray(sourcePages)&&sourcePages[index])add(sourcePages[index]?.page??index+1);return [...new Set(pages)]
 }
-function sourcePageForException(ex,structure,normalized){
+function selectedNumberingOccurrence(){const id=normalizedQuestionId($('#numberingCurrent').value),questions=Array.isArray(structureCache?.questions)?structureCache.questions:[],matches=questions.filter(item=>normalizedQuestionId(item?.question_id)===id),selected=Number($('#numberingOccurrence').value);return matches.find(item=>Number(item?.source_block_index)===selected)||(matches.length===1?matches[0]:null)}
+function sourcePageForException(ex,structure,normalized,occurrence=null){
+ if(occurrence){const page=Number(occurrence?.source_page??occurrence?.page);if(Number.isInteger(page)&&page>0)return page}
  const direct=[];for(const item of Array.isArray(ex?.suggestions)?ex.suggestions:[]){const page=Number(item?.page??item?.source_ref?.page);if(Number.isInteger(page)&&page>0)direct.push(page)}if(new Set(direct).size===1)return direct[0];if(new Set(direct).size>1)return null;
  for(const group of relatedQuestionGroups(ex?.affected_id,structure)){const pages=[...new Set(group.flatMap(question=>questionSourcePages(question,normalized)))];if(pages.length===1)return pages[0];if(pages.length>1)return null}return null
 }
 // END VISUAL EVIDENCE FOCUS MODEL
-async function renderVisualEvidenceCrop(ex,focus){
- const candidates=visualEvidenceCandidates(ex,await ensureStructure());if(!candidates.length)return false;let index=0;
+async function renderVisualEvidenceCrop(ex,focus,occurrence=null){
+ let candidates=visualEvidenceCandidates(ex,await ensureStructure());const occurrencePage=Number(occurrence?.source_page);if(Number.isInteger(occurrencePage)&&occurrencePage>0)candidates=candidates.filter(candidate=>candidate.page===occurrencePage);if(!candidates.length)return false;let index=0;
  const show=async next=>{index=(next+candidates.length)%candidates.length;const candidate=candidates[index],path=`${user.id}/${jobId}/${candidate.asset}`,result=await sb.storage.from('memo-files').download(path);if(result.error)throw result.error;focus.innerHTML='';const url=URL.createObjectURL(result.data),label=document.createElement('div'),image=document.createElement('img');label.className='visualCropLabel';label.textContent=`Question ${ex?.affected_id||'association'} — visual memo evidence`;image.className='visualCrop';image.src=url;image.alt='Focused handwritten or visual memo evidence';image.onload=()=>URL.revokeObjectURL(url);focus.append(label);if(candidate.readings.length){const reading=document.createElement('div');reading.className='visualReading';reading.textContent=`We read: ${candidate.readings.join(' • ')}`;focus.append(reading)}focus.append(image);if(candidates.length>1){const pager=document.createElement('div'),previous=document.createElement('button'),position=document.createElement('span'),nextButton=document.createElement('button');pager.className='evidencePager';previous.className=nextButton.className='secondary';previous.textContent='Previous evidence';nextButton.textContent='Next evidence';position.textContent=`Evidence ${index+1} of ${candidates.length}`;previous.onclick=()=>show(index-1);nextButton.onclick=()=>show(index+1);pager.append(previous,position,nextButton);focus.append(pager)}};
  await show(0);return true;
 }
@@ -667,7 +669,8 @@ function visibleQuestionRegion(major){
 }
 async function renderFocusedEvidence(){
  await ensureSourceLoaded();const focus=$('#focusRender');focus.innerHTML='';focus.className='';
- if(await renderVisualEvidenceCrop(currentException,focus)){focusKey=`${currentException?.id||''}`;return}
+ const occurrence=selectedNumberingOccurrence();
+ if(await renderVisualEvidenceCrop(currentException,focus,occurrence)){focusKey=`${currentException?.id||''}`;return}
  if(sourceKind==='docx'){
    const structural=Number.isInteger(currentStep?.sourceBlockIndex)?visibleQuestionRegion(majorQuestionId(currentException?.affected_id)):null,made=structural||visibleCloneAround(currentStep)||visibleQuestionRegion(majorQuestionId(currentException?.affected_id));
    if(!made){focus.innerHTML='<div class="status warn">Could not isolate the exact source block. Use the extracted context or Show full memo.</div>';return}
@@ -682,8 +685,8 @@ async function renderFocusedEvidence(){
       const target=String(currentStep.targetAnchor||currentException?.affected_id||'');const el=target?findTokenElement(focus,target,currentStep.strictAnchors,currentStep.questionAnchors):null;addArrowToElement(el||findTokenElement(focus,(currentStep.anchors||[])[0],currentStep.strictAnchors,currentStep.questionAnchors),currentStep.targetLabel||'Discrepancy / decision point');
    }
  }else if(sourceKind==='pdf'){
-   const page=sourcePageForException(currentException,await ensureStructure(),await ensureNormalized());
-   if(page)focus.innerHTML=`<div class="pdfFocusLabel">Question ${esc(currentException?.affected_id||'review')} — source page ${page}</div><iframe class="pdfFrame" src="${sourceObjectUrl}#page=${page}&zoom=page-width" title="Original memo PDF page ${page}"></iframe>`;
+   const page=sourcePageForException(currentException,await ensureStructure(),await ensureNormalized(),occurrence),label=occurrence?questionOccurrenceLabel(occurrence,0,1):`Question ${currentException?.affected_id||'review'} — source page ${page}`;
+   if(page)focus.innerHTML=`<div class="pdfFocusLabel">${esc(label)}</div><iframe class="pdfFrame" src="${sourceObjectUrl}#page=${page}&zoom=page-width" title="Original memo PDF page ${page}"></iframe>`;
    else focus.innerHTML=`<div class="status warn">No reliable question crop or source-page association was found. Showing the full document as a fallback; use Show full memo for the separate wider view.</div><iframe class="pdfFrame" src="${sourceObjectUrl}#zoom=page-width" title="Original memo PDF — full-document fallback"></iframe>`;
  }
  else if(sourceKind==='image')focus.innerHTML=`<img class="sourceImg" src="${sourceObjectUrl}" alt="Original memo evidence">`;
@@ -992,6 +995,8 @@ $('#supportAction').onclick=()=>$('#supportBackdrop').classList.remove('hide');$
 $('#submitAllocations').onclick=()=>submitAllocations().catch(e=>{log('GROUPED ALLOCATION ERROR',{message:e.message});status('Grouped allocation failed: '+e.message,'error')});
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
 $('#submitNumbering').onclick=()=>submitNumbering().catch(e=>{log('NUMBERING ERROR',{message:e.message});status('Numbering correction failed: '+e.message,'error')});
+$('#numberingOccurrence').onchange=()=>{const occurrence=selectedNumberingOccurrence();if(occurrence)currentStep.sourceBlockIndex=Number(occurrence.source_block_index);focusKey='';renderFocusedEvidence().catch(e=>status('Focused source evidence could not be refreshed: '+e.message,'warn'))};
+$('#numberingCurrent').oninput=()=>{refreshNumberingOccurrences();focusKey=''};
 $('#submitContent').onclick=()=>submitContent().catch(e=>{log('CONTENT CORRECTION ERROR',{message:e.message});status('Content correction failed: '+e.message,'error')});
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});
 $('#submitFile').onclick=()=>{const f=$('#fileInput').files?.[0],kind=f?.type?.startsWith('image/')?'photo':'upload';submitFileFrom($('#fileInput'),kind).catch(e=>{log('FILE ERROR',{message:e.message});status('File correction failed: '+e.message,'error')})};

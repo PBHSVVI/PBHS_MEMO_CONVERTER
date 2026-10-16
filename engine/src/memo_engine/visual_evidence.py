@@ -31,6 +31,11 @@ VISUAL_REVIEW_THRESHOLD = 0.85
 DEFAULT_VISUAL_PHASE_TIMEOUT_SECONDS = 900.0
 DEFAULT_VISION_REQUEST_TIMEOUT_SECONDS = 45.0
 VISUAL_FAILURE_CIRCUIT_THRESHOLD = 3
+NON_RETRYABLE_VISUAL_FAILURE_CODES = {
+    "VISUAL_INVALID_RESPONSE",
+    "VISUAL_SOURCE_UNSUPPORTED",
+    "AI_PROVIDER_UNSUPPORTED",
+}
 QUESTION_REF_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 QUESTION_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})\.?(?!\d)")
 WRITE_ON_RE = re.compile(r"\bWRITE[ -]?ON\s+(?:TEST|ASSESSMENT|PAPER)\b", re.I)
@@ -41,6 +46,51 @@ class VisualEvidenceError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.public_message = message
+
+
+def visual_checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool:
+    explicit = candidate.get("ownership_algorithm_version")
+    if explicit is not None:
+        return explicit == OWNERSHIP_ALGORITHM_VERSION
+    items = list(candidate.get("evidence") or []) + list(candidate.get("mark_changes") or [])
+    return bool(items) and all(
+        isinstance(item, dict)
+        and "source_page_bbox" in item
+        and "owned_question_ref" in item
+        and "association_status" in item
+        for item in items
+    )
+
+
+def visual_checkpoint_is_compatible(candidate: Any, source_sha256: str | None) -> bool:
+    return bool(
+        isinstance(candidate, dict)
+        and candidate.get("schema_version") == SCHEMA_VERSION
+        and candidate.get("source_sha256") == source_sha256
+        and visual_checkpoint_ownership_is_compatible(candidate)
+    )
+
+
+def visual_failure_is_retryable(code: Any) -> bool:
+    return str(code or "VISUAL_PROVIDER_FAILED") not in NON_RETRYABLE_VISUAL_FAILURE_CODES
+
+
+def visual_cache_is_complete(candidate: Any, source_sha256: str | None) -> bool:
+    if not visual_checkpoint_is_compatible(candidate, source_sha256):
+        return False
+    summary = candidate.get("summary") or {}
+    expected = int(summary.get("regions_rendered") or 0)
+    flagged = int(summary.get("pages_flagged") or 0)
+    runs = [item for item in candidate.get("runs", []) if isinstance(item, dict)]
+    if expected == 0:
+        return flagged == 0
+    refs = {str(item.get("rendered_asset_ref")) for item in runs if item.get("rendered_asset_ref")}
+    if len(refs) < expected:
+        return False
+    return not any(
+        item.get("success") is not True and visual_failure_is_retryable(item.get("error_code"))
+        for item in runs
+    )
 
 
 def _coloured_pixel_ratio(image_bytes: bytes) -> float:
@@ -659,6 +709,7 @@ def extract_visual_evidence(
         "mark_changes": [],
         "warnings": [],
         "runs": [],
+        "retry_history": [],
         "summary": {
             "pages_screened": len(screened_pages),
             "pages_flagged": len(flagged_pages),
@@ -668,39 +719,25 @@ def extract_visual_evidence(
             "success_count": 0,
             "failure_count": 0,
             "visual_content_count": 0,
+            "partial_checkpoint_reuse": False,
+            "reused_success_count": 0,
+            "retried_region_count": 0,
+            "new_success_count": 0,
+            "new_failure_count": 0,
+            "unprocessed_count": 0,
         },
     }
 
-    def checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool:
-        explicit = candidate.get("ownership_algorithm_version")
-        if explicit is not None:
-            return explicit == OWNERSHIP_ALGORITHM_VERSION
-        # The immediately preceding hosted format did not name the algorithm,
-        # but post-Q3-fix evidence carries all three ownership fields. This lets
-        # the protected job reuse its successful regions while rejecting older
-        # pre-fix visual evidence.
-        items = list(candidate.get("evidence") or []) + list(
-            candidate.get("mark_changes") or []
-        )
-        return bool(items) and all(
-            isinstance(item, dict)
-            and "source_page_bbox" in item
-            and "owned_question_ref" in item
-            and "association_status" in item
-            for item in items
-        )
-
-    if (
-        isinstance(checkpoint_record, dict)
-        and checkpoint_record.get("schema_version") == SCHEMA_VERSION
-        and checkpoint_record.get("source_sha256") == record["source_sha256"]
-        and checkpoint_ownership_is_compatible(checkpoint_record)
-    ):
+    if visual_checkpoint_is_compatible(checkpoint_record, record["source_sha256"]):
         successful_runs = [
             item for item in checkpoint_record.get("runs", [])
             if isinstance(item, dict)
             and item.get("success") is True
             and isinstance(item.get("rendered_asset_ref"), str)
+        ]
+        record["retry_history"] = list(checkpoint_record.get("retry_history") or []) + [
+            item for item in checkpoint_record.get("runs", [])
+            if isinstance(item, dict) and item.get("success") is not True
         ]
         record["evidence"] = list(checkpoint_record.get("evidence") or [])
         record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
@@ -709,7 +746,8 @@ def extract_visual_evidence(
             if isinstance(item, dict) and item.get("code") == "VISUAL_MODEL_WARNING"
         ]
         record["runs"] = successful_runs
-        record["summary"]["vision_calls"] = len(successful_runs)
+        record["summary"]["partial_checkpoint_reuse"] = bool(successful_runs)
+        record["summary"]["reused_success_count"] = len(successful_runs)
         record["summary"]["success_count"] = len(successful_runs)
         record["summary"]["visual_content_count"] = int(
             (checkpoint_record.get("summary") or {}).get("visual_content_count") or 0
@@ -793,6 +831,9 @@ def extract_visual_evidence(
             "rendered_asset_ref": region["asset_path"],
         })
         record["summary"]["failure_count"] += 1
+        record["summary"]["new_failure_count"] += 1
+        if code in {"VISUAL_PHASE_BUDGET_EXCEEDED", "VISUAL_PROVIDER_CIRCUIT_OPEN"}:
+            record["summary"]["unprocessed_count"] += 1
         emit_progress("failed", index, region, error_code=code)
         if checkpoint_callback is not None:
             checkpoint_callback(record, artifact)
@@ -813,6 +854,7 @@ def extract_visual_evidence(
 
         emit_progress("processing", index, region)
         record["summary"]["vision_calls"] += 1
+        record["summary"]["retried_region_count"] += 1
         try:
             if runner is groq_visual_extract:
                 raw = runner(
@@ -852,6 +894,7 @@ def extract_visual_evidence(
             "elapsed_ms": result.get("elapsed_ms"),
         })
         record["summary"]["success_count"] += 1
+        record["summary"]["new_success_count"] += 1
         if result["visual_content_present"]:
             record["summary"]["visual_content_count"] += 1
         emit_progress("success", index, region)

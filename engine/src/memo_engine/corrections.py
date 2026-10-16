@@ -6,11 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .structure import (
+    derive_source_locator,
     effective_mark_total,
     flatten_units,
     parse_mark_points,
     printed_allocations,
     qtuple,
+    source_line_hash,
 )
 from .phase7_5 import apply_phase7_5_patch
 
@@ -302,23 +304,85 @@ def _promote_unlabeled_question(
 
 def _rename_question_identifier(
     structure: dict[str, Any],
+    normalized: dict[str, Any],
     *,
     correction_id: str,
     category: str,
     affected_id: str | None,
     target_id: str,
     source_block_index: int | None = None,
+    source_locator: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     source_id = str(affected_id or "")
     if not QUESTION_ID_RE.fullmatch(source_id) or not QUESTION_ID_RE.fullmatch(target_id):
         return None, _issue("correction_target_invalid", affected_id, f"Confirmed correction {correction_id} contains an invalid numbering patch.")
-    matches = [q for q in structure.get("questions", []) if str(q.get("question_id")) == source_id]
+    candidates = [q for q in structure.get("questions", []) if str(q.get("question_id")) == source_id]
+    matches = list(candidates)
+    resolution_method = "question_identifier"
     if source_block_index is not None:
-        matches = [
-            q for q in matches
+        supplied_locator = isinstance(source_locator, dict)
+        locator = source_locator if supplied_locator else (
+            derive_source_locator(normalized, source_id, source_block_index)
+            if isinstance(normalized.get("content"), dict) else None
+        )
+        if locator is not None and (
+            locator.get("schema_version") != "1.0"
+            or str(locator.get("source_question_id") or "") != source_id
+            or locator.get("source_page") is None
+            or locator.get("parent_heading") is None
+            or not re.fullmatch(r"[0-9a-f]{64}", str(locator.get("source_line_hash") or ""))
+        ):
+            locator = None
+        exact = [
+            q for q in candidates
             if q.get("source_block_index") is not None
             and int(q.get("source_block_index")) == source_block_index
         ]
+        exact_compatible = len(exact) == 1 and (
+            locator is not None or (not supplied_locator and "content" not in normalized)
+        )
+        if exact_compatible and locator is not None:
+            exact_question = exact[0]
+            locator_page = locator.get("source_page")
+            locator_heading = locator.get("parent_heading")
+            locator_hash = str(locator.get("source_line_hash") or "")
+            exact_compatible = (
+                (locator_page is None or exact_question.get("source_page") == locator_page)
+                and (locator_heading is None or str(exact_question.get("source_heading_major")) == str(locator_heading))
+                and (not locator_hash or str(exact_question.get("source_line_hash") or source_line_hash(exact_question.get("source_line"))) == locator_hash)
+            )
+        if exact_compatible:
+            matches = exact
+            resolution_method = "exact_source_block"
+        else:
+            resolution_method = "stable_source_rebase" if supplied_locator else "legacy_source_rebase"
+            if locator is None:
+                matches = []
+            else:
+                locator_page = locator.get("source_page")
+                locator_heading = locator.get("parent_heading")
+                locator_hash = str(locator.get("source_line_hash") or "")
+                matches = []
+                for question in candidates:
+                    if locator_page is not None and question.get("source_page") != locator_page:
+                        continue
+                    if locator_heading is not None and str(question.get("source_heading_major")) != str(locator_heading):
+                        continue
+                    question_hash = str(question.get("source_line_hash") or source_line_hash(question.get("source_line")))
+                    if locator_hash and question_hash != locator_hash:
+                        continue
+                    matches.append(question)
+            source_locator = locator
+    elif isinstance(source_locator, dict):
+        locator_page = source_locator.get("source_page")
+        locator_heading = source_locator.get("parent_heading")
+        locator_hash = str(source_locator.get("source_line_hash") or "")
+        matches = [q for q in candidates if
+            (locator_page is None or q.get("source_page") == locator_page)
+            and (locator_heading is None or str(q.get("source_heading_major")) == str(locator_heading))
+            and (not locator_hash or str(q.get("source_line_hash") or source_line_hash(q.get("source_line"))) == locator_hash)
+        ]
+        resolution_method = "stable_source_locator"
     if len(matches) != 1:
         return None, _issue("correction_evidence_unresolved", source_id, f"Confirmed correction {correction_id} could not resolve exactly one question {source_id}.")
     if any(str(q.get("question_id")) == target_id for q in structure.get("questions", []) if q is not matches[0]):
@@ -340,6 +404,14 @@ def _rename_question_identifier(
     }
     structure["questions"].sort(key=lambda item: (int(item.get("source_block_index", 10**9)), tuple(item.get("path") or (999,))))
     _remove_exception(structure, category, affected_id)
+    _remove_exception(structure, "question_parent_heading_mismatch", affected_id)
+    locator_resolution = {
+        "method": resolution_method,
+        "original_source_block_index": source_block_index,
+        "resolved_source_block_index": q.get("source_block_index"),
+        "source_page": q.get("source_page"),
+        "parent_heading": q.get("source_heading_major"),
+    }
     return {
         "correction_id": correction_id,
         "operation": "rename_question_identifier",
@@ -347,6 +419,7 @@ def _rename_question_identifier(
         "affected_id": source_id,
         "target_id": target_id,
         "source_block_index": q.get("source_block_index"),
+        "locator_resolution": locator_resolution,
     }, None
 
 
@@ -400,9 +473,10 @@ def apply_confirmed_corrections(
                 applied_item = None
             else:
                 applied_item, issue = _rename_question_identifier(
-                    result, correction_id=correction_id, category=category,
+                    result, normalized, correction_id=correction_id, category=category,
                     affected_id=affected_id, target_id=target_id,
                     source_block_index=source_block_index,
+                    source_locator=patch.get("source_locator") if isinstance(patch.get("source_locator"), dict) else None,
                 )
         else:
             applied_item, issue, handled = apply_phase7_5_patch(
@@ -428,8 +502,12 @@ def apply_confirmed_corrections(
 
     result.setdefault("exceptions", []).extend(issues)
     applied_ids = {item["correction_id"] for item in applied}
+    applied_by_id = {item["correction_id"]: item for item in applied}
     for entry in history:
         entry["applied"] = entry["correction_id"] in applied_ids
+        resolution = applied_by_id.get(entry["correction_id"], {}).get("locator_resolution")
+        if isinstance(resolution, dict):
+            entry["locator_resolution"] = copy.deepcopy(resolution)
     result["correction_overlay"] = {
         "confirmed_count": len(history),
         "effective_count": len(effective),

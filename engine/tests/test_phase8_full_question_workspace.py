@@ -196,12 +196,24 @@ def test_edge_contracts_validate_amendment_manual_context_and_duplicate_occurren
     confirm = CONFIRM.read_text(encoding="utf-8")
     assert 'error: "ambiguous_numbering_source"' in submit
     assert "source_block_index: selectedSourceIndex" in submit
+    assert 'source_locator: {' in submit
+    assert 'source_line_hash: selectedLineHash' in submit
+    assert 'original_source_block_index: selectedSourceIndex' in submit
     assert 'supersession_reason: "teacher_amended_previous_change"' in submit
     assert 'priorPatch?.operation !== "replace_item_content"' in submit
     assert 'reconciliation_scope: teacherInitiated ? "teacher_initiated_item"' in submit
     assert 'correction_scope: teacherInitiated ? "teacher_initiated_item"' in submit
     assert 'patch.correction_scope === "teacher_initiated_item"' in confirm
     assert "other.source_block_index" in confirm
+
+
+def test_occurrence_review_uses_teacher_facing_page_and_parent_context():
+    page = PAGE.read_text(encoding="utf-8")
+    assert "— Question ${heading||'?'} — ${where}" in page
+    assert "selectedNumberingOccurrence()" in page
+    assert "sourcePageForException(currentException,await ensureStructure(),await ensureNormalized(),occurrence)" in page
+    assert "candidates=candidates.filter(candidate=>candidate.page===occurrencePage)" in page
+    assert "source block ${question?.source_block_index}" not in page
 
 
 def test_numbering_model_requires_occurrence_only_for_real_ambiguity():

@@ -245,7 +245,70 @@ def test_retry_reuses_successful_checkpoint_and_retries_failed_region(monkeypatc
     assert progress[0]["status"] == "checkpointed"
     assert record["summary"]["success_count"] == 2
     assert record["summary"]["failure_count"] == 0
+    assert record["summary"]["partial_checkpoint_reuse"] is True
+    assert record["summary"]["reused_success_count"] == 1
+    assert record["summary"]["retried_region_count"] == 1
+    assert record["summary"]["new_success_count"] == 1
+    assert record["summary"]["new_failure_count"] == 0
+    assert record["retry_history"][0]["rendered_asset_ref"].endswith("region-2.png")
     assert not any(item.get("code") == "AI_PROVIDER_NETWORK_ERROR" for item in record["warnings"])
+
+
+def test_mixed_success_and_retryable_failure_is_partial_not_full_cache():
+    candidate = {
+        "schema_version": "1.0",
+        "ownership_algorithm_version": visual_evidence.OWNERSHIP_ALGORITHM_VERSION,
+        "source_sha256": "sha",
+        "evidence": [],
+        "mark_changes": [],
+        "runs": [
+            {"success": True, "rendered_asset_ref": "one.png"},
+            {"success": False, "error_code": "AI_PROVIDER_RATE_LIMITED", "rendered_asset_ref": "two.png"},
+        ],
+        "summary": {"regions_rendered": 2, "pages_flagged": 1},
+    }
+    assert visual_evidence.visual_checkpoint_is_compatible(candidate, "sha")
+    assert not visual_evidence.visual_cache_is_complete(candidate, "sha")
+
+
+@pytest.mark.parametrize("failure_code", ["AI_PROVIDER_RATE_LIMITED", "VISUAL_PHASE_BUDGET_EXCEEDED"])
+def test_retryable_cached_failure_is_attempted_again(monkeypatch, failure_code):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(1))
+    checkpoint = {
+        "schema_version": "1.0",
+        "ownership_algorithm_version": visual_evidence.OWNERSHIP_ALGORITHM_VERSION,
+        "source_sha256": "sha",
+        "evidence": [], "mark_changes": [], "warnings": [],
+        "runs": [{"success": False, "error_code": failure_code, "rendered_asset_ref": "internal/visual/regions/region-1.png"}],
+        "summary": {"regions_rendered": 1, "pages_flagged": 1},
+    }
+    called = []
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(),
+        runner=lambda region, model: called.append(region["asset_path"]) or _success(region, model),
+        checkpoint_record=checkpoint,
+    )
+    assert called == ["internal/visual/regions/region-1.png"]
+    assert record["summary"]["new_success_count"] == 1
+    assert record["retry_history"][0]["error_code"] == failure_code
+
+
+def test_complete_success_or_deterministic_failure_can_be_full_cache():
+    candidate = {
+        "schema_version": "1.0",
+        "ownership_algorithm_version": visual_evidence.OWNERSHIP_ALGORITHM_VERSION,
+        "source_sha256": "sha",
+        "evidence": [],
+        "mark_changes": [],
+        "runs": [
+            {"success": True, "rendered_asset_ref": "one.png"},
+            {"success": False, "error_code": "VISUAL_INVALID_RESPONSE", "rendered_asset_ref": "two.png"},
+        ],
+        "summary": {"regions_rendered": 2, "pages_flagged": 1},
+    }
+    assert visual_evidence.visual_cache_is_complete(candidate, "sha")
+    candidate["runs"][1] = {"success": True, "rendered_asset_ref": "two.png"}
+    assert visual_evidence.visual_cache_is_complete(candidate, "sha")
 
 
 def test_exhausted_rate_limit_opens_visual_circuit_immediately(monkeypatch):

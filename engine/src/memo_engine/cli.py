@@ -15,7 +15,12 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
-from .visual_evidence import extract_visual_evidence, fuse_visual_evidence
+from .visual_evidence import (
+    extract_visual_evidence,
+    fuse_visual_evidence,
+    visual_cache_is_complete,
+    visual_checkpoint_is_compatible,
+)
 from .corrections import apply_confirmed_corrections, attach_correction_audit
 from .phase7_5 import enrich_structure_phase7_5
 from .library import paper_library_summary
@@ -293,15 +298,12 @@ def run_job(job_id: str) -> int:
 
         visual_path = f"{job['user_id']}/{job['id']}/internal/visual/evidence.json"
         visual_cache_hit = False
+        partial_checkpoint_reuse = False
         try:
             cached_visual = db.download_json(BUCKET, visual_path)
         except Exception:
             cached_visual = None
-        if (
-            isinstance(cached_visual, dict)
-            and cached_visual.get("schema_version") == "1.0"
-            and cached_visual.get("source_sha256") == source["sha256"]
-        ):
+        if visual_cache_is_complete(cached_visual, source["sha256"]):
             visual = cached_visual
             visual_artifacts: list[dict[str, Any]] = []
             visual_cache_hit = True
@@ -309,10 +311,20 @@ def run_job(job_id: str) -> int:
             checkpoint_path = (
                 f"{job['user_id']}/{job['id']}/internal/visual/evidence.checkpoint.json"
             )
-            try:
-                visual_checkpoint_record = db.download_json(BUCKET, checkpoint_path)
-            except Exception:
-                visual_checkpoint_record = None
+            if visual_checkpoint_is_compatible(cached_visual, source["sha256"]):
+                visual_checkpoint_record = cached_visual
+            else:
+                try:
+                    visual_checkpoint_record = db.download_json(BUCKET, checkpoint_path)
+                except Exception:
+                    visual_checkpoint_record = None
+            partial_checkpoint_reuse = visual_checkpoint_is_compatible(
+                visual_checkpoint_record, source["sha256"]
+            ) and any(
+                item.get("success") is True
+                for item in (visual_checkpoint_record.get("runs") or [])
+                if isinstance(item, dict)
+            )
 
             def visual_progress(payload: dict[str, Any]) -> None:
                 nonlocal job
@@ -374,6 +386,13 @@ def run_job(job_id: str) -> int:
                 "success_count": visual_summary.get("success_count", 0),
                 "failure_count": visual_summary.get("failure_count", 0),
                 "cache_hit": visual_cache_hit,
+                "full_cache_hit": visual_cache_hit,
+                "partial_checkpoint_reuse": partial_checkpoint_reuse,
+                "reused_success_count": visual_summary.get("reused_success_count", 0),
+                "retried_region_count": visual_summary.get("retried_region_count", 0),
+                "new_success_count": visual_summary.get("new_success_count", 0),
+                "new_failure_count": visual_summary.get("new_failure_count", 0),
+                "unprocessed_count": visual_summary.get("unprocessed_count", 0),
             },
         )
 
