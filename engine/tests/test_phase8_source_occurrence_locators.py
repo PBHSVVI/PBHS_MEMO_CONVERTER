@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import copy
 
-from engine.src.memo_engine.corrections import apply_confirmed_corrections
+import pytest
+
+from engine.src.memo_engine.corrections import (
+    apply_confirmed_corrections,
+    correction_operation_supported,
+)
 from engine.src.memo_engine.structure import source_line_hash, source_locator_for_question
 
 
@@ -119,3 +124,109 @@ def test_exact_source_block_remains_the_first_resolution_method():
     )
     assert issues == []
     assert applied[0]["locator_resolution"]["method"] == "exact_source_block"
+
+
+def _parent_mismatch_correction(qid: str, target: str, locator: dict, *, operation: str = "rename_question_identifier") -> dict:
+    return {
+        "id": f"parent-mismatch-{qid}",
+        "confirmation_status": "confirmed",
+        "confirmed_at": f"2026-10-17T13:04:0{qid[-1]}Z",
+        "proposed_patch": {
+            "operation": operation,
+            "category": "question_parent_heading_mismatch",
+            "affected_id": qid,
+            "target_id": target,
+            "source_block_index": 3,
+            "source_locator": locator,
+        },
+    }
+
+
+def _parent_mismatch_structure() -> dict:
+    return {
+        "questions": [
+            _question("4.2.1", 2, 3, "4", "4.2.1 Genuine Question 4 working"),
+            _question("4.2.2", 2, 3, "4", "4.2.2 Genuine Question 4 answer"),
+            _question("4.2.1", 3, 5, "6", "4.2.1 Question 6 working"),
+            _question("4.2.2", 3, 5, "6", "4.2.2 Question 6 answer"),
+        ],
+        "exceptions": [
+            {"category": "question_parent_heading_mismatch", "affected_id": "4.2.1"},
+            {"category": "question_parent_heading_mismatch", "affected_id": "4.2.2"},
+        ],
+        "summary": {},
+    }
+
+
+def test_parent_heading_mismatch_renames_both_page_five_children_without_touching_question_four():
+    structure = _parent_mismatch_structure()
+    page_five = {q["question_id"]: q for q in structure["questions"] if q["source_page"] == 5}
+    corrections = [
+        _parent_mismatch_correction("4.2.1", "6.2.1", source_locator_for_question(page_five["4.2.1"])),
+        _parent_mismatch_correction("4.2.2", "6.2.2", source_locator_for_question(page_five["4.2.2"])),
+    ]
+
+    result, applied, issues = apply_confirmed_corrections(structure, _normalized(), corrections)
+
+    assert issues == []
+    assert correction_operation_supported("question_parent_heading_mismatch", "rename_question_identifier")
+    assert [(item["affected_id"], item["target_id"]) for item in applied] == [
+        ("4.2.1", "6.2.1"),
+        ("4.2.2", "6.2.2"),
+    ]
+    assert all(item["locator_resolution"] == {
+        "method": "exact_source_block",
+        "original_source_block_index": 3,
+        "resolved_source_block_index": 3,
+        "source_page": 5,
+        "parent_heading": "6",
+    } for item in applied)
+    by_page = {(q["source_page"], q["question_id"]): q for q in result["questions"]}
+    assert (3, "4.2.1") in by_page
+    assert (3, "4.2.2") in by_page
+    assert by_page[(5, "6.2.1")]["source_question_id"] == "4.2.1"
+    assert by_page[(5, "6.2.2")]["source_question_id"] == "4.2.2"
+    assert not any(e["category"] == "question_parent_heading_mismatch" for e in result["exceptions"])
+
+
+def test_parent_heading_mismatch_invalid_or_ambiguous_locator_fails_closed():
+    structure = _parent_mismatch_structure()
+    page_five = next(q for q in structure["questions"] if q["source_page"] == 5 and q["question_id"] == "4.2.1")
+    invalid_locator = source_locator_for_question(page_five)
+    invalid_locator["source_line_hash"] = "invalid"
+    _, applied, issues = apply_confirmed_corrections(
+        structure,
+        _normalized(),
+        [_parent_mismatch_correction("4.2.1", "6.2.1", invalid_locator)],
+    )
+    assert applied == []
+    assert [issue["category"] for issue in issues] == ["correction_evidence_unresolved"]
+
+    ambiguous = copy.deepcopy(structure)
+    duplicate = copy.deepcopy(page_five)
+    duplicate["source_block_index"] = 4
+    ambiguous["questions"].append(duplicate)
+    locator = source_locator_for_question(page_five)
+    correction = _parent_mismatch_correction("4.2.1", "6.2.1", locator)
+    correction["proposed_patch"]["source_block_index"] = 99
+    _, applied, issues = apply_confirmed_corrections(ambiguous, _normalized(), [correction])
+    assert applied == []
+    assert [issue["category"] for issue in issues] == ["correction_evidence_unresolved"]
+
+
+@pytest.mark.parametrize("operation", ["accept_suggestion", "set_question_subtotal"])
+def test_parent_heading_mismatch_rejects_unrelated_operations(operation):
+    structure = _parent_mismatch_structure()
+    page_five = next(q for q in structure["questions"] if q["source_page"] == 5 and q["question_id"] == "4.2.1")
+    correction = _parent_mismatch_correction(
+        "4.2.1",
+        "6.2.1",
+        source_locator_for_question(page_five),
+        operation=operation,
+    )
+
+    _, applied, issues = apply_confirmed_corrections(structure, _normalized(), [correction])
+
+    assert not correction_operation_supported("question_parent_heading_mismatch", operation)
+    assert applied == []
+    assert [issue["category"] for issue in issues] == ["correction_application_unsupported"]

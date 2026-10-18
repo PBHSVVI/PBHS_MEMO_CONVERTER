@@ -198,6 +198,7 @@ CORRECTION_OPERATION_CATEGORIES = {
         "numbering_jump",
         "suspicious_question_identifier",
         "scored_major_precedes_subquestions",
+        "question_parent_heading_mismatch",
     }),
     "promote_unlabeled_question": frozenset({"unlabeled_mark_bearing_question"}),
     "insert_missing_major_question": frozenset({"major_question_gap"}),
@@ -458,7 +459,13 @@ def apply_confirmed_corrections(
                 result, normalized, correction_id=correction_id, category=category,
                 affected_id=affected_id, target_id=target_id,
             )
-        elif category in {"numbering_jump", "suspicious_question_identifier", "scored_major_precedes_subquestions", "duplicate_question_identifier"} and operation in {"accept_suggestion", "rename_question_identifier"} and target_id:
+        elif (
+            (
+                category in {"numbering_jump", "suspicious_question_identifier", "scored_major_precedes_subquestions", "duplicate_question_identifier"}
+                and operation in {"accept_suggestion", "rename_question_identifier"}
+            )
+            or (category == "question_parent_heading_mismatch" and operation == "rename_question_identifier")
+        ) and target_id:
             source_block_index = None
             if patch.get("source_block_index") is not None:
                 try:
