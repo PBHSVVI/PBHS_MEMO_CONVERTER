@@ -569,6 +569,81 @@ def _deduplicate_visual_items(items: list[dict[str, Any]]) -> None:
         })
 
 
+def visual_association_unit_key(item: dict[str, Any]) -> tuple[str, int | None, str, str]:
+    """Return the stable physical review identity for one visual observation."""
+    page = item.get("page")
+    try:
+        page = int(page) if page is not None else None
+    except (TypeError, ValueError):
+        page = None
+    return (
+        str(item.get("rendered_asset_ref") or ""),
+        page,
+        str(item.get("owned_question_ref") or ""),
+        str(item.get("association_status") or item.get("evidence_status") or "unresolved_question"),
+    )
+
+
+def visual_association_review_units(
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse raw observations into bounded physical teacher-review units.
+
+    The raw items remain untouched in evidence.json.  Only the exception-facing
+    projection is consolidated here.
+    """
+    groups: dict[tuple[str, int | None, str, str], list[dict[str, Any]]] = {}
+    for item in items:
+        groups.setdefault(visual_association_unit_key(item), []).append(item)
+
+    units: list[dict[str, Any]] = []
+    for key, observations in groups.items():
+        asset, page, owned, status = key
+        evidence_ids = list(dict.fromkeys(
+            str(item.get("evidence_id") or "") for item in observations
+            if item.get("evidence_id")
+        ))
+        claimed = list(dict.fromkeys(
+            str(item.get("question_ref")) for item in observations
+            if item.get("question_ref") is not None
+        ))
+        readings = list(dict.fromkeys(
+            str(item.get("transcription") or item.get("normalized_math") or "").strip()
+            for item in observations
+            if str(item.get("transcription") or item.get("normalized_math") or "").strip()
+        ))
+        bboxes: list[list[float]] = []
+        for item in observations:
+            bbox = item.get("source_page_bbox") or item.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4 and bbox not in bboxes:
+                bboxes.append([float(value) for value in bbox])
+        providers = list(dict.fromkeys(
+            f"{item.get('extractor_provider') or 'unknown'}:{item.get('extractor_model') or 'unknown'}"
+            for item in observations
+        ))
+        identity = json.dumps({
+            "asset": asset, "page": page, "owned": owned, "status": status,
+        }, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        units.append({
+            "schema_version": "1.0",
+            "review_unit_type": "visual_evidence_association",
+            "review_unit_id": hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20],
+            "rendered_asset_ref": asset,
+            "page": page,
+            "owned_question_ref": owned or None,
+            "association_status": status,
+            "claimed_question_refs": claimed,
+            "transcriptions": readings,
+            "evidence_ids": evidence_ids,
+            "source_page_bboxes": bboxes,
+            "owned_bbox": next((item.get("owned_bbox") for item in observations if item.get("owned_bbox") is not None), None),
+            "raw_observation_count": len(observations),
+            "provider_models": providers,
+            "observation_kinds": list(dict.fromkeys(str(item.get("kind") or "mark_change") for item in observations)),
+        })
+    return units
+
+
 def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response must be an object.")
@@ -618,6 +693,7 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "page": region["page"],
             "rendered_asset_ref": region["asset_path"],
             "source_page_bbox": source_page_bbox,
+            "owned_bbox": region.get("owned_bbox"),
             "owned_question_ref": owned_question_ref,
             "association_status": association_status,
             "extractor_provider": str(payload.get("provider") or "groq"),
@@ -663,6 +739,7 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "page": region["page"],
             "rendered_asset_ref": region["asset_path"],
             "source_page_bbox": source_page_bbox,
+            "owned_bbox": region.get("owned_bbox"),
             "owned_question_ref": owned_question_ref,
             "association_status": association_status,
             "effective": effective,
@@ -918,36 +995,34 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
     _deduplicate_visual_items(evidence_items)
     mark_changes = visual.get("mark_changes", [])
     _deduplicate_visual_items(mark_changes)
+    association_items = [
+        item for item in [*evidence_items, *mark_changes]
+        if item.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}
+    ]
+    association_items.extend({**item, "association_status": "unresolved_question"}
+        for item in evidence_items
+        if item.get("effective", True)
+        and questions.get(str(item.get("question_ref"))) is None
+    )
+    for unit in visual_association_review_units(association_items):
+        structure.setdefault("exceptions", []).append({
+            "level": "amber",
+            "category": "visual_evidence_association_uncertain",
+            "affected_id": unit.get("owned_question_ref")
+                or next(iter(unit.get("claimed_question_refs") or []), None),
+            "message": (
+                "One physical visual source region has alternative or duplicate "
+                "readings and needs a bounded question-association decision."
+            ),
+            "suggestions": [unit],
+        })
     for item in evidence_items:
         question_ref = item.get("question_ref")
         target = questions.get(str(question_ref)) if question_ref is not None else None
         confidence = float(item.get("confidence") or 0)
         if not item.get("effective", True):
-            if item.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}:
-                structure.setdefault("exceptions", []).append({
-                    "level": "amber", "category": "visual_evidence_association_uncertain",
-                    "affected_id": item.get("owned_question_ref") or question_ref,
-                    "message": "Visible memo evidence falls outside the owned question region and requires confirmation.",
-                    "suggestions": [{
-                        "claimed_question_ref": question_ref,
-                        "owned_question_ref": item.get("owned_question_ref"),
-                        "rendered_asset_ref": item.get("rendered_asset_ref"),
-                        "page": item.get("page"),
-                        "transcription": item.get("transcription"),
-                    }],
-                })
             continue
         if target is None:
-            structure.setdefault("exceptions", []).append({
-                "level": "amber", "category": "visual_evidence_association_uncertain",
-                "affected_id": question_ref,
-                "message": "Visible memo evidence could not be associated with a confirmed question.",
-                "suggestions": [{
-                    "rendered_asset_ref": item.get("rendered_asset_ref"),
-                    "page": item.get("page"),
-                    "transcription": item.get("transcription"),
-                }],
-            })
             continue
         target.setdefault("visual_evidence", []).append(item)
         attached += 1
@@ -991,17 +1066,6 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
 
     for change in mark_changes:
         if not change.get("effective", True):
-            if change.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}:
-                structure.setdefault("exceptions", []).append({
-                    "level": "amber", "category": "visual_evidence_association_uncertain",
-                    "affected_id": change.get("owned_question_ref") or change.get("question_ref"),
-                    "message": "A possible handwritten mark change falls outside the owned question region and requires confirmation.",
-                    "suggestions": [{
-                        "claimed_question_ref": change.get("question_ref"),
-                        "owned_question_ref": change.get("owned_question_ref"),
-                        "rendered_asset_ref": change.get("rendered_asset_ref"),
-                    }],
-                })
             continue
         structure.setdefault("exceptions", []).append({
             "level": "amber", "category": "visual_mark_change_review",

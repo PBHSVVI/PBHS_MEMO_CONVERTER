@@ -98,6 +98,24 @@ async function loadStructure(ctx: any, userId: string, jobId: string): Promise<R
   }
 }
 
+async function loadVisualEvidence(ctx: any, userId: string, jobId: string): Promise<Record<string, unknown> | null> {
+  const path = `${userId}/${jobId}/internal/visual/evidence.json`;
+  const { data, error } = await ctx.supabaseAdmin.storage.from("memo-files").download(path);
+  if (error || !data) return null;
+  try {
+    const parsed = JSON.parse(await data.text());
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+async function visualReviewUnitId(asset: string, page: number, owned: string, status: string): Promise<string> {
+  const identity = JSON.stringify({ asset, owned, page, status });
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  return [...new Uint8Array(bytes)].map((item) => item.toString(16).padStart(2, "0")).join("").slice(0, 20);
+}
+
 // BEGIN EFFECTIVE PARENT TOTAL MODEL
 function effectiveConfirmedCorrections(rows) {
   const superseded = new Set(rows.map((row) => {
@@ -459,7 +477,103 @@ export default {
       const correctionRevision = body.correction_revision;
       const content = body.content_correction;
       const numbering = body.numbering_correction;
-      if (correctionRevision && typeof correctionRevision === "object") {
+      const visualAssociation = body.visual_association_resolution;
+      if (visualAssociation && typeof visualAssociation === "object") {
+        if (exception.category !== "visual_evidence_association_uncertain") {
+          return Response.json({ error: "visual_association_category_mismatch" }, { status: 400 });
+        }
+        const value = visualAssociation as Record<string, unknown>;
+        const decision = String(value.decision ?? "").toUpperCase();
+        const asset = typeof value.rendered_asset_ref === "string" ? value.rendered_asset_ref : "";
+        const page = Number(value.source_page);
+        const owned = typeof value.original_owned_question_ref === "string" ? value.original_owned_question_ref : "";
+        const associationStatus = typeof value.association_status === "string" ? value.association_status : "";
+        const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
+        const suppliedIds = Array.isArray(value.evidence_ids) ? value.evidence_ids.map((item) => String(item)) : [];
+        const exceptionSuggestions = Array.isArray(exception.suggestions) ? exception.suggestions : [];
+        const exceptionMatches = exceptionSuggestions.some((item) => {
+          if (!item || typeof item !== "object") return false;
+          const suggestion = item as Record<string, unknown>;
+          return String(suggestion.rendered_asset_ref ?? "") === asset &&
+            Number(suggestion.page) === page &&
+            String(suggestion.owned_question_ref ?? exception.affected_id ?? "") === owned;
+        });
+        if (
+          !["ACCEPT", "REASSIGN", "REJECT"].includes(decision) ||
+          !asset.startsWith("internal/visual/") || asset.includes("..") ||
+          !Number.isInteger(page) || page < 1 || !associationStatus ||
+          !suppliedIds.length || suppliedIds.length > 200 ||
+          new Set(suppliedIds).size !== suppliedIds.length || !exceptionMatches
+        ) {
+          return Response.json({ error: "invalid_visual_association_unit" }, { status: 400 });
+        }
+        const [structure, visual] = await Promise.all([
+          loadStructure(ctx, job.user_id, jobId),
+          loadVisualEvidence(ctx, job.user_id, jobId),
+        ]);
+        const questions = Array.isArray(structure?.questions) ? structure.questions.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : [];
+        const evidence = Array.isArray(visual?.evidence) ? visual.evidence : [];
+        const markChanges = Array.isArray(visual?.mark_changes) ? visual.mark_changes : [];
+        const raw = [...evidence, ...markChanges].filter((item) => item && typeof item === "object") as Record<string, unknown>[];
+        const physical = raw.filter((item) =>
+          String(item.rendered_asset_ref ?? "") === asset &&
+          Number(item.page) === page &&
+          String(item.owned_question_ref ?? "") === owned &&
+          (String(item.association_status ?? item.evidence_status ?? "unresolved_question") === associationStatus ||
+            associationStatus === "unresolved_question" && suppliedIds.includes(String(item.evidence_id ?? "")))
+        );
+        const physicalIds = physical.map((item) => String(item.evidence_id ?? "")).filter(Boolean);
+        const exactIds = physicalIds.length === suppliedIds.length &&
+          new Set(physicalIds).size === physicalIds.length &&
+          physicalIds.every((item) => suppliedIds.includes(item));
+        if (!physical.length || !exactIds) {
+          return Response.json({ error: "visual_association_evidence_mismatch" }, { status: 409 });
+        }
+        const currentTarget = questions.filter((item) => String(item.question_id ?? "") === targetId);
+        const ownerCandidates = questions.filter((item) => String(item.question_id ?? "") === owned || String(item.source_question_id ?? "") === owned);
+        const pageOwners = ownerCandidates.filter((item) => Number(item.source_page ?? (item.source_ref as Record<string, unknown> | undefined)?.page) === page);
+        const sourceOwner = pageOwners.length ? pageOwners : ownerCandidates;
+        if (
+          (decision === "REJECT" && targetId) ||
+          (decision !== "REJECT" && (!QUESTION_ID_RE.test(targetId) || currentTarget.length !== 1)) ||
+          (decision === "ACCEPT" && (sourceOwner.length !== 1 || String(sourceOwner[0].question_id ?? "") !== targetId))
+        ) {
+          return Response.json({ error: "invalid_visual_association_target" }, { status: 400 });
+        }
+        const reviewUnitId = await visualReviewUnitId(asset, page, owned, associationStatus);
+        if (String(value.review_unit_id ?? "") !== reviewUnitId) {
+          return Response.json({ error: "visual_association_unit_changed" }, { status: 409 });
+        }
+        const claimedQuestionRefs = [...new Set(physical.map((item) => String(item.question_ref ?? "")).filter(Boolean))];
+        const sourcePageBboxes = physical.map((item) => item.source_page_bbox ?? item.bbox).filter((bbox, index, all) =>
+          Array.isArray(bbox) && bbox.length === 4 && all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(bbox)) === index
+        );
+        const ownedBbox = physical.find((item) => Array.isArray(item.owned_bbox) && item.owned_bbox.length === 4)?.owned_bbox ?? null;
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "resolve_visual_evidence_association",
+          category: exception.category,
+          affected_id: exception.affected_id,
+          decision,
+          review_unit_id: reviewUnitId,
+          evidence_ids: physicalIds,
+          rendered_asset_ref: asset,
+          source_page: page,
+          source_page_bboxes: sourcePageBboxes,
+          owned_bbox: ownedBbox,
+          original_claimed_question_refs: claimedQuestionRefs,
+          original_owned_question_ref: owned || null,
+          association_status: associationStatus,
+          target_id: decision === "REJECT" ? null : targetId,
+          reinterpretation_method: "structured_visual_association_editor",
+        };
+        displayText = decision === "REJECT"
+          ? `Reject the visual observations from the page ${page} source region as unusable memo evidence.`
+          : decision === "ACCEPT"
+          ? `Accept the visual observations from page ${page} for Question ${targetId}.`
+          : `Reassign the visual observations from page ${page} to Question ${targetId}.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (correctionRevision && typeof correctionRevision === "object") {
         if (!String(exception.category ?? "").startsWith("correction_")) {
           return Response.json({ error: "correction_revision_category_mismatch" }, { status: 400 });
         }

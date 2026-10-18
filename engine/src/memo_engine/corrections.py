@@ -15,6 +15,11 @@ from .structure import (
     source_line_hash,
 )
 from .phase7_5 import apply_phase7_5_patch
+from .visual_evidence import (
+    VISUAL_REVIEW_THRESHOLD,
+    visual_association_review_units,
+    visual_association_unit_key,
+)
 
 QUESTION_ID_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 
@@ -66,8 +71,10 @@ def effective_correction_history(
         target = str(
             patch.get("candidate_id")
             if operation == "resolve_mark_semantic_conflict"
+            else patch.get("review_unit_id")
+            if operation == "resolve_visual_evidence_association"
             else patch.get("target_id")
-            if operation in {"replace_item_content", "insert_missing_child_question"}
+            if operation in {"replace_item_content", "insert_missing_child_question", "resolve_visual_evidence_association"}
             else patch.get("affected_id") or ""
         ).strip()
         correction_id = str(correction.get("id") or "")
@@ -76,6 +83,7 @@ def effective_correction_history(
             QUESTION_ID_RE.fullmatch(target)
             or operation == "resolve_question_allocation_pairing"
             or operation == "resolve_mark_semantic_conflict"
+            or operation == "resolve_visual_evidence_association"
         ):
             if operation == "replace_mark_points" and category in {
                 "mark_arithmetic_mismatch", "item_total_mismatch",
@@ -98,6 +106,11 @@ def effective_correction_history(
                 and category == "question_allocation_pairing_ambiguous"
             ):
                 domain = "allocation_pairing"
+            elif (
+                operation == "resolve_visual_evidence_association"
+                and category == "visual_evidence_association_uncertain"
+            ):
+                domain = f"visual_association:{patch.get('review_unit_id') or ''}"
         explicit = explicit_successors.get(correction_id)
         successor = explicit[0] if explicit else (newer.get((target, domain)) if domain else None)
         history.append({
@@ -424,10 +437,247 @@ def _rename_question_identifier(
     }, None
 
 
+def _apply_visual_evidence_association(
+    structure: dict[str, Any],
+    visual: dict[str, Any] | None,
+    *,
+    correction_id: str,
+    category: str,
+    affected_id: str | None,
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Apply one teacher decision to exactly one physical visual review unit."""
+    decision = str(patch.get("decision") or "").upper()
+    evidence_ids = patch.get("evidence_ids")
+    asset = str(patch.get("rendered_asset_ref") or "")
+    owned = str(patch.get("original_owned_question_ref") or "")
+    association_status = str(patch.get("association_status") or "")
+    review_unit_id = str(patch.get("review_unit_id") or "")
+    target_id = str(patch.get("target_id") or "").strip()
+    try:
+        page = int(patch.get("source_page"))
+    except (TypeError, ValueError):
+        page = -1
+    if (
+        patch.get("schema_version") != "1.0"
+        or decision not in {"ACCEPT", "REASSIGN", "REJECT"}
+        or not isinstance(evidence_ids, list)
+        or not evidence_ids
+        or len(evidence_ids) > 200
+        or len(set(map(str, evidence_ids))) != len(evidence_ids)
+        or not asset.startswith("internal/visual/")
+        or ".." in asset
+        or page < 1
+        or not review_unit_id
+        or not isinstance(visual, dict)
+    ):
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} does not identify one valid physical visual review unit.",
+        )
+
+    raw_items = [
+        item for item in [*(visual.get("evidence") or []), *(visual.get("mark_changes") or [])]
+        if isinstance(item, dict)
+    ]
+    by_id: dict[str, list[dict[str, Any]]] = {}
+    for item in raw_items:
+        evidence_id = str(item.get("evidence_id") or "")
+        if evidence_id:
+            by_id.setdefault(evidence_id, []).append(item)
+    selected: list[dict[str, Any]] = []
+    for evidence_id in map(str, evidence_ids):
+        matches = by_id.get(evidence_id, [])
+        if len(matches) != 1:
+            return None, _issue(
+                "correction_evidence_unresolved", affected_id,
+                f"Confirmed correction {correction_id} does not resolve every visual evidence identifier exactly once.",
+            )
+        selected.append(matches[0])
+
+    def matches_physical(item: dict[str, Any]) -> bool:
+        key = visual_association_unit_key(item)
+        return key[0] == asset and key[1] == page and key[2] == owned and (
+            key[3] == association_status
+            or association_status == "unresolved_question"
+        )
+
+    if not selected or not all(matches_physical(item) for item in selected):
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} does not match the stored visual asset, page, owner, and association status.",
+        )
+    physical = selected if association_status == "unresolved_question" else [
+        item for item in raw_items if matches_physical(item)
+    ]
+    if set(map(str, evidence_ids)) != {str(item.get("evidence_id")) for item in physical}:
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} covers only part of the physical visual review unit.",
+        )
+    unit_items = [
+        {**item, "association_status": association_status}
+        if association_status == "unresolved_question" else item
+        for item in physical
+    ]
+    units = visual_association_review_units(unit_items)
+    if len(units) != 1 or units[0].get("review_unit_id") != review_unit_id:
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} no longer matches one stable visual review unit.",
+        )
+    unit = units[0]
+    if (
+        patch.get("source_page_bboxes") != unit.get("source_page_bboxes")
+        or patch.get("owned_bbox") != unit.get("owned_bbox")
+        or patch.get("original_claimed_question_refs") != unit.get("claimed_question_refs")
+    ):
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} does not match the stored visual provenance.",
+        )
+
+    questions = [item for item in structure.get("questions", []) if isinstance(item, dict)]
+    target_matches = [item for item in questions if str(item.get("question_id") or "") == target_id]
+    if decision != "REJECT" and len(target_matches) != 1:
+        return None, _issue(
+            "correction_target_invalid", target_id or affected_id,
+            f"Confirmed correction {correction_id} does not identify one current parsed question.",
+        )
+    if decision == "REJECT" and target_id:
+        return None, _issue(
+            "correction_target_invalid", affected_id,
+            f"Confirmed correction {correction_id} must not assign a target when rejecting visual evidence.",
+        )
+    if decision == "ACCEPT":
+        owner_matches = [item for item in questions if (
+            str(item.get("question_id") or "") == owned
+            or str(item.get("source_question_id") or "") == owned
+        )]
+        page_matches = [item for item in owner_matches if (
+            item.get("source_page") == page
+            or (
+                isinstance(item.get("source_ref"), dict)
+                and item["source_ref"].get("page") == page
+            )
+        )]
+        if page_matches:
+            owner_matches = page_matches
+        if len(owner_matches) != 1 or target_id != str(owner_matches[0].get("question_id") or ""):
+            return None, _issue(
+                "correction_target_invalid", target_id or affected_id,
+                f"Confirmed correction {correction_id} does not accept the evidence for its bounded current owner.",
+            )
+    if decision == "REASSIGN" and not QUESTION_ID_RE.fullmatch(target_id):
+        return None, _issue(
+            "correction_target_invalid", target_id or affected_id,
+            f"Confirmed correction {correction_id} does not contain one explicit parsed reassignment target.",
+        )
+
+    if decision != "REJECT":
+        target = target_matches[0]
+        solution_signatures = {
+            (
+                str(item.get("text") or "").strip().casefold(),
+                str(item.get("rendered_asset_ref") or ""),
+            )
+            for item in target.get("visual_solution_segments", [])
+            if isinstance(item, dict)
+        }
+        for item in selected:
+            resolved = copy.deepcopy(item)
+            resolved["effective"] = True
+            resolved["evidence_status"] = "teacher_association_accepted" if decision == "ACCEPT" else "teacher_association_reassigned"
+            resolved["association_resolution"] = {
+                "correction_id": correction_id,
+                "decision": decision,
+                "review_unit_id": review_unit_id,
+                "original_owned_question_ref": owned or None,
+                "original_claimed_question_ref": item.get("question_ref"),
+                "target_question_ref": target_id,
+            }
+            if "visual_value" in item and "level" in item:
+                target.setdefault("visual_mark_change_evidence", []).append(resolved)
+                structure.setdefault("exceptions", []).append({
+                    "level": "amber", "category": "visual_mark_change_review",
+                    "affected_id": target_id,
+                    "message": "A teacher-associated handwritten mark allocation still requires bounded mark confirmation.",
+                    "suggestions": [{
+                        "printed_value": item.get("printed_value"),
+                        "visual_value": item.get("visual_value"),
+                        "level": item.get("level"),
+                        "rendered_asset_ref": asset,
+                        "evidence_id": item.get("evidence_id"),
+                    }],
+                })
+                continue
+            target.setdefault("visual_evidence", []).append(resolved)
+            if (
+                item.get("kind") in {"answer", "answer_working", "diagram_entry"}
+                and not item.get("math_normalization_issue")
+                and float(item.get("confidence") or 0) >= VISUAL_REVIEW_THRESHOLD
+            ):
+                text = str(item.get("normalized_math") or item.get("transcription") or "").strip()
+                signature = (text.casefold(), asset)
+                if text and signature not in solution_signatures:
+                    target.setdefault("visual_solution_segments", []).append({
+                        "text": text,
+                        "raw_transcription": item.get("transcription"),
+                        "source_ref": {"file_id": "source_1", "page": page},
+                        "rendered_asset_ref": asset,
+                        "confidence": float(item.get("confidence") or 0),
+                        "canonical_latex": item.get("normalized_math"),
+                        "association_resolution": copy.deepcopy(resolved["association_resolution"]),
+                    })
+                    solution_signatures.add(signature)
+
+    def same_review_unit(exception: dict[str, Any]) -> bool:
+        if exception.get("category") != category:
+            return False
+        for suggestion in exception.get("suggestions") or []:
+            if not isinstance(suggestion, dict):
+                continue
+            if suggestion.get("review_unit_id") == review_unit_id:
+                return True
+            try:
+                suggestion_page = int(suggestion.get("page"))
+            except (TypeError, ValueError):
+                suggestion_page = -1
+            if (
+                str(suggestion.get("rendered_asset_ref") or "") == asset
+                and suggestion_page == page
+                and str(suggestion.get("owned_question_ref") or exception.get("affected_id") or "") == owned
+            ):
+                return True
+        return False
+
+    structure["exceptions"] = [
+        exception for exception in structure.get("exceptions", [])
+        if not same_review_unit(exception)
+    ]
+    return {
+        "correction_id": correction_id,
+        "operation": "resolve_visual_evidence_association",
+        "category": category,
+        "affected_id": affected_id,
+        "target_id": target_id or None,
+        "decision": decision,
+        "review_unit_id": review_unit_id,
+        "evidence_ids": list(map(str, evidence_ids)),
+        "rendered_asset_ref": asset,
+        "source_page": page,
+        "original_owned_question_ref": owned or None,
+        "original_claimed_question_refs": copy.deepcopy(unit.get("claimed_question_refs")),
+        "source_page_bboxes": copy.deepcopy(unit.get("source_page_bboxes")),
+        "owned_bbox": copy.deepcopy(unit.get("owned_bbox")),
+    }, None
+
+
 def apply_confirmed_corrections(
     structure: dict[str, Any],
     normalized: dict[str, Any],
     corrections: list[dict[str, Any]],
+    visual: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Apply confirmed corrections as an immutable interpretation overlay."""
     result = copy.deepcopy(structure)
@@ -454,7 +704,12 @@ def apply_confirmed_corrections(
 
         applied_item = None
         issue = None
-        if category == "unlabeled_mark_bearing_question" and operation in {"accept_suggestion", "promote_unlabeled_question"} and target_id:
+        if category == "visual_evidence_association_uncertain" and operation == "resolve_visual_evidence_association":
+            applied_item, issue = _apply_visual_evidence_association(
+                result, visual, correction_id=correction_id, category=category,
+                affected_id=affected_id, patch=patch,
+            )
+        elif category == "unlabeled_mark_bearing_question" and operation in {"accept_suggestion", "promote_unlabeled_question"} and target_id:
             applied_item, issue = _promote_unlabeled_question(
                 result, normalized, correction_id=correction_id, category=category,
                 affected_id=affected_id, target_id=target_id,

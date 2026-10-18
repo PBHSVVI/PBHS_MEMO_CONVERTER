@@ -11,6 +11,7 @@ function stagedTarget(patch: Record<string, unknown> | null): string | null {
     const ids = Array.isArray(patch.allocations) ? patch.allocations.map((item: any) => String(item?.question_id ?? "")).sort() : [];
     return ids.length ? `allocation:${ids.join(",")}` : null;
   }
+  if (operation === "resolve_visual_evidence_association") return `visual:${String(patch.review_unit_id ?? "")}`;
   if (operation === "withdraw_confirmed_correction") return `revision:${String(patch.supersedes_correction_id ?? "")}`;
   const target = String(patch.target_id ?? patch.affected_id ?? "");
   const occurrence = patch.source_block_index == null ? "" : `@${String(patch.source_block_index)}`;
@@ -133,7 +134,9 @@ export default {
         const other = item.proposed_patch && typeof item.proposed_patch === "object" ? item.proposed_patch as Record<string, unknown> : {};
         const otherQuestionTarget = String(other.target_id ?? other.affected_id ?? "");
         const otherSourceIndex = other.source_block_index == null ? null : Number(other.source_block_index);
-        const sameQuestionTarget = questionTarget && otherQuestionTarget === questionTarget && (
+        const sameQuestionTarget = patch.operation !== "resolve_visual_evidence_association" &&
+          other.operation !== "resolve_visual_evidence_association" &&
+          questionTarget && otherQuestionTarget === questionTarget && (
           questionSourceIndex === null || otherSourceIndex === null || questionSourceIndex === otherSourceIndex
         );
         const sameTarget = sameQuestionTarget || target && stagedTarget(other) === target;

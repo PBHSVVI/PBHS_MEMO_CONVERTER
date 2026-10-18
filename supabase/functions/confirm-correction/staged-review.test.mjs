@@ -45,3 +45,16 @@ test("staged-target conflicts remain fail closed", () => {
   assert.match(confirmSource, /conflicting_staged_correction/);
   assert.match(confirmSource, /stagedTarget\(other\) === target/);
 });
+
+test("visual association decisions use a structured deterministic contract", () => {
+  assert.match(submitSource, /visual_association_resolution/);
+  assert.match(submitSource, /operation: "resolve_visual_evidence_association"/);
+  assert.match(submitSource, /loadVisualEvidence/);
+  assert.match(submitSource, /visual_association_evidence_mismatch/);
+  assert.match(submitSource, /invalid_visual_association_target/);
+  assert.match(confirmSource, /visual:\$\{String\(patch\.review_unit_id/);
+  assert.match(reviewSource, /Accept for/);
+  assert.match(reviewSource, /Reassign selected question/);
+  assert.match(reviewSource, /Reject as noise \/ unusable evidence/);
+  assert.doesNotMatch(reviewSource, /Accept this reading/);
+});

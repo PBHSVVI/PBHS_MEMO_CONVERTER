@@ -417,6 +417,7 @@ def run_job(job_id: str) -> int:
                     structure,
                     normalized,
                     confirmed_corrections,
+                    visual,
                 )
             )
 

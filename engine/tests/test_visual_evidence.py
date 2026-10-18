@@ -459,5 +459,10 @@ def test_review_ui_loads_private_visual_crop_without_public_url():
     assert "internal/visual/" in review
     assert ".storage.from('memo-files').download(path)" in review
     assert "getPublicUrl" not in review
-    assert "Accept this reading" in review
-    assert "content_correction:{target_id:target" in review
+    assert "Accept for" in review
+    assert "resolve_visual_evidence_association" in review
+    assert "visual_association_resolution" in review
+    visual_branch = review.split("}else if(!grouped&&visualAssociation)", 1)[1].split(
+        "}else if(!grouped&&visualReview)", 1
+    )[0]
+    assert "content_correction" not in visual_branch
