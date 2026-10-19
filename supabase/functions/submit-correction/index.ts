@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
 import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
+import { validateSourceRestoration } from "../_shared/source-restoration.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -786,6 +787,7 @@ export default {
           return Response.json({ error: "invalid_child_repair_target" }, { status: 400 });
         }
         let priorPatch: Record<string, unknown> | null = null;
+        let priorIsEffective = false;
         if (supersedesCorrectionId) {
           const { data: prior } = await ctx.supabaseAdmin.from("corrections")
             .select("id,job_id,proposed_patch,confirmation_status,applied_at")
@@ -796,43 +798,89 @@ export default {
           if (!UUID_RE.test(supersedesCorrectionId) || !prior || prior.confirmation_status !== "confirmed" || prior.applied_at || priorPatch?.operation !== "replace_item_content" || priorTarget !== targetId || (priorSourceIndex !== null && priorSourceIndex !== Number(question.source_block_index))) {
             return Response.json({ error: "prior_correction_not_revisable" }, { status: 400 });
           }
+          const { data: confirmedRows, error: confirmedError } = await ctx.supabaseAdmin.from("corrections")
+            .select("id,proposed_patch").eq("job_id", jobId)
+            .eq("confirmation_status", "confirmed");
+          if (confirmedError) return Response.json({ error: "prior_correction_lookup_failed" }, { status: 502 });
+          priorIsEffective = !(confirmedRows ?? []).some((row: any) =>
+            String(row.id ?? "") !== supersedesCorrectionId &&
+            String(row.proposed_patch?.supersedes_correction_id ?? "") === supersedesCorrectionId
+          );
+          if (!priorIsEffective) {
+            return Response.json({ error: "prior_correction_not_revisable" }, { status: 400 });
+          }
         }
         const renameRequested = replacementId !== targetId;
-        let parsed: ReturnType<typeof parseMarkingScheme> = null;
-        if (markingText) parsed = parseMarkingScheme(markingText, ordinaryMathSemanticProfile(question, {}));
-        if ((!renameRequested && !parsed) || (markingText && (!Number.isInteger(printedMarks) || Number(printedMarks) < 1 || Number(printedMarks) > 999 || !parsed || parsed.total !== printedMarks)) || (!markingText && printedMarks !== null)) {
-          return Response.json({ error: "invalid_child_repair" }, { status: 400 });
-        }
-        proposedPatch = {
-          schema_version: "1.0",
-          operation: "replace_item_content",
-          category: teacherInitiated ? "teacher_initiated_item_edit" : exception.category,
-          source_exception_category: exception.category,
-          affected_id: teacherInitiated ? targetId : affectedId,
-          target_id: targetId,
-          replacement_id: replacementId,
-          ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
-          question_text: null,
-          solution_lines: [],
-          ...(parsed ? {
-            printed_marks: printedMarks,
-            mark_points: parsed.points,
-            expected_total: parsed.total,
-            mark_calculation_mode: parsed.mode,
-          } : {}),
-          ...(supersedesCorrectionId ? {
+        const restorationRequested = value.restore_source_state === true;
+        if (restorationRequested) {
+          const restoration = validateSourceRestoration({
+            targetId,
+            replacementId,
+            printedMarks,
+            markingText,
+            supersedesCorrectionId,
+            priorIsEffective,
+            question,
+          });
+          if (!restoration.ok) {
+            return Response.json({ error: "invalid_source_restoration", reason: restoration.error }, { status: 400 });
+          }
+          const priorPoints = Array.isArray(priorPatch?.mark_points) ? priorPatch.mark_points : [];
+          proposedPatch = {
+            schema_version: "1.0",
+            operation: "withdraw_confirmed_correction",
+            category: teacherInitiated ? "teacher_initiated_item_edit" : exception.category,
+            source_exception_category: exception.category,
+            affected_id: targetId,
+            target_id: targetId,
+            ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
             supersedes_correction_id: supersedesCorrectionId,
-            supersession_reason: "teacher_amended_previous_change",
+            supersession_reason: "teacher_restored_source_state",
+            source_restoration: true,
             previous_expected_total: priorPatch?.expected_total ?? priorPatch?.printed_marks ?? null,
-          } : {}),
-          reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor",
-          reinterpretation_method: "structured_child_repair_editor",
-        };
-        const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");
-        displayText = supersedesCorrectionId
-          ? `Replace the currently staged correction for Question ${targetId}: ${actions}. The earlier correction remains in the audit history.`
-          : `Question ${targetId}: ${actions}.`;
-        exceptionStatus = "awaiting_confirmation";
+            previous_mark_points: priorPoints,
+            reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor",
+            reinterpretation_method: "structured_source_restoration_amendment",
+          };
+          displayText = `Question ${targetId}: restore the original memo state with no direct mark allocation. The earlier saved version remains in the audit history.`;
+          exceptionStatus = "awaiting_confirmation";
+        } else {
+          let parsed: ReturnType<typeof parseMarkingScheme> = null;
+          if (markingText) parsed = parseMarkingScheme(markingText, ordinaryMathSemanticProfile(question, {}));
+          if ((!renameRequested && !parsed) || (markingText && (!Number.isInteger(printedMarks) || Number(printedMarks) < 1 || Number(printedMarks) > 999 || !parsed || parsed.total !== printedMarks)) || (!markingText && printedMarks !== null)) {
+            return Response.json({ error: "invalid_child_repair" }, { status: 400 });
+          }
+          proposedPatch = {
+            schema_version: "1.0",
+            operation: "replace_item_content",
+            category: teacherInitiated ? "teacher_initiated_item_edit" : exception.category,
+            source_exception_category: exception.category,
+            affected_id: teacherInitiated ? targetId : affectedId,
+            target_id: targetId,
+            replacement_id: replacementId,
+            ...(selectedSourceIndex === null ? {} : { source_block_index: selectedSourceIndex }),
+            question_text: null,
+            solution_lines: [],
+            ...(parsed ? {
+              printed_marks: printedMarks,
+              mark_points: parsed.points,
+              expected_total: parsed.total,
+              mark_calculation_mode: parsed.mode,
+            } : {}),
+            ...(supersedesCorrectionId ? {
+              supersedes_correction_id: supersedesCorrectionId,
+              supersession_reason: "teacher_amended_previous_change",
+              previous_expected_total: priorPatch?.expected_total ?? priorPatch?.printed_marks ?? null,
+            } : {}),
+            reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor",
+            reinterpretation_method: "structured_child_repair_editor",
+          };
+          const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");
+          displayText = supersedesCorrectionId
+            ? `Replace the currently staged correction for Question ${targetId}: ${actions}. The earlier correction remains in the audit history.`
+            : `Question ${targetId}: ${actions}.`;
+          exceptionStatus = "awaiting_confirmation";
+        }
       } else if (allocationResolution && typeof allocationResolution === "object") {
         if (exception.category !== "question_allocation_pairing_ambiguous") {
           return Response.json({ error: "allocation_resolution_category_mismatch" }, { status: 400 });

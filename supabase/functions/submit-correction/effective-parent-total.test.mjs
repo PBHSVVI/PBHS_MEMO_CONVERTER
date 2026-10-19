@@ -28,6 +28,18 @@ test("server model uses only the newest effective staged child correction", () =
   assert.equal(effectiveChildTotal(structure, corrections, "1"), 7);
 });
 
+test("source restoration removes only the superseded direct parent override", () => {
+  const structure = { questions: [
+    question("2.1", 0, 1), question("2.1.1", 1, 2), question("2.1.2", 1, 3),
+    question("2.2", 2, 4), question("2.3", 2, 5), question("2.4", 3, 6),
+  ] };
+  const corrections = [
+    correction("old", { operation: "replace_item_content", target_id: "2.1", expected_total: 1 }),
+    correction("restore", { operation: "withdraw_confirmed_correction", target_id: "2.1", supersedes_correction_id: "old", source_restoration: true }),
+  ];
+  assert.equal(effectiveChildTotal(structure, corrections, "2"), 9);
+});
+
 test("server model totals current staged children independently of the old exception", () => {
   const structure = { questions: [question("3.1", 0, 1), question("3.2", 0, 2), question("3.3", 0, 3)] };
   const corrections = [

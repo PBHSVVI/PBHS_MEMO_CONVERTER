@@ -160,8 +160,9 @@ def test_progress_uses_server_backed_staged_subtraction_and_remaining_workload()
 def test_bounded_item_editor_avoids_free_form_interpretation_route():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert "boundedItemEditorAllowed(currentException,target)" in html
-    assert "child_repair:{target_id:target,replacement_id:replacement,printed_marks:total,marking_text:markingText" in html
-    assert "supersedes_correction_id:editor.dataset.supersedesCorrectionId||null" in html
+    assert "child_repair:{target_id:target,replacement_id:replacement,printed_marks:restorationRequested?" in html
+    assert "restore_source_state:restorationRequested" in html
+    assert "supersedes_correction_id:supersedesCorrectionId" in html
 
 
 def test_staged_target_removes_all_rows_and_progress_is_monotonic():

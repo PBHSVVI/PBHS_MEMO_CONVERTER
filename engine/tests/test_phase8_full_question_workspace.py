@@ -72,6 +72,57 @@ def test_effective_staged_overlay_uses_amendment_once_and_preserves_history():
     assert history[1]["effective"] is True
 
 
+def test_source_restoration_supersedes_bad_parent_mark_and_preserves_children():
+    structure = {
+        "questions": [
+            _question("2.1", 1, 0),
+            _question("2.1.1", 2, 1),
+            _question("2.1.2", 3, 1),
+            _question("2.2", 4, 2),
+            _question("2.3", 5, 2),
+            _question("2.4", 6, 3),
+        ],
+        "exceptions": [],
+        "summary": {},
+    }
+    structure["questions"][0]["printed_marks"] = None
+    structure["questions"][0]["computed_shorthand_marks"] = 0
+    structure["questions"][0]["mark_points"] = []
+    old = {
+        "id": "old-21", "confirmation_status": "confirmed", "confirmed_at": "2026-10-19T08:00:00Z",
+        "proposed_patch": {
+            "operation": "replace_item_content", "category": "question_total_mismatch",
+            "affected_id": "2", "target_id": "2.1", "replacement_id": "2.1",
+            "printed_marks": 1, "expected_total": 1,
+            "mark_points": [{"count": 1, "code": "A", "descriptor": "35.9", "source": "1A 35.9"}],
+            "reconciliation_scope": "suspicious_child",
+        },
+    }
+    restore = {
+        "id": "restore-21", "confirmation_status": "confirmed", "confirmed_at": "2026-10-19T09:00:00Z",
+        "proposed_patch": {
+            "operation": "withdraw_confirmed_correction", "category": "question_total_mismatch",
+            "affected_id": "2.1", "target_id": "2.1", "supersedes_correction_id": "old-21",
+            "supersession_reason": "teacher_restored_source_state", "source_restoration": True,
+            "reconciliation_scope": "suspicious_child",
+        },
+    }
+    result, applied, issues = apply_confirmed_corrections(structure, {}, [old, restore])
+    assert issues == []
+    assert [item["operation"] for item in applied] == ["withdraw_confirmed_correction"]
+    q21 = next(q for q in result["questions"] if q["question_id"] == "2.1")
+    assert q21["computed_shorthand_marks"] == 0
+    assert q21["mark_points"] == []
+    children = {q["question_id"]: q["computed_shorthand_marks"] for q in result["questions"] if q["question_id"] != "2.1"}
+    assert children == {"2.1.1": 1, "2.1.2": 1, "2.2": 2, "2.3": 2, "2.4": 3}
+    assert sum(children.values()) == 9
+    _, history = effective_correction_history([old, restore])
+    assert history[0]["effective"] is False
+    assert history[0]["superseded_by"] == "restore-21"
+    assert history[0]["supersession_reason"] == "teacher_restored_source_state"
+    assert history[1]["effective"] is True
+
+
 def test_question_workspace_projected_total_uses_latest_effective_staged_values():
     dependency = _section("REVIEW DEPENDENCY MODEL")
     child = _section("CHILD REPAIR MODEL")
@@ -96,6 +147,68 @@ console.log(JSON.stringify({projected:model.projected_total,rows:model.rows.map(
     assert result["effective"] == ["one", "new"]
     assert result["projected"] == 7
     assert result["rows"][1] == {"id": "1.2", "total": 3, "scheme": "3A new", "correction": "new"}
+
+
+def test_question_workspace_restoration_returns_parent_to_source_and_totals_children():
+    dependency = _section("REVIEW DEPENDENCY MODEL")
+    child = _section("CHILD REPAIR MODEL")
+    support = r"""
+function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
+"""
+    program = dependency + support + child + r"""
+const x=JSON.parse(process.argv[1]);
+const model=questionLedgerModel(x.structure,x.exceptions,x.staged,'2');
+console.log(JSON.stringify({projected:model.projected_total,effective:effectiveStagedCorrections(x.staged).map(item=>item.id),rows:model.rows.map(row=>({id:row.question_id,total:row.projected,staged:row.staged}))}));
+"""
+    questions = [_question("2.1", 1, 0), _question("2.1.1", 2, 1), _question("2.1.2", 3, 1),
+                 _question("2.2", 4, 2), _question("2.3", 5, 2), _question("2.4", 6, 3)]
+    questions[0].update({"printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []})
+    result = _node(program, {
+        "structure": {"questions": questions},
+        "exceptions": [{"id": "parent", "category": "question_total_mismatch", "affected_id": "2", "message": "Question 2 observed subtotal 9 does not equal computed 10."}],
+        "staged": [
+            {"id": "old", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "affected_id": "2", "target_id": "2.1", "expected_total": 1}},
+            {"id": "restore", "confirmation_status": "confirmed", "proposed_patch": {"operation": "withdraw_confirmed_correction", "affected_id": "2.1", "target_id": "2.1", "supersedes_correction_id": "old", "source_restoration": True}},
+        ],
+    })
+    assert result["effective"] == []
+    assert result["projected"] == 9
+    assert result["rows"][0] == {"id": "2.1", "total": 0, "staged": False}
+
+
+def test_source_mark_detection_allows_only_unmarked_structural_source():
+    child = _section("CHILD REPAIR MODEL")
+    program = child + r"""
+const x=JSON.parse(process.argv[1]);
+console.log(JSON.stringify(x.map(sourceQuestionHasDirectMarks)));
+"""
+    result = _node(program, [
+        {"question_id": "2.1", "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []},
+        {"question_id": "2.2", "printed_marks": 2, "computed_shorthand_marks": 2, "mark_points": []},
+        {"question_id": "2.3", "printed_marks": None, "computed_shorthand_marks": 0, "mark_points": [{"count": 1}]},
+    ])
+    assert result == [False, True, True]
+
+
+def test_restoration_showback_is_teacher_facing_and_contains_no_zero_mark_scheme():
+    showback = _section("TEACHER SHOWBACK MODEL")
+    program = showback + r"""
+const x=JSON.parse(process.argv[1]);
+console.log(JSON.stringify(teacherShowBackModel(x)));
+"""
+    result = _node(program, {
+        "display_text": "Question 2.1: restore the original memo state.",
+        "proposed_patch": {
+            "operation": "withdraw_confirmed_correction", "target_id": "2.1",
+            "source_restoration": True, "supersedes_correction_id": "old-21",
+            "previous_expected_total": 1,
+            "previous_mark_points": [{"count": 1, "code": "A", "descriptor": "35.9"}],
+        },
+    })
+    assert result["source_restoration"] is True
+    assert result["expected_total"] is None
+    assert result["mark_points"] == []
+    assert result["previous_mark_points"] == [{"count": 1, "code": "A", "descriptor": "35.9"}]
 
 
 def test_parent_overlay_reconciles_against_effective_staged_children():
@@ -189,6 +302,10 @@ def test_frontend_exposes_unflagged_editor_staged_amendment_and_pending_choices(
     assert "Continue pending correction" in page
     assert "Edit pending correction" in page
     assert "Pending — not saved" in page
+    assert "To restore the original memo state, clear the marking scheme" in page
+    assert "restore_source_state:restorationRequested" in page
+    assert "no direct mark allocation" in page
+    assert "The earlier saved version remains in the audit trail" in page
 
 
 def test_edge_contracts_validate_amendment_manual_context_and_duplicate_occurrence():
@@ -201,6 +318,11 @@ def test_edge_contracts_validate_amendment_manual_context_and_duplicate_occurren
     assert 'original_source_block_index: selectedSourceIndex' in submit
     assert 'supersession_reason: "teacher_amended_previous_change"' in submit
     assert 'priorPatch?.operation !== "replace_item_content"' in submit
+    assert "prior.applied_at" in submit
+    assert 'String(row.proposed_patch?.supersedes_correction_id ?? "") === supersedesCorrectionId' in submit
+    assert 'error: "invalid_source_restoration"' in submit
+    assert 'operation: "withdraw_confirmed_correction"' in submit
+    assert 'source_restoration: true' in submit
     assert 'reconciliation_scope: teacherInitiated ? "teacher_initiated_item"' in submit
     assert 'correction_scope: teacherInitiated ? "teacher_initiated_item"' in submit
     assert 'patch.correction_scope === "teacher_initiated_item"' in confirm

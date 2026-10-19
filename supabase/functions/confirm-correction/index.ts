@@ -108,6 +108,7 @@ export default {
     const patch = correction.proposed_patch as Record<string, unknown>;
     const retainParentReview = deferRevalidation && exception.category === "question_total_mismatch" && (
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
+      (patch.operation === "withdraw_confirmed_correction" && patch.source_restoration === true && patch.reconciliation_scope === "suspicious_child") ||
       (patch.operation === "insert_missing_child_question" && patch.reconciliation_scope === "missing_child") ||
       (patch.operation === "rename_question_identifier" && patch.correction_scope === "numbering_only")
     ) || deferRevalidation && (

@@ -61,7 +61,11 @@ def effective_correction_history(
         predecessor = str(patch.get("supersedes_correction_id") or "")
         successor = str(correction.get("id") or "")
         if predecessor and successor and positions.get(predecessor, i) < i:
-            reason = "teacher_withdrew_previous_change" if patch.get("operation") == "withdraw_confirmed_correction" else "teacher_amended_previous_change"
+            reason = str(patch.get("supersession_reason") or (
+                "teacher_withdrew_previous_change"
+                if patch.get("operation") == "withdraw_confirmed_correction"
+                else "teacher_amended_previous_change"
+            ))
             explicit_successors[predecessor] = (successor, reason)
     newer: dict[tuple[str, str], str] = {}
     history: list[dict[str, Any]] = []
