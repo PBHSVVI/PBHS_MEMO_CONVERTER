@@ -64,6 +64,24 @@ remains available as secondary evidence. Teachers can accept a readable
 transcription through the existing auditable content-correction path,
 edit/replace it, or submit new evidence.
 
+### Legacy identity and mixed-crop containment
+
+Historical raw observations that predate persisted `evidence_id` values receive
+a deterministic in-memory identifier derived from immutable page, crop, question,
+kind, normalized content, bounding box and ordinal provenance. Existing stored
+identifiers are never changed, and the historical artifact is not rewritten.
+An exception that no longer maps to a current raw observation remains visible in
+the technical audit but is excluded from teacher decisions.
+
+Physical review units are classified as `normal`, `mixed`, or
+`runaway_model_output`. Hitting the 40-item response ceiling, long sequential
+question-number readings, a high printed-identifier ratio, and unrelated content
+all contribute to the bounded classification. Normal units retain whole-region
+accept/reassign/reject actions. Mixed and runaway units start with no selection:
+the teacher may select specific distinct readings for accept/reassign, or reject
+the complete crop. The backend verifies every selected ID against the displayed
+physical unit. Raw unselected observations remain in the audit artifact.
+
 Phase 8 must not be declared accepted until a new private hybrid/write-on memo
 has completed controlled hosted acceptance. Existing live jobs are not reused
 or destroyed for this validation.

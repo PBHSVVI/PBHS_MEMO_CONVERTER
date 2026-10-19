@@ -76,13 +76,69 @@ def test_source_label_maps_to_current_question_after_numbering_correction():
 
 def test_ui_requires_explicit_bounded_choice_and_never_silently_selects_a_reading():
     source = PAGE.read_text(encoding="utf-8")
-    assert "These are alternative or duplicate readings of one physical source region" in source
-    assert "no reading is selected automatically" in source
-    assert "Accept for" in source
-    assert "Reassign selected question" in source
-    assert "Reject as noise / unusable evidence" in source
+    assert "Runaway model output contained" in source
+    assert "Select only a useful reading" in source
+    assert "Accept selected evidence" in source
+    assert "Reassign selected evidence" in source
+    assert "Reject whole region" in source
     assert "submitVisualAssociationDecision" in source
     assert "Accept this reading" not in source
+
+
+def test_stale_history_is_audit_visible_and_non_actionable():
+    model = _section("VISUAL ASSOCIATION REVIEW MODEL")
+    value = {"rows": [{
+        "id": "stale-row", "category": "visual_evidence_association_uncertain",
+        "affected_id": "4.1.1", "suggestions": [{
+            "rendered_asset_ref": "internal/visual/regions/page-0003-q4_1_1.png",
+            "owned_question_ref": "4.1.1",
+        }],
+    }], "visual": {"evidence": [], "mark_changes": []}}
+    program = model + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(await aggregateVisualAssociationRows(v.rows,v.visual)));"
+    result = _node(program, value)
+    assert result[0]["visual_review_state"] == "stale_historical"
+    assert result[0]["non_actionable"] is True
+    assert "does not require a teacher decision" in result[0]["stale_note"]
+
+
+def test_legacy_raw_observation_gets_safe_in_memory_id_without_rewriting_artifact():
+    model = _section("VISUAL ASSOCIATION REVIEW MODEL")
+    value = {"rows": [{
+        "id": "legacy-row", "category": "visual_evidence_association_uncertain",
+        "affected_id": "4.1.1", "suggestions": [{
+            "rendered_asset_ref": "internal/visual/regions/page-0003-q4_1_1.png",
+            "page": 3, "owned_question_ref": "4.1.1", "transcription": "x = 2",
+            "claimed_question_ref": "4.1.1",
+        }],
+    }], "visual": {"evidence": [{
+        "rendered_asset_ref": "internal/visual/regions/page-0003-q4_1_1.png",
+        "page": 3, "owned_question_ref": "4.1.1", "question_ref": "4.1.1",
+        "association_status": "context_only", "kind": "answer",
+        "transcription": "x = 2", "confidence": .9, "bbox": [1, 2, 3, 4],
+    }], "mark_changes": []}}
+    program = model + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(await aggregateVisualAssociationRows(v.rows,v.visual)));"
+    result = _node(program, value)
+    unit = result[0]["suggestions"][0]
+    assert re.fullmatch(r"[0-9a-f]{16}", unit["evidence_ids"][0])
+    assert unit["legacy_evidence_ids_derived"] == 1
+
+
+def test_runaway_distinct_readings_start_with_zero_selected_and_keep_duplicate_counts():
+    source = PAGE.read_text(encoding="utf-8")
+    assert 'class="visualObservationChoice"' in source
+    assert 'class="visualObservationChoice" data-index="${index}"' in source
+    assert 'suspicious?`<label class="visualObservation">' in source
+    assert "matching raw observations" in source
+    assert "Select at least one useful observation" in source
+    assert "review_unit_evidence_ids" in source
+
+
+def test_target_context_reports_existing_evidence_and_previews():
+    source = PAGE.read_text(encoding="utf-8")
+    assert "visualQuestionContext" in source
+    assert "currently has ${esc(ctx.evidence_count)} visual evidence observation" in source
+    assert "accepted visual solution segment" in source
+    assert "Existing:" in source
 
 
 def test_association_showback_is_readable_and_keeps_identifiers_technical():

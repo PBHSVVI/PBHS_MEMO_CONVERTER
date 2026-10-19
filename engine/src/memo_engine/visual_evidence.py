@@ -28,6 +28,7 @@ EVIDENCE_KINDS = {
     "other_visible_annotation",
 }
 VISUAL_REVIEW_THRESHOLD = 0.85
+VISUAL_EVIDENCE_MAX_ITEMS = 40
 DEFAULT_VISUAL_PHASE_TIMEOUT_SECONDS = 900.0
 DEFAULT_VISION_REQUEST_TIMEOUT_SECONDS = 45.0
 VISUAL_FAILURE_CIRCUIT_THRESHOLD = 3
@@ -493,10 +494,19 @@ def _association_status(
 
 def _is_printed_numeric_rediscovery(item: dict[str, Any], region: dict[str, Any]) -> bool:
     transcription = re.sub(r"\s+", "", str(item.get("transcription") or ""))
-    if not re.fullmatch(r"(?:\(\d{1,3}\)|\[\d{1,3}\])", transcription):
-        return False
     printed = re.sub(r"\s+", "", str(region.get("printed_text") or ""))
-    return transcription in printed
+    if re.fullmatch(r"(?:\(\d{1,3}\)|\[\d{1,3}\])", transcription):
+        return transcription in printed
+    # A bare question identifier which is already one of the deterministic
+    # crop anchors is printed source identity, not solution content.  Keep the
+    # raw observation for audit, but do not attach it as a solution.
+    return bool(
+        QUESTION_REF_RE.fullmatch(transcription)
+        and transcription in {
+            re.sub(r"\s+", "", str(value))
+            for value in region.get("question_refs") or []
+        }
+    )
 
 
 def _bbox_iou(left: Any, right: Any) -> float:
@@ -516,27 +526,140 @@ def _bbox_iou(left: Any, right: Any) -> float:
 
 def _normalized_evidence_text(item: dict[str, Any]) -> str:
     if "level" in item and "visual_value" in item:
-        return (
-            f"{item.get('level')}:{item.get('printed_value')}"
-            f"->{item.get('visual_value')}"
+        return json.dumps(
+            [item.get("level"), item.get("printed_value"), item.get("visual_value")],
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
     value = item.get("normalized_math") or item.get("transcription") or ""
-    return re.sub(r"\s+", " ", str(value)).strip().casefold()
+    return re.sub(r"\s+", " ", str(value)).strip().lower()
+
+
+def _cross_runtime_json_value(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_cross_runtime_json_value(item) for item in value]
+    return value
+
+
+def visual_evidence_identity_payload(item: dict[str, Any], index: int) -> dict[str, Any]:
+    """Return the cross-runtime immutable legacy evidence identity payload."""
+    return {
+        "bbox": _cross_runtime_json_value(item.get("source_page_bbox") or item.get("bbox")),
+        "index": index,
+        "kind": item.get("kind"),
+        "page": _cross_runtime_json_value(item.get("page")),
+        "question_ref": item.get("question_ref"),
+        "rendered_asset_ref": item.get("rendered_asset_ref"),
+        "text": _normalized_evidence_text(item),
+    }
+
+
+def legacy_visual_evidence_id(item: dict[str, Any], index: int) -> str:
+    canonical = json.dumps(
+        visual_evidence_identity_payload(item, index),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def ensure_visual_evidence_ids(items: list[dict[str, Any]]) -> None:
+    """Backfill missing historical IDs in memory; stored modern IDs are immutable."""
+    for index, item in enumerate(items):
+        if not item.get("evidence_id"):
+            item["evidence_id"] = legacy_visual_evidence_id(item, index)
+
+
+def probable_printed_identifier(item: dict[str, Any]) -> bool:
+    value = re.sub(
+        r"\s+", "", str(item.get("normalized_math") or item.get("transcription") or "")
+    ).rstrip(".")
+    return bool(QUESTION_REF_RE.fullmatch(value))
+
+
+def _longest_sequential_identifier_run(items: list[dict[str, Any]]) -> int:
+    grouped: dict[str, set[int]] = {}
+    for item in items:
+        value = re.sub(
+            r"\s+", "", str(item.get("normalized_math") or item.get("transcription") or "")
+        ).rstrip(".")
+        parts = value.split(".")
+        if len(parts) < 2 or not all(part.isdigit() for part in parts):
+            continue
+        grouped.setdefault(".".join(parts[:-1]), set()).add(int(parts[-1]))
+    longest = 0
+    for values in grouped.values():
+        current = 0
+        previous = None
+        for value in sorted(values):
+            current = current + 1 if previous is not None and value == previous + 1 else 1
+            longest = max(longest, current)
+            previous = value
+    return longest
+
+
+def classify_visual_review_unit(observations: list[dict[str, Any]]) -> dict[str, Any]:
+    count = len(observations)
+    distinct = {
+        (str(item.get("kind") or "mark_change"), _normalized_evidence_text(item))
+        for item in observations
+    }
+    identifier_count = sum(probable_printed_identifier(item) for item in observations)
+    identifier_ratio = identifier_count / count if count else 0.0
+    sequential_run = _longest_sequential_identifier_run(observations)
+    cap_hit = count == VISUAL_EVIDENCE_MAX_ITEMS
+    kind_count = len({str(item.get("kind") or "mark_change") for item in observations})
+    runaway = bool(
+        (cap_hit and (identifier_ratio >= 0.5 or sequential_run >= 5))
+        or (count >= 25 and identifier_ratio >= 0.7 and sequential_run >= 5)
+    )
+    mixed = bool(
+        not runaway
+        and count >= 4
+        and len(distinct) >= 3
+        and (identifier_ratio >= 0.5 or kind_count >= 3)
+    )
+    classification = "runaway_model_output" if runaway else "mixed" if mixed else "normal"
+    warnings = ["VISUAL_EVIDENCE_ITEM_CAP_REACHED"] if cap_hit else []
+    return {
+        "classification": classification,
+        "cap_hit": cap_hit,
+        "warnings": warnings,
+        "probable_printed_identifier_count": identifier_count,
+        "identifier_ratio": round(identifier_ratio, 4),
+        "sequential_identifier_run": sequential_run,
+        "distinct_observation_count": len(distinct),
+    }
+
+
+def distinct_visual_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in observations:
+        key = (str(item.get("kind") or "mark_change"), _normalized_evidence_text(item))
+        groups.setdefault(key, []).append(item)
+    result = []
+    for (kind, _), matches in groups.items():
+        first = matches[0]
+        result.append({
+            "reading": str(first.get("transcription") or first.get("normalized_math") or "").strip(),
+            "kind": kind,
+            "evidence_ids": [str(item["evidence_id"]) for item in matches],
+            "raw_observation_count": len(matches),
+            "probable_printed_source_rediscovery": all(
+                probable_printed_identifier(item) for item in matches
+            ),
+        })
+    return result
 
 
 def _deduplicate_visual_items(items: list[dict[str, Any]]) -> None:
+    ensure_visual_evidence_ids(items)
     effective: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         item.setdefault("effective", True)
-        item.setdefault("evidence_id", hashlib.sha256(json.dumps({
-            "page": item.get("page"),
-            "question_ref": item.get("question_ref"),
-            "kind": item.get("kind"),
-            "text": _normalized_evidence_text(item),
-            "bbox": item.get("source_page_bbox") or item.get("bbox"),
-            "rendered_asset_ref": item.get("rendered_asset_ref"),
-            "index": index,
-        }, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16])
         if not item.get("effective"):
             continue
         duplicate = next((candidate for candidate in effective if (
@@ -624,6 +747,7 @@ def visual_association_review_units(
         identity = json.dumps({
             "asset": asset, "page": page, "owned": owned, "status": status,
         }, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        classification = classify_visual_review_unit(observations)
         units.append({
             "schema_version": "1.0",
             "review_unit_type": "visual_evidence_association",
@@ -640,6 +764,12 @@ def visual_association_review_units(
             "raw_observation_count": len(observations),
             "provider_models": providers,
             "observation_kinds": list(dict.fromkeys(str(item.get("kind") or "mark_change") for item in observations)),
+            "unit_classification": classification["classification"],
+            "cap_hit": classification["cap_hit"],
+            "audit_warnings": classification["warnings"],
+            "probable_printed_identifier_count": classification["probable_printed_identifier_count"],
+            "sequential_identifier_run": classification["sequential_identifier_run"],
+            "distinct_observations": distinct_visual_observations(observations),
         })
     return units
 
@@ -655,6 +785,14 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response identity is invalid.")
     if not isinstance(payload["visual_content_present"], bool):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual presence must be boolean.")
+    if (
+        not isinstance(payload["evidence"], list)
+        or len(payload["evidence"]) > VISUAL_EVIDENCE_MAX_ITEMS
+        or not isinstance(payload["mark_changes"], list)
+        or len(payload["mark_changes"]) > 20
+        or not isinstance(payload["warnings"], list)
+    ):
+        raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response arrays exceed the closed schema.")
     evidence: list[dict[str, Any]] = []
     for item in payload["evidence"]:
         if not isinstance(item, dict) or set(item) != {"question_ref", "kind", "transcription", "normalized_math", "confidence", "source", "bbox"}:
@@ -963,6 +1101,14 @@ def extract_visual_evidence(
         record["evidence"].extend(result["evidence"])
         record["mark_changes"].extend(result["mark_changes"])
         record["warnings"].extend({"code": "VISUAL_MODEL_WARNING", "message": item, "page": region["page"]} for item in result["warnings"])
+        if len(result["evidence"]) == VISUAL_EVIDENCE_MAX_ITEMS:
+            record["warnings"].append({
+                "code": "VISUAL_EVIDENCE_ITEM_CAP_REACHED",
+                "message": "The visual model returned the maximum permitted evidence items for one physical crop.",
+                "page": region["page"],
+                "rendered_asset_ref": region["asset_path"],
+                "item_count": VISUAL_EVIDENCE_MAX_ITEMS,
+            })
         record["runs"].append({
             "provider": str(result.get("provider") or "groq"),
             "model": str(result.get("model") or model),
@@ -1079,7 +1225,9 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             }],
         })
     for warning in visual.get("warnings", []):
-        if warning.get("code") in {"VISUAL_MODEL_WARNING"}:
+        if warning.get("code") in {
+            "VISUAL_MODEL_WARNING", "VISUAL_EVIDENCE_ITEM_CAP_REACHED",
+        }:
             continue
         structure.setdefault("exceptions", []).append({
             "level": "red", "category": "visual_evidence_unread",

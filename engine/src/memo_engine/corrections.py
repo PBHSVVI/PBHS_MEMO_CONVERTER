@@ -17,6 +17,9 @@ from .structure import (
 from .phase7_5 import apply_phase7_5_patch
 from .visual_evidence import (
     VISUAL_REVIEW_THRESHOLD,
+    classify_visual_review_unit,
+    ensure_visual_evidence_ids,
+    probable_printed_identifier,
     visual_association_review_units,
     visual_association_unit_key,
 )
@@ -476,10 +479,15 @@ def _apply_visual_evidence_association(
             f"Confirmed correction {correction_id} does not identify one valid physical visual review unit.",
         )
 
-    raw_items = [
-        item for item in [*(visual.get("evidence") or []), *(visual.get("mark_changes") or [])]
-        if isinstance(item, dict)
+    evidence_items = [
+        item for item in visual.get("evidence") or [] if isinstance(item, dict)
     ]
+    mark_change_items = [
+        item for item in visual.get("mark_changes") or [] if isinstance(item, dict)
+    ]
+    ensure_visual_evidence_ids(evidence_items)
+    ensure_visual_evidence_ids(mark_change_items)
+    raw_items = [*evidence_items, *mark_change_items]
     by_id: dict[str, list[dict[str, Any]]] = {}
     for item in raw_items:
         evidence_id = str(item.get("evidence_id") or "")
@@ -510,10 +518,42 @@ def _apply_visual_evidence_association(
     physical = selected if association_status == "unresolved_question" else [
         item for item in raw_items if matches_physical(item)
     ]
-    if set(map(str, evidence_ids)) != {str(item.get("evidence_id")) for item in physical}:
+    physical_ids = [str(item.get("evidence_id")) for item in physical]
+    classification = classify_visual_review_unit(physical)
+    unit_classification = str(patch.get("unit_classification") or classification["classification"])
+    selection_mode = str(patch.get("selection_mode") or "legacy_whole_unit")
+    displayed_ids = patch.get("review_unit_evidence_ids")
+    modern_selection = selection_mode in {"whole_unit", "explicit_subset"}
+    if modern_selection and (
+        unit_classification != classification["classification"]
+        or not isinstance(displayed_ids, list)
+        or len(displayed_ids) != len(set(map(str, displayed_ids)))
+        or set(map(str, displayed_ids)) != set(physical_ids)
+    ):
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} does not match the displayed visual review classification.",
+        )
+    requires_complete = (
+        decision == "REJECT"
+        or not modern_selection
+        or unit_classification == "normal"
+        or selection_mode == "whole_unit"
+    )
+    if requires_complete and set(map(str, evidence_ids)) != set(physical_ids):
         return None, _issue(
             "correction_evidence_unresolved", affected_id,
             f"Confirmed correction {correction_id} covers only part of the physical visual review unit.",
+        )
+    if (
+        modern_selection
+        and unit_classification in {"mixed", "runaway_model_output"}
+        and decision != "REJECT"
+        and selection_mode != "explicit_subset"
+    ):
+        return None, _issue(
+            "correction_evidence_unresolved", affected_id,
+            f"Confirmed correction {correction_id} did not explicitly select mixed visual observations.",
         )
     unit_items = [
         {**item, "association_status": association_status}
@@ -527,10 +567,11 @@ def _apply_visual_evidence_association(
             f"Confirmed correction {correction_id} no longer matches one stable visual review unit.",
         )
     unit = units[0]
+    provenance_unit = visual_association_review_units(selected)[0] if modern_selection else unit
     if (
-        patch.get("source_page_bboxes") != unit.get("source_page_bboxes")
-        or patch.get("owned_bbox") != unit.get("owned_bbox")
-        or patch.get("original_claimed_question_refs") != unit.get("claimed_question_refs")
+        patch.get("source_page_bboxes") != provenance_unit.get("source_page_bboxes")
+        or patch.get("owned_bbox") != provenance_unit.get("owned_bbox")
+        or patch.get("original_claimed_question_refs") != provenance_unit.get("claimed_question_refs")
     ):
         return None, _issue(
             "correction_evidence_unresolved", affected_id,
@@ -615,6 +656,12 @@ def _apply_visual_evidence_association(
             if (
                 item.get("kind") in {"answer", "answer_working", "diagram_entry"}
                 and not item.get("math_normalization_issue")
+                and not (
+                    item.get("evidence_status") == "printed_source_rediscovery"
+                    or modern_selection
+                    and unit_classification in {"mixed", "runaway_model_output"}
+                    and probable_printed_identifier(item)
+                )
                 and float(item.get("confidence") or 0) >= VISUAL_REVIEW_THRESHOLD
             ):
                 text = str(item.get("normalized_math") or item.get("transcription") or "").strip()
@@ -662,6 +709,9 @@ def _apply_visual_evidence_association(
         "affected_id": affected_id,
         "target_id": target_id or None,
         "decision": decision,
+        "selection_mode": selection_mode,
+        "unit_classification": unit_classification,
+        "selected_evidence_count": len(selected),
         "review_unit_id": review_unit_id,
         "evidence_ids": list(map(str, evidence_ids)),
         "rendered_asset_ref": asset,

@@ -109,7 +109,7 @@ def test_distinct_readings_share_one_crop_unit_but_different_crops_never_merge()
 
 
 def test_accept_uses_current_question_for_source_owner_and_attaches_only_that_target():
-    visual = _visual([_observation(1), _observation(2)])
+    visual = _visual([_observation(1, "x = 2"), _observation(2, "x = 2")])
     fused = fuse_visual_evidence(_structure(), visual)
     unit = fused["exceptions"][0]["suggestions"][0]
 

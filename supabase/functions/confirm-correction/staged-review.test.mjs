@@ -53,8 +53,8 @@ test("visual association decisions use a structured deterministic contract", () 
   assert.match(submitSource, /visual_association_evidence_mismatch/);
   assert.match(submitSource, /invalid_visual_association_target/);
   assert.match(confirmSource, /visual:\$\{String\(patch\.review_unit_id/);
-  assert.match(reviewSource, /Accept for/);
-  assert.match(reviewSource, /Reassign selected question/);
-  assert.match(reviewSource, /Reject as noise \/ unusable evidence/);
+  assert.match(reviewSource, /Accept selected evidence/);
+  assert.match(reviewSource, /Reassign selected evidence/);
+  assert.match(reviewSource, /Reject whole region/);
   assert.doesNotMatch(reviewSource, /Accept this reading/);
 });

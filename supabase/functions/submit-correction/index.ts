@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
+import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -490,6 +491,9 @@ export default {
         const associationStatus = typeof value.association_status === "string" ? value.association_status : "";
         const targetId = typeof value.target_id === "string" ? value.target_id.trim() : "";
         const suppliedIds = Array.isArray(value.evidence_ids) ? value.evidence_ids.map((item) => String(item)) : [];
+        const displayedIds = Array.isArray(value.review_unit_evidence_ids) ? value.review_unit_evidence_ids.map((item) => String(item)) : [];
+        const selectionMode = String(value.selection_mode ?? "");
+        const suppliedClassification = String(value.unit_classification ?? "");
         const exceptionSuggestions = Array.isArray(exception.suggestions) ? exception.suggestions : [];
         const exceptionMatches = exceptionSuggestions.some((item) => {
           if (!item || typeof item !== "object") return false;
@@ -503,7 +507,10 @@ export default {
           !asset.startsWith("internal/visual/") || asset.includes("..") ||
           !Number.isInteger(page) || page < 1 || !associationStatus ||
           !suppliedIds.length || suppliedIds.length > 200 ||
-          new Set(suppliedIds).size !== suppliedIds.length || !exceptionMatches
+          !displayedIds.length || displayedIds.length > 200 ||
+          new Set(suppliedIds).size !== suppliedIds.length ||
+          new Set(displayedIds).size !== displayedIds.length ||
+          !["whole_unit", "explicit_subset"].includes(selectionMode) || !exceptionMatches
         ) {
           return Response.json({ error: "invalid_visual_association_unit" }, { status: 400 });
         }
@@ -512,8 +519,10 @@ export default {
           loadVisualEvidence(ctx, job.user_id, jobId),
         ]);
         const questions = Array.isArray(structure?.questions) ? structure.questions.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : [];
-        const evidence = Array.isArray(visual?.evidence) ? visual.evidence : [];
-        const markChanges = Array.isArray(visual?.mark_changes) ? visual.mark_changes : [];
+        const evidence = await ensureVisualEvidenceIds(Array.isArray(visual?.evidence)
+          ? visual.evidence.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : []);
+        const markChanges = await ensureVisualEvidenceIds(Array.isArray(visual?.mark_changes)
+          ? visual.mark_changes.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : []);
         const raw = [...evidence, ...markChanges].filter((item) => item && typeof item === "object") as Record<string, unknown>[];
         const physical = raw.filter((item) =>
           String(item.rendered_asset_ref ?? "") === asset &&
@@ -523,10 +532,20 @@ export default {
             associationStatus === "unresolved_question" && suppliedIds.includes(String(item.evidence_id ?? "")))
         );
         const physicalIds = physical.map((item) => String(item.evidence_id ?? "")).filter(Boolean);
-        const exactIds = physicalIds.length === suppliedIds.length &&
-          new Set(physicalIds).size === physicalIds.length &&
+        const uniquePhysical = new Set(physicalIds).size === physicalIds.length;
+        const exactDisplayed = physicalIds.length === displayedIds.length &&
+          uniquePhysical && physicalIds.every((item) => displayedIds.includes(item));
+        const selected = physical.filter((item) => suppliedIds.includes(String(item.evidence_id ?? "")));
+        const exactSelected = selected.length === suppliedIds.length;
+        const classification = classifyVisualReviewUnit(physical);
+        const completeSelection = suppliedIds.length === physicalIds.length &&
           physicalIds.every((item) => suppliedIds.includes(item));
-        if (!physical.length || !exactIds) {
+        const selectionAllowed = decision === "REJECT"
+          ? completeSelection && selectionMode === "whole_unit"
+          : classification === "normal"
+          ? completeSelection && selectionMode === "whole_unit"
+          : selectionMode === "explicit_subset";
+        if (!physical.length || !exactDisplayed || !exactSelected || suppliedClassification !== classification || !selectionAllowed) {
           return Response.json({ error: "visual_association_evidence_mismatch" }, { status: 409 });
         }
         const currentTarget = questions.filter((item) => String(item.question_id ?? "") === targetId);
@@ -544,11 +563,11 @@ export default {
         if (String(value.review_unit_id ?? "") !== reviewUnitId) {
           return Response.json({ error: "visual_association_unit_changed" }, { status: 409 });
         }
-        const claimedQuestionRefs = [...new Set(physical.map((item) => String(item.question_ref ?? "")).filter(Boolean))];
-        const sourcePageBboxes = physical.map((item) => item.source_page_bbox ?? item.bbox).filter((bbox, index, all) =>
+        const claimedQuestionRefs = [...new Set(selected.map((item) => String(item.question_ref ?? "")).filter(Boolean))];
+        const sourcePageBboxes = selected.map((item) => item.source_page_bbox ?? item.bbox).filter((bbox, index, all) =>
           Array.isArray(bbox) && bbox.length === 4 && all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(bbox)) === index
         );
-        const ownedBbox = physical.find((item) => Array.isArray(item.owned_bbox) && item.owned_bbox.length === 4)?.owned_bbox ?? null;
+        const ownedBbox = selected.find((item) => Array.isArray(item.owned_bbox) && item.owned_bbox.length === 4)?.owned_bbox ?? null;
         proposedPatch = {
           schema_version: "1.0",
           operation: "resolve_visual_evidence_association",
@@ -556,7 +575,10 @@ export default {
           affected_id: exception.affected_id,
           decision,
           review_unit_id: reviewUnitId,
-          evidence_ids: physicalIds,
+          evidence_ids: suppliedIds,
+          review_unit_evidence_ids: physicalIds,
+          selection_mode: selectionMode,
+          unit_classification: classification,
           rendered_asset_ref: asset,
           source_page: page,
           source_page_bboxes: sourcePageBboxes,
@@ -568,10 +590,10 @@ export default {
           reinterpretation_method: "structured_visual_association_editor",
         };
         displayText = decision === "REJECT"
-          ? `Reject the visual observations from the page ${page} source region as unusable memo evidence.`
+          ? `Reject all ${physicalIds.length} visual observations from the page ${page} source region as unusable memo evidence.`
           : decision === "ACCEPT"
-          ? `Accept the visual observations from page ${page} for Question ${targetId}.`
-          : `Reassign the visual observations from page ${page} to Question ${targetId}.`;
+          ? `Accept ${suppliedIds.length} selected visual observation${suppliedIds.length === 1 ? "" : "s"} from page ${page} for Question ${targetId}.`
+          : `Reassign ${suppliedIds.length} selected visual observation${suppliedIds.length === 1 ? "" : "s"} from page ${page} to Question ${targetId}.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (correctionRevision && typeof correctionRevision === "object") {
         if (!String(exception.category ?? "").startsWith("correction_")) {
