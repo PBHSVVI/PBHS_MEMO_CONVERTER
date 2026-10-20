@@ -137,11 +137,12 @@ async function validateVisualMarkChangeUnit(ctx: any, job: any, exception: any, 
   const page = visualMarkChangePage(value);
   const affected = String(value.affected_question ?? "");
   const level = String(value.level ?? "");
+  const sourceBlockIndex = value.source_block_index == null ? null : Number(value.source_block_index);
   const memberIds = Array.isArray(value.member_exception_ids) ? value.member_exception_ids.map(String).sort() : [];
   const evidenceIds = Array.isArray(value.evidence_ids) ? value.evidence_ids.map(String) : [];
   const suppliedCandidates = Array.isArray(value.candidates) ? value.candidates.map((entry: any) => ({ value: Number(entry?.value), observation_count: Number(entry?.observation_count) })).sort((a, b) => a.value - b.value) : [];
   const selectedValue = value.selected_value == null ? null : Number(value.selected_value);
-  if (!['USE', 'MANUAL', 'REJECT'].includes(decision) || !asset.startsWith("internal/visual/") || asset.includes("..") || !QUESTION_ID_RE.test(affected) || affected !== String(exception.affected_id ?? "") || !level || !memberIds.length || new Set(memberIds).size !== memberIds.length || evidenceIds.length > 200 || new Set(evidenceIds).size !== evidenceIds.length) {
+  if (!['USE', 'MANUAL', 'REJECT'].includes(decision) || !asset.startsWith("internal/visual/") || asset.includes("..") || !QUESTION_ID_RE.test(affected) || affected !== String(exception.affected_id ?? "") || !level || !Number.isInteger(sourceBlockIndex) || Number(sourceBlockIndex) < 0 || !memberIds.length || new Set(memberIds).size !== memberIds.length || evidenceIds.length > 200 || new Set(evidenceIds).size !== evidenceIds.length) {
     return { ok: false, error: "invalid_visual_mark_change_unit", status: 400 };
   }
   const { data: rows, error } = await ctx.supabaseAdmin.from("exceptions")
@@ -170,10 +171,17 @@ async function validateVisualMarkChangeUnit(ctx: any, job: any, exception: any, 
   let availableEvidenceIds: string[] = [];
   const visual = await loadVisualEvidence(ctx, job.user_id, job.id);
   const markChanges = await ensureVisualEvidenceIds(Array.isArray(visual?.mark_changes) ? visual.mark_changes.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : []);
-  availableEvidenceIds = [...new Set(markChanges.filter((item: any) => String(item.rendered_asset_ref ?? "") === asset && String(item.question_ref ?? item.owned_question_ref ?? "") === affected && String(item.level ?? "") === level && candidates.some((candidate) => candidate.value === Number(item.visual_value))).map((item: any) => String(item.evidence_id ?? "")).filter(Boolean))].sort();
+  const linkedEvidenceIds = [...new Set(matching.flatMap((row: any) => {
+    const suggestion = Array.isArray(row.suggestions) ? row.suggestions[0] ?? {} : {};
+    return suggestion.evidence_id ? [String(suggestion.evidence_id)] : [];
+  }))].sort();
+  const evidenceRows = linkedEvidenceIds.length
+    ? markChanges.filter((item: any) => String(item.rendered_asset_ref ?? "") === asset && linkedEvidenceIds.includes(String(item.evidence_id ?? "")))
+    : markChanges.filter((item: any) => String(item.rendered_asset_ref ?? "") === asset && String(item.level ?? "") === level && String(item.question_ref ?? item.owned_question_ref ?? "") === affected && candidates.some((candidate) => candidate.value === Number(item.visual_value)));
+  availableEvidenceIds = [...new Set(evidenceRows.map((item: any) => String(item.evidence_id ?? "")).filter(Boolean))].sort();
   const suppliedEvidenceIds = [...evidenceIds].sort();
   if (availableEvidenceIds.length !== suppliedEvidenceIds.length || availableEvidenceIds.some((id, index) => id !== suppliedEvidenceIds[index])) return { ok: false, error: "visual_mark_change_evidence_mismatch", status: 409 };
-  return { ok: true, decision, asset, page, affected, level, memberIds, evidenceIds, candidates, selectedValue, reviewUnitId, rawCount: matching.length, printedValue: value.printed_value == null ? null : Number(value.printed_value) };
+  return { ok: true, decision, asset, page, affected, level, sourceBlockIndex, memberIds, evidenceIds, candidates, selectedValue, reviewUnitId, rawCount: matching.length, printedValue: value.printed_value == null ? null : Number(value.printed_value) };
 }
 
 // BEGIN EFFECTIVE PARENT TOTAL MODEL
@@ -198,6 +206,24 @@ function numericQuestionTotal(question) {
     const count = point && typeof point === "object" ? Number(point.count) : 0;
     return total + (Number.isInteger(count) && count > 0 ? count : 0);
   }, 0);
+}
+
+function effectiveVisualItemState(structure, corrections, questionId, sourceBlockIndex) {
+  const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+  const matches = questions.filter((entry) => entry && typeof entry === "object" &&
+    String(entry.question_id ?? "") === questionId && Number(entry.source_block_index) === Number(sourceBlockIndex));
+  if (matches.length !== 1) return null;
+  const question = matches[0];
+  const patches = effectiveConfirmedCorrections(Array.isArray(corrections) ? corrections : []).map((row) => ({
+    ...(row.proposed_patch && typeof row.proposed_patch === "object" ? row.proposed_patch : {}),
+    _correction_id: row.id,
+  }));
+  const patch = [...patches].reverse().find((item) => item.operation === "replace_item_content" &&
+    String(item.target_id ?? item.affected_id ?? "") === questionId &&
+    (item.source_block_index == null || Number(item.source_block_index) === Number(sourceBlockIndex)));
+  const total = Number(patch?.expected_total ?? patch?.printed_marks ?? numericQuestionTotal(question));
+  if (!Number.isInteger(total) || total < 0 || total > 999) return null;
+  return { question, total, correctionId: patch?._correction_id ?? null };
 }
 
 function effectiveChildTotal(
@@ -542,28 +568,46 @@ export default {
       if (visualMarkChange && typeof visualMarkChange === "object" && !childRepair) {
         const validated = await validateVisualMarkChangeUnit(ctx, job, exception, visualMarkChange as Record<string, unknown>);
         if (!validated.ok) return Response.json({ error: validated.error }, { status: validated.status });
-        if (validated.decision !== "REJECT") return Response.json({ error: "visual_mark_change_marking_scheme_required" }, { status: 400 });
+        let effectiveState: any = null;
+        if (validated.decision === "USE") {
+          const structure = await loadStructure(ctx, job.user_id, jobId);
+          if (!structure) return Response.json({ error: "visual_mark_change_effective_state_unavailable" }, { status: 409 });
+          const { data: confirmedRows, error: confirmedError } = await ctx.supabaseAdmin.from("corrections")
+            .select("id,proposed_patch").eq("job_id", jobId).eq("confirmation_status", "confirmed");
+          if (confirmedError) return Response.json({ error: "visual_mark_change_effective_state_unavailable" }, { status: 502 });
+          effectiveState = effectiveVisualItemState(structure, confirmedRows ?? [], validated.affected, validated.sourceBlockIndex);
+          if (!effectiveState || effectiveState.total !== validated.selectedValue) {
+            return Response.json({ error: "visual_mark_change_effective_total_mismatch", effective_total: effectiveState?.total ?? null }, { status: 409 });
+          }
+        } else if (validated.decision !== "REJECT") {
+          return Response.json({ error: "visual_mark_change_marking_scheme_required" }, { status: 400 });
+        }
         proposedPatch = {
           schema_version: "1.0",
           operation: "resolve_visual_mark_change",
           category: exception.category,
           affected_id: validated.affected,
           target_id: validated.affected,
-          decision: "REJECT",
-          visual_mark_change_decision: "REJECT",
+          decision: validated.decision,
+          visual_mark_change_decision: validated.decision,
           visual_mark_change_review_unit_id: validated.reviewUnitId,
           visual_mark_change_rendered_asset_ref: validated.asset,
           visual_mark_change_source_page: validated.page,
           visual_mark_change_level: validated.level,
           visual_mark_change_printed_value: validated.printedValue,
-          visual_mark_change_selected_value: null,
+          visual_mark_change_selected_value: validated.selectedValue,
+          visual_mark_change_matches_effective_total: validated.decision === "USE",
+          visual_mark_change_effective_total: effectiveState?.total ?? null,
           visual_mark_change_candidates: validated.candidates,
           visual_mark_change_raw_observation_count: validated.rawCount,
           visual_mark_change_member_exception_ids: validated.memberIds,
           visual_mark_change_evidence_ids: validated.evidenceIds,
+          source_block_index: validated.sourceBlockIndex,
           reinterpretation_method: "structured_visual_mark_change_editor",
         };
-        displayText = `Question ${validated.affected}: ignore all ${validated.rawCount} conflicting visual mark observations and keep the source-derived state.`;
+        displayText = validated.decision === "USE"
+          ? `Question ${validated.affected}: confirm the visual ${validated.selectedValue}-mark reading agrees with the current effective item. Preserve the existing content and marking scheme unchanged.`
+          : `Question ${validated.affected}: ignore all ${validated.rawCount} conflicting visual mark observations and keep the source-derived state.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (visualAssociation && typeof visualAssociation === "object") {
         if (exception.category !== "visual_evidence_association_uncertain") {

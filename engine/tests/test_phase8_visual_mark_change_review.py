@@ -83,7 +83,7 @@ def test_review_model_never_preselects_majority_and_keeps_bounded_actions():
         "candidates": [{"value": 1, "observation_count": 2}, {"value": 2, "observation_count": 1}],
     }
     value = {"ex": {"category": "visual_mark_change_review", "affected_id": "4.1.1", "suggestions": [unit]}, "structure": {"questions": [{"question_id": "4.1.1", "source_block_index": 4}]}}
-    program = "const visualDistinctValues=v=>[...new Set(v.map(String))];\n" + model + "\nconst v=JSON.parse(process.argv[1]);const m=visualMarkChangeReviewModel(v.ex,v.structure);console.log(JSON.stringify({m,use:visualMarkChangeResolutionPayload(m,'USE',2),reject:visualMarkChangeResolutionPayload(m,'REJECT')}));"
+    program = "const visualDistinctValues=v=>[...new Set(v.map(String))];const effectiveStagedCorrections=v=>v;const markingSchemeText=p=>(p||[]).map(x=>x.source||`${x.count}${x.code} ${x.descriptor}`).join('\\n');\n" + model + "\nconst v=JSON.parse(process.argv[1]);const m=visualMarkChangeReviewModel(v.ex,v.structure,[]);console.log(JSON.stringify({m,use:visualMarkChangeResolutionPayload(m,'USE',2),reject:visualMarkChangeResolutionPayload(m,'REJECT')}));"
     result = _node(program, value)
     assert result["m"]["selected_value"] is None
     assert [item["value"] for item in result["m"]["candidates"]] == [1, 2]
@@ -111,10 +111,15 @@ def test_dedicated_ui_requires_complete_scheme_and_has_no_reassignment_or_ai_cal
     assert "Use ${esc(item.value)} mark" in card
     assert "observation${item.observation_count===1?'':'s'}" in card
     assert "Ignore visual mark change / keep source state" in card
-    assert "Edit Question ${esc(model.affected_question)} manually" in card
+    assert "Review this mark correction" in card
     assert "Reassign" not in card
     assert "submitSuggestion" not in card
     assert "invoke(" not in card
+    assert "submitVisualMarkChangeAgreement" in card
+    assert "submitVisualMarkChangeEditor" in card
+    assert "if(value===model.effective_total)submitVisualMarkChangeAgreement" in card
+    assert "else open('USE',value)" in card
+    assert "manualVisualMark').onclick=()=>open('MANUAL',model.effective_total)" in card
     assert "enter both the question total and the complete marking scheme" in submit
     assert "parsed.total!==total" in submit
     assert "visual_mark_change_resolution" in submit
@@ -169,3 +174,100 @@ def test_visual_mark_content_change_reuses_strict_mark_validation_and_audit():
     assert applied["visual_mark_change_review_unit_id"] == "unit-1"
     assert structure["questions"][0]["correction_overlay"]["visual_mark_change_decision"] == "USE"
     assert not structure["exceptions"]
+
+
+def test_matching_visual_value_resolves_without_rewriting_effective_item_and_is_replay_safe():
+    original_question = {
+        "question_id": "4.1.2",
+        "path": [4, 1, 2],
+        "depth": 3,
+        "source_block_index": 2,
+        "printed_marks": 1,
+        "computed_shorthand_marks": 1,
+        "mark_points": [{"count": 1, "code": "A", "descriptor": "accepted answer"}],
+        "correction_overlay": {"correction_id": "earlier-content-fix"},
+    }
+    patch = {
+        "operation": "resolve_visual_mark_change",
+        "affected_id": "4.1.2",
+        "target_id": "4.1.2",
+        "decision": "USE",
+        "visual_mark_change_decision": "USE",
+        "visual_mark_change_selected_value": 1,
+        "visual_mark_change_matches_effective_total": True,
+        "visual_mark_change_review_unit_id": "unit-q412",
+        "visual_mark_change_member_exception_ids": ["member-1"],
+        "visual_mark_change_evidence_ids": ["evidence-1"],
+        "source_block_index": 2,
+    }
+
+    for correction_id in ("first-replay", "second-replay"):
+        structure = {
+            "questions": [deepcopy(original_question)],
+            "exceptions": [{"category": "visual_mark_change_review", "affected_id": "4.1.2"}],
+        }
+        applied, issue, handled = apply_phase7_5_patch(
+            structure, {}, correction_id=correction_id,
+            category="visual_mark_change_review", affected_id="4.1.2",
+            operation="resolve_visual_mark_change", patch=patch,
+        )
+        assert handled and issue is None
+        assert structure["questions"] == [original_question]
+        assert structure["exceptions"] == []
+        assert applied["visual_mark_change_decision"] == "USE"
+        assert applied["visual_mark_change_selected_value"] == 1
+        assert applied["visual_mark_change_review_unit_id"] == "unit-q412"
+        assert applied["visual_mark_change_member_exception_ids"] == ["member-1"]
+        assert applied["visual_mark_change_evidence_ids"] == ["evidence-1"]
+        assert applied["source_state_preserved"] is True
+
+
+def test_matching_candidate_model_uses_effective_item_state_without_mark_points_payload():
+    model = _section("VISUAL MARK CHANGE REVIEW MODEL")
+    unit = {
+        "review_unit_type": "visual_mark_change",
+        "review_unit_id": "unit-q412",
+        "affected_question": "4.1.2",
+        "rendered_asset_ref": "internal/visual/regions/page-0003-q4_1_1.png",
+        "source_page": 3,
+        "level": "subtotal",
+        "raw_observation_count": 1,
+        "member_exception_ids": ["member-1"],
+        "evidence_ids": ["evidence-1"],
+        "candidates": [{"value": 1, "observation_count": 1}],
+    }
+    value = {
+        "ex": {"category": "visual_mark_change_review", "affected_id": "4.1.2", "suggestions": [unit]},
+        "structure": {"questions": [{
+            "question_id": "4.1.2", "source_block_index": 2,
+            "printed_marks": 1, "computed_shorthand_marks": 1,
+            "mark_points": [{"count": 1, "code": "A", "descriptor": "accepted answer", "source": "1A accepted answer"}],
+        }]},
+    }
+    program = "const visualDistinctValues=v=>[...new Set(v.map(String))];const effectiveStagedCorrections=v=>v;const markingSchemeText=p=>(p||[]).map(x=>x.source||`${x.count}${x.code} ${x.descriptor}`).join('\\n');\n" + model + "\nconst v=JSON.parse(process.argv[1]);const m=visualMarkChangeReviewModel(v.ex,v.structure,[]);const payload=visualMarkChangeResolutionPayload(m,'USE',1);console.log(JSON.stringify({m,payload}));"
+    result = _node(program, value)
+    assert result["m"]["effective_total"] == 1
+    assert result["m"]["source_block_index"] == 2
+    assert result["payload"]["decision"] == "USE"
+    assert result["payload"]["selected_value"] == 1
+    assert result["payload"]["effective_item_total"] == 1
+    assert result["payload"]["source_block_index"] == 2
+    assert "mark_points" not in result["payload"]
+
+
+def test_same_textual_identifier_on_another_page_cannot_join_visual_unit():
+    association = _section("VISUAL ASSOCIATION REVIEW MODEL")
+    rows = _raw_rows()[:1] + [{
+        "id": "page-5-member",
+        "category": "visual_mark_change_review",
+        "affected_id": "4.1.1",
+        "level": "amber",
+        "suggestions": [{
+            "level": "subtotal", "visual_value": 1, "printed_value": None,
+            "rendered_asset_ref": "internal/visual/regions/page-0005-q4_1_1.png",
+        }],
+    }]
+    program = association + "\nconst v=JSON.parse(process.argv[1]);const r=await aggregateVisualMarkChangeRows(v.rows,{mark_changes:[]});console.log(JSON.stringify(r));"
+    result = _node(program, {"rows": rows})
+    assert len(result) == 2
+    assert {item["suggestions"][0]["source_page"] for item in result} == {3, 5}

@@ -1428,8 +1428,13 @@ def apply_phase7_5_patch(
         target_id = str(patch.get("target_id") or patch.get("affected_id") or "").strip()
         review_unit_id = str(patch.get("visual_mark_change_review_unit_id") or "").strip()
         member_ids = patch.get("visual_mark_change_member_exception_ids")
+        decision = str(
+            patch.get("visual_mark_change_decision") or patch.get("decision") or ""
+        ).upper()
+        selected_value = patch.get("visual_mark_change_selected_value")
+        source_index = patch.get("source_block_index")
         if (
-            str(patch.get("visual_mark_change_decision") or patch.get("decision") or "").upper() != "REJECT"
+            decision not in {"REJECT", "USE"}
             or not QUESTION_ID_RE.fullmatch(target_id)
             or target_id != affected
             or not review_unit_id
@@ -1439,8 +1444,33 @@ def apply_phase7_5_patch(
         ):
             return None, _issue(
                 "correction_visual_mark_change_invalid", affected_id,
-                f"Confirmed correction {correction_id} contains an invalid visual mark-change rejection.",
+                f"Confirmed correction {correction_id} contains an invalid visual mark-change resolution.",
             ), True
+        if decision == "USE":
+            questions = [
+                question for question in structure.get("questions", [])
+                if str(question.get("question_id") or "") == target_id
+                and question.get("source_block_index") == source_index
+            ]
+            question = questions[0] if len(questions) == 1 else None
+            effective_total = (
+                int(question.get("computed_shorthand_marks") or 0)
+                if question is not None else None
+            )
+            if (
+                not isinstance(selected_value, int)
+                or selected_value < 0
+                or patch.get("visual_mark_change_matches_effective_total") is not True
+                or not isinstance(source_index, int)
+                or source_index < 0
+                or question is None
+                or effective_total != selected_value
+            ):
+                return None, _issue(
+                    "correction_visual_mark_change_effective_total_mismatch",
+                    affected_id,
+                    f"Confirmed correction {correction_id} does not match the effective total for Question {target_id}.",
+                ), True
         _remove_exception(structure, category, affected_id)
         return {
             "correction_id": correction_id,
@@ -1448,9 +1478,18 @@ def apply_phase7_5_patch(
             "category": category,
             "affected_id": affected_id,
             "target_id": target_id,
-            "visual_mark_change_decision": "REJECT",
+            "visual_mark_change_decision": decision,
+            "visual_mark_change_selected_value": selected_value,
+            "visual_mark_change_matches_effective_total": decision == "USE",
             "visual_mark_change_review_unit_id": review_unit_id,
             "visual_mark_change_member_exception_ids": list(member_ids),
+            "visual_mark_change_evidence_ids": list(
+                patch.get("visual_mark_change_evidence_ids") or []
+            ),
+            "visual_mark_change_effective_total": patch.get(
+                "visual_mark_change_effective_total"
+            ),
+            "source_block_index": source_index,
             "source_state_preserved": True,
         }, None, True
 
