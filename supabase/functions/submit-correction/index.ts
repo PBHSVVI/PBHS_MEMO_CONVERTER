@@ -118,6 +118,64 @@ async function visualReviewUnitId(asset: string, page: number, owned: string, st
   return [...new Uint8Array(bytes)].map((item) => item.toString(16).padStart(2, "0")).join("").slice(0, 20);
 }
 
+function visualMarkChangePage(value: Record<string, unknown>): number | null {
+  const direct = Number(value.page ?? value.source_page);
+  const match = String(value.rendered_asset_ref ?? "").match(/page-(\d+)/i);
+  return Number.isInteger(direct) && direct > 0 ? direct : match ? Number(match[1]) : null;
+}
+
+async function visualMarkChangeUnitId(asset: string, page: number | null, affected: string, level: string): Promise<string> {
+  const identity = JSON.stringify({ asset, affected, page: Number(page) || 0, level });
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  return [...new Uint8Array(bytes)].map((item) => item.toString(16).padStart(2, "0")).join("").slice(0, 20);
+}
+
+async function validateVisualMarkChangeUnit(ctx: any, job: any, exception: any, value: Record<string, unknown>) {
+  if (exception.category !== "visual_mark_change_review") return { ok: false, error: "visual_mark_change_category_mismatch", status: 400 };
+  const decision = String(value.decision ?? "").toUpperCase();
+  const asset = String(value.rendered_asset_ref ?? "");
+  const page = visualMarkChangePage(value);
+  const affected = String(value.affected_question ?? "");
+  const level = String(value.level ?? "");
+  const memberIds = Array.isArray(value.member_exception_ids) ? value.member_exception_ids.map(String).sort() : [];
+  const evidenceIds = Array.isArray(value.evidence_ids) ? value.evidence_ids.map(String) : [];
+  const suppliedCandidates = Array.isArray(value.candidates) ? value.candidates.map((entry: any) => ({ value: Number(entry?.value), observation_count: Number(entry?.observation_count) })).sort((a, b) => a.value - b.value) : [];
+  const selectedValue = value.selected_value == null ? null : Number(value.selected_value);
+  if (!['USE', 'MANUAL', 'REJECT'].includes(decision) || !asset.startsWith("internal/visual/") || asset.includes("..") || !QUESTION_ID_RE.test(affected) || affected !== String(exception.affected_id ?? "") || !level || !memberIds.length || new Set(memberIds).size !== memberIds.length || evidenceIds.length > 200 || new Set(evidenceIds).size !== evidenceIds.length) {
+    return { ok: false, error: "invalid_visual_mark_change_unit", status: 400 };
+  }
+  const { data: rows, error } = await ctx.supabaseAdmin.from("exceptions")
+    .select("id,affected_id,category,level,suggestions,status")
+    .eq("job_id", job.id).eq("category", "visual_mark_change_review").eq("affected_id", affected)
+    .in("status", ["open", "awaiting_reinterpretation", "awaiting_confirmation"]);
+  if (error) return { ok: false, error: "visual_mark_change_lookup_failed", status: 502 };
+  const matching = (rows ?? []).filter((row: any) => {
+    const suggestion = Array.isArray(row.suggestions) ? row.suggestions[0] ?? {} : {};
+    return String(suggestion.rendered_asset_ref ?? "") === asset && String(suggestion.level ?? row.level ?? "") === level && visualMarkChangePage(suggestion) === page;
+  });
+  const actualIds = matching.map((row: any) => String(row.id)).sort();
+  const counts = new Map<number, number>();
+  for (const row of matching) {
+    const suggestion = Array.isArray(row.suggestions) ? row.suggestions[0] ?? {} : {};
+    const candidate = Number(suggestion.visual_value);
+    if (Number.isInteger(candidate) && candidate >= 0) counts.set(candidate, (counts.get(candidate) ?? 0) + 1);
+  }
+  const candidates = [...counts.entries()].map(([candidate, count]) => ({ value: candidate, observation_count: count })).sort((a, b) => a.value - b.value);
+  const exactMembers = actualIds.length === memberIds.length && actualIds.every((id, index) => id === memberIds[index]);
+  const exactCandidates = candidates.length === suppliedCandidates.length && candidates.every((item, index) => item.value === suppliedCandidates[index]?.value && item.observation_count === suppliedCandidates[index]?.observation_count);
+  const reviewUnitId = await visualMarkChangeUnitId(asset, page, affected, level);
+  if (!matching.length || !exactMembers || !exactCandidates || String(value.review_unit_id ?? "") !== reviewUnitId || (decision === "USE" && !candidates.some((item) => item.value === selectedValue)) || (decision !== "USE" && selectedValue !== null)) {
+    return { ok: false, error: "visual_mark_change_unit_changed", status: 409 };
+  }
+  let availableEvidenceIds: string[] = [];
+  const visual = await loadVisualEvidence(ctx, job.user_id, job.id);
+  const markChanges = await ensureVisualEvidenceIds(Array.isArray(visual?.mark_changes) ? visual.mark_changes.filter((item) => item && typeof item === "object") as Record<string, unknown>[] : []);
+  availableEvidenceIds = [...new Set(markChanges.filter((item: any) => String(item.rendered_asset_ref ?? "") === asset && String(item.question_ref ?? item.owned_question_ref ?? "") === affected && String(item.level ?? "") === level && candidates.some((candidate) => candidate.value === Number(item.visual_value))).map((item: any) => String(item.evidence_id ?? "")).filter(Boolean))].sort();
+  const suppliedEvidenceIds = [...evidenceIds].sort();
+  if (availableEvidenceIds.length !== suppliedEvidenceIds.length || availableEvidenceIds.some((id, index) => id !== suppliedEvidenceIds[index])) return { ok: false, error: "visual_mark_change_evidence_mismatch", status: 409 };
+  return { ok: true, decision, asset, page, affected, level, memberIds, evidenceIds, candidates, selectedValue, reviewUnitId, rawCount: matching.length, printedValue: value.printed_value == null ? null : Number(value.printed_value) };
+}
+
 // BEGIN EFFECTIVE PARENT TOTAL MODEL
 function effectiveConfirmedCorrections(rows) {
   const superseded = new Set(rows.map((row) => {
@@ -480,7 +538,34 @@ export default {
       const content = body.content_correction;
       const numbering = body.numbering_correction;
       const visualAssociation = body.visual_association_resolution;
-      if (visualAssociation && typeof visualAssociation === "object") {
+      const visualMarkChange = body.visual_mark_change_resolution;
+      if (visualMarkChange && typeof visualMarkChange === "object" && !childRepair) {
+        const validated = await validateVisualMarkChangeUnit(ctx, job, exception, visualMarkChange as Record<string, unknown>);
+        if (!validated.ok) return Response.json({ error: validated.error }, { status: validated.status });
+        if (validated.decision !== "REJECT") return Response.json({ error: "visual_mark_change_marking_scheme_required" }, { status: 400 });
+        proposedPatch = {
+          schema_version: "1.0",
+          operation: "resolve_visual_mark_change",
+          category: exception.category,
+          affected_id: validated.affected,
+          target_id: validated.affected,
+          decision: "REJECT",
+          visual_mark_change_decision: "REJECT",
+          visual_mark_change_review_unit_id: validated.reviewUnitId,
+          visual_mark_change_rendered_asset_ref: validated.asset,
+          visual_mark_change_source_page: validated.page,
+          visual_mark_change_level: validated.level,
+          visual_mark_change_printed_value: validated.printedValue,
+          visual_mark_change_selected_value: null,
+          visual_mark_change_candidates: validated.candidates,
+          visual_mark_change_raw_observation_count: validated.rawCount,
+          visual_mark_change_member_exception_ids: validated.memberIds,
+          visual_mark_change_evidence_ids: validated.evidenceIds,
+          reinterpretation_method: "structured_visual_mark_change_editor",
+        };
+        displayText = `Question ${validated.affected}: ignore all ${validated.rawCount} conflicting visual mark observations and keep the source-derived state.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (visualAssociation && typeof visualAssociation === "object") {
         if (exception.category !== "visual_evidence_association_uncertain") {
           return Response.json({ error: "visual_association_category_mismatch" }, { status: 400 });
         }
@@ -760,9 +845,16 @@ export default {
       } else if (childRepair && typeof childRepair === "object") {
         const affectedId = String(exception.affected_id ?? "");
         const parentReview = exception.category === "question_total_mismatch";
-        const directItemReview = ["item_total_mismatch", "mark_arithmetic_mismatch"].includes(exception.category);
+        const directItemReview = ["item_total_mismatch", "mark_arithmetic_mismatch", "visual_mark_change_review"].includes(exception.category);
         const value = childRepair as Record<string, unknown>;
         const teacherInitiated = value.teacher_initiated === true;
+        let validatedVisualMark: any = null;
+        if (exception.category === "visual_mark_change_review") {
+          if (!visualMarkChange || typeof visualMarkChange !== "object") return Response.json({ error: "visual_mark_change_unit_required" }, { status: 400 });
+          validatedVisualMark = await validateVisualMarkChangeUnit(ctx, job, exception, visualMarkChange as Record<string, unknown>);
+          if (!validatedVisualMark.ok) return Response.json({ error: validatedVisualMark.error }, { status: validatedVisualMark.status });
+          if (!["USE", "MANUAL"].includes(validatedVisualMark.decision)) return Response.json({ error: "invalid_visual_mark_change_decision" }, { status: 400 });
+        } else if (visualMarkChange) return Response.json({ error: "visual_mark_change_category_mismatch" }, { status: 400 });
         if (!teacherInitiated && ((!parentReview && !directItemReview) || !QUESTION_ID_RE.test(affectedId))) {
           return Response.json({ error: "child_repair_category_mismatch" }, { status: 400 });
         }
@@ -850,6 +942,9 @@ export default {
           if ((!renameRequested && !parsed) || (markingText && (!Number.isInteger(printedMarks) || Number(printedMarks) < 1 || Number(printedMarks) > 999 || !parsed || parsed.total !== printedMarks)) || (!markingText && printedMarks !== null)) {
             return Response.json({ error: "invalid_child_repair" }, { status: 400 });
           }
+          if (validatedVisualMark?.decision === "USE" && printedMarks !== validatedVisualMark.selectedValue) {
+            return Response.json({ error: "visual_mark_change_selected_value_mismatch" }, { status: 400 });
+          }
           proposedPatch = {
             schema_version: "1.0",
             operation: "replace_item_content",
@@ -874,6 +969,19 @@ export default {
             } : {}),
             reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor",
             reinterpretation_method: "structured_child_repair_editor",
+            ...(validatedVisualMark ? {
+              visual_mark_change_decision: validatedVisualMark.decision,
+              visual_mark_change_review_unit_id: validatedVisualMark.reviewUnitId,
+              visual_mark_change_rendered_asset_ref: validatedVisualMark.asset,
+              visual_mark_change_source_page: validatedVisualMark.page,
+              visual_mark_change_level: validatedVisualMark.level,
+              visual_mark_change_printed_value: validatedVisualMark.printedValue,
+              visual_mark_change_selected_value: validatedVisualMark.selectedValue,
+              visual_mark_change_candidates: validatedVisualMark.candidates,
+              visual_mark_change_raw_observation_count: validatedVisualMark.rawCount,
+              visual_mark_change_member_exception_ids: validatedVisualMark.memberIds,
+              visual_mark_change_evidence_ids: validatedVisualMark.evidenceIds,
+            } : {}),
           };
           const actions = [renameRequested ? `rename it to ${replacementId}` : "keep its identifier", parsed ? `use the supplied ${parsed.total}-mark scheme` : "keep its marks"].join(" and ");
           displayText = supersedesCorrectionId

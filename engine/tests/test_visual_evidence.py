@@ -464,6 +464,6 @@ def test_review_ui_loads_private_visual_crop_without_public_url():
     assert "resolve_visual_evidence_association" in review
     assert "visual_association_resolution" in review
     visual_branch = review.split("}else if(!grouped&&visualAssociation)", 1)[1].split(
-        "}else if(!grouped&&visualReview)", 1
+        "}else if(!grouped&&visualMarkChange)", 1
     )[0]
     assert "content_correction" not in visual_branch

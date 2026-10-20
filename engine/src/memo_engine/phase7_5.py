@@ -847,6 +847,10 @@ def _apply_replace_item_content(
         "correction_id": correction_id,
         "operation": "replace_item_content",
         **({"source_id": target_id} if rename_requested else {}),
+        **({
+            "visual_mark_change_review_unit_id": patch.get("visual_mark_change_review_unit_id"),
+            "visual_mark_change_decision": patch.get("visual_mark_change_decision"),
+        } if patch.get("visual_mark_change_review_unit_id") else {}),
     }
     _remove_exception(trial, category, affected_id)
     if points is not None:
@@ -868,6 +872,11 @@ def _apply_replace_item_content(
         "solution_line_count": len(solution_lines),
         "mark_total": mark_total,
         "source_block_index": question.get("source_block_index"),
+        **({
+            "visual_mark_change_review_unit_id": patch.get("visual_mark_change_review_unit_id"),
+            "visual_mark_change_decision": patch.get("visual_mark_change_decision"),
+            "visual_mark_change_member_exception_ids": patch.get("visual_mark_change_member_exception_ids"),
+        } if patch.get("visual_mark_change_review_unit_id") else {}),
     }, None
 
 
@@ -1414,6 +1423,36 @@ def apply_phase7_5_patch(
     patch: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
     affected = str(affected_id or "").strip()
+
+    if category == "visual_mark_change_review" and operation == "resolve_visual_mark_change":
+        target_id = str(patch.get("target_id") or patch.get("affected_id") or "").strip()
+        review_unit_id = str(patch.get("visual_mark_change_review_unit_id") or "").strip()
+        member_ids = patch.get("visual_mark_change_member_exception_ids")
+        if (
+            str(patch.get("visual_mark_change_decision") or patch.get("decision") or "").upper() != "REJECT"
+            or not QUESTION_ID_RE.fullmatch(target_id)
+            or target_id != affected
+            or not review_unit_id
+            or not isinstance(member_ids, list)
+            or not member_ids
+            or any(not isinstance(value, str) or not value for value in member_ids)
+        ):
+            return None, _issue(
+                "correction_visual_mark_change_invalid", affected_id,
+                f"Confirmed correction {correction_id} contains an invalid visual mark-change rejection.",
+            ), True
+        _remove_exception(structure, category, affected_id)
+        return {
+            "correction_id": correction_id,
+            "operation": operation,
+            "category": category,
+            "affected_id": affected_id,
+            "target_id": target_id,
+            "visual_mark_change_decision": "REJECT",
+            "visual_mark_change_review_unit_id": review_unit_id,
+            "visual_mark_change_member_exception_ids": list(member_ids),
+            "source_state_preserved": True,
+        }, None, True
 
     if (
         category == GROUPED_ALLOCATION_CATEGORY

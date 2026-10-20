@@ -12,6 +12,7 @@ function stagedTarget(patch: Record<string, unknown> | null): string | null {
     return ids.length ? `allocation:${ids.join(",")}` : null;
   }
   if (operation === "resolve_visual_evidence_association") return `visual:${String(patch.review_unit_id ?? "")}`;
+  if (patch.visual_mark_change_review_unit_id) return `visual-mark:${String(patch.visual_mark_change_review_unit_id)}`;
   if (operation === "withdraw_confirmed_correction") return `revision:${String(patch.supersedes_correction_id ?? "")}`;
   const target = String(patch.target_id ?? patch.affected_id ?? "");
   const occurrence = patch.source_block_index == null ? "" : `@${String(patch.source_block_index)}`;
@@ -135,7 +136,7 @@ export default {
         const other = item.proposed_patch && typeof item.proposed_patch === "object" ? item.proposed_patch as Record<string, unknown> : {};
         const otherQuestionTarget = String(other.target_id ?? other.affected_id ?? "");
         const otherSourceIndex = other.source_block_index == null ? null : Number(other.source_block_index);
-        const sameQuestionTarget = patch.operation !== "resolve_visual_evidence_association" &&
+        const sameQuestionTarget = !["resolve_visual_evidence_association", "resolve_visual_mark_change"].includes(String(patch.operation ?? "")) &&
           other.operation !== "resolve_visual_evidence_association" &&
           questionTarget && otherQuestionTarget === questionTarget && (
           questionSourceIndex === null || otherSourceIndex === null || questionSourceIndex === otherSourceIndex
@@ -166,6 +167,15 @@ export default {
     } : {
       status: "resolved", resolved_by_correction_id: correctionId, updated_at: now,
     }).eq("id", correction.exception_id).eq("status", "awaiting_confirmation");
+
+    const visualMarkMembers = Array.isArray(patch.visual_mark_change_member_exception_ids)
+      ? patch.visual_mark_change_member_exception_ids.map(String).filter((id) => UUID_RE.test(id)) : [];
+    if (patch.visual_mark_change_review_unit_id && visualMarkMembers.length) {
+      await ctx.supabaseAdmin.from("exceptions").update({
+        status: "resolved", resolved_by_correction_id: correctionId, updated_at: now,
+      }).eq("job_id", correction.job_id).in("id", visualMarkMembers)
+        .in("status", ["open", "awaiting_reinterpretation", "awaiting_confirmation"]);
+    }
 
     const { count } = await ctx.supabaseAdmin.from("exceptions")
       .select("id", { count: "exact", head: true })

@@ -35,7 +35,7 @@ test("explicit semantic choices are structured and do not request reinterpretati
 });
 
 test("bounded item totals use the structured editor while free text remains interpretable", () => {
-  assert.match(submitSource, /\["item_total_mismatch", "mark_arithmetic_mismatch"\]/);
+  assert.match(submitSource, /\["item_total_mismatch", "mark_arithmetic_mismatch", "visual_mark_change_review"\]/);
   assert.match(submitSource, /reconciliation_scope: teacherInitiated \? "teacher_initiated_item" : parentReview \? "suspicious_child" : "bounded_item_editor"/);
   assert.match(submitSource, /reinterpretationDispatched = await dispatchReinterpretation/);
   assert.match(submitSource, /if \(proposedPatch === null\)/);
