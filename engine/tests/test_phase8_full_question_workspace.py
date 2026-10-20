@@ -333,7 +333,7 @@ def test_occurrence_review_uses_teacher_facing_page_and_parent_context():
     page = PAGE.read_text(encoding="utf-8")
     assert "— Question ${heading||'?'} — ${where}" in page
     assert "selectedNumberingOccurrence()" in page
-    assert "sourcePageForException(currentException,await ensureStructure(),await ensureNormalized(),occurrence)" in page
+    assert "sourcePageForException(currentException,structure,normalized,occurrence)" in page
     assert "candidates=candidates.filter(candidate=>candidate.page===occurrencePage)" in page
     assert "source block ${question?.source_block_index}" not in page
 
