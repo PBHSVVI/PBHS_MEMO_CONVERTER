@@ -239,5 +239,5 @@ def test_confirmation_requires_server_confirmed_row_then_reloads_server_state():
     )[0]
     assert "r?.correction?.confirmation_status!=='confirmed'" in confirm
     assert "await loadReviewState()" in confirm
-    assert "currentStaged.some(item=>item.id===correction.id)" in confirm
+    assert "confirmedEffectiveStagingState(correction,currentStaged)" in confirm
     assert "Saved ✓ — not applied yet" in confirm
