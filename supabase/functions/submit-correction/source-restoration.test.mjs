@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  correctionPredecessorMatchesSource,
   sourceHasDirectMarkAllocation,
   validateSourceRestoration,
 } from "../_shared/source-restoration.mjs";
@@ -41,6 +42,39 @@ test("a source item with genuine marks cannot be erased", () => {
     mark_points: [{ count: 1, code: "A", descriptor: "answer" }] };
   assert.equal(sourceHasDirectMarkAllocation(marked), true);
   assert.equal(validateSourceRestoration(request({ question: marked })).error, "source_has_direct_mark_allocation");
+});
+
+test("applied confirmed predecessor remains revisable for its exact source occurrence", () => {
+  const prior = {
+    confirmation_status: "confirmed",
+    applied_at: "2026-10-20T09:27:32Z",
+    proposed_patch: {
+      operation: "replace_item_content",
+      target_id: "5.2",
+      source_block_index: 3,
+    },
+  };
+  assert.equal(correctionPredecessorMatchesSource({
+    prior,
+    targetId: "5.2",
+    questionSourceIndex: 3,
+    matchingOccurrenceCount: 2,
+  }), true);
+  assert.equal(correctionPredecessorMatchesSource({
+    prior,
+    targetId: "5.2",
+    questionSourceIndex: 8,
+    matchingOccurrenceCount: 2,
+  }), false);
+});
+
+test("legacy predecessor without a locator is accepted only for a unique identifier", () => {
+  const prior = {
+    confirmation_status: "confirmed",
+    proposed_patch: { operation: "replace_item_content", target_id: "5.2" },
+  };
+  assert.equal(correctionPredecessorMatchesSource({ prior, targetId: "5.2", questionSourceIndex: 3, matchingOccurrenceCount: 1 }), true);
+  assert.equal(correctionPredecessorMatchesSource({ prior, targetId: "5.2", questionSourceIndex: 3, matchingOccurrenceCount: 2 }), false);
 });
 
 test("submit contract creates an auditable source restoration instead of a zero-mark scheme", async () => {

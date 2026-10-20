@@ -176,6 +176,149 @@ console.log(JSON.stringify({projected:model.projected_total,effective:effectiveS
     assert result["rows"][0] == {"id": "2.1", "total": 0, "staged": False}
 
 
+def test_applied_q52_correction_is_editable_and_source_occurrence_bound():
+    dependency = _section("REVIEW DEPENDENCY MODEL")
+    program = dependency + r"""
+const x=JSON.parse(process.argv[1]);
+const found=effectiveCorrectionForQuestion(x.question,x.history,x.questions);
+const wrongOccurrence=effectiveCorrectionForQuestion(x.other,x.history,x.questions);
+const ambiguous=effectiveCorrectionForQuestion(x.duplicate,x.unlocated,x.duplicateQuestions);
+console.log(JSON.stringify({id:found?.id||null,applied:found?.applied_at||null,wrong:wrongOccurrence?.id||null,ambiguous:ambiguous?.id||null}));
+"""
+    history = [{
+        "id": "bbcefbbd-5281-4400-b26a-cd485a5e4b0f",
+        "confirmation_status": "confirmed",
+        "applied_at": "2026-10-20T09:27:32Z",
+        "proposed_patch": {
+            "operation": "replace_item_content", "target_id": "5.2",
+            "replacement_id": "5.2", "source_block_index": 3, "expected_total": 2,
+        },
+    }]
+    result = _node(program, {
+        "question": {"question_id": "5.2", "source_block_index": 3},
+        "other": {"question_id": "5.2", "source_block_index": 8},
+        "questions": [
+            {"question_id": "5.2", "source_block_index": 3},
+            {"question_id": "5.2", "source_block_index": 8},
+        ],
+        "history": history,
+        "duplicate": {"question_id": "5.2", "source_block_index": 3},
+        "duplicateQuestions": [
+            {"question_id": "5.2", "source_block_index": 3},
+            {"question_id": "5.2", "source_block_index": 8},
+        ],
+        "unlocated": [{
+            **history[0],
+            "id": "legacy-unlocated",
+            "proposed_patch": {k: v for k, v in history[0]["proposed_patch"].items() if k != "source_block_index"},
+        }],
+    })
+    assert result == {
+        "id": "bbcefbbd-5281-4400-b26a-cd485a5e4b0f",
+        "applied": "2026-10-20T09:27:32Z",
+        "wrong": None,
+        "ambiguous": None,
+    }
+
+
+def test_q5_applied_history_restores_structural_parent_and_projects_twelve_immediately():
+    dependency = _section("REVIEW DEPENDENCY MODEL")
+    child = _section("CHILD REPAIR MODEL")
+    support = r"""
+function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
+"""
+    program = dependency + support + child + r"""
+const x=JSON.parse(process.argv[1]);
+const before=questionLedgerModel(x.structure,x.exceptions,x.stagedBefore,'5',x.historyBefore);
+const after=questionLedgerModel(x.structure,x.exceptions,x.stagedAfter,'5',x.historyAfter);
+const q52Before=before.rows.find(row=>row.question_id==='5.2');
+const q52After=after.rows.find(row=>row.question_id==='5.2');
+console.log(JSON.stringify({
+ beforeTotal:before.projected_total,
+ afterTotal:after.projected_total,
+ previousId:q52Before.staged_correction_id,
+ previousApplied:q52Before.correction_applied,
+ sourceRestorable:!sourceQuestionHasDirectMarks(x.structure.questions.find(q=>q.question_id==='5.2')),
+ afterRows:after.rows.map(row=>({id:row.question_id,total:row.projected,corrected:row.staged})),
+ q52AfterCorrected:q52After.staged,
+}));
+"""
+    questions = [_question("5.1", 3, 0), _question("5.2", 3, 0), _question("5.2.1", 3, 0), _question("5.2.2", 3, 0)]
+    for question in questions:
+        question.update({"printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []})
+
+    def correction(identifier: str, target: str, total: int, *, applied: bool = True) -> dict:
+        return {
+            "id": identifier, "confirmation_status": "confirmed",
+            "applied_at": "2026-10-20T09:27:32Z" if applied else None,
+            "proposed_patch": {
+                "operation": "replace_item_content", "target_id": target,
+                "replacement_id": target, "source_block_index": 3,
+                "expected_total": total,
+                "mark_points": [{"count": total, "code": "A", "descriptor": target, "source": f"{total}A {target}"}],
+            },
+        }
+
+    q51 = correction("q51-applied", "5.1", 8)
+    q52 = correction("bbcefbbd-5281-4400-b26a-cd485a5e4b0f", "5.2", 2)
+    q522 = correction("q522-applied", "5.2.2", 2)
+    q521 = correction("q521-staged", "5.2.1", 2, applied=False)
+    restore = {
+        "id": "q52-restore", "confirmation_status": "confirmed", "applied_at": None,
+        "proposed_patch": {
+            "operation": "withdraw_confirmed_correction", "target_id": "5.2",
+            "affected_id": "5.2", "source_block_index": 3,
+            "supersedes_correction_id": q52["id"], "source_restoration": True,
+        },
+    }
+    exceptions = [{"id": "q5-parent", "category": "question_total_mismatch", "affected_id": "5", "message": "Question 5 observed subtotal 12 does not equal computed 0."}]
+    result = _node(program, {
+        "structure": {"questions": questions}, "exceptions": exceptions,
+        "stagedBefore": [q521], "historyBefore": [q51, q52, q522, q521],
+        "stagedAfter": [q521, restore], "historyAfter": [q51, q52, q522, q521, restore],
+    })
+    assert result["beforeTotal"] == 14
+    assert result["previousId"] == q52["id"]
+    assert result["previousApplied"] is True
+    assert result["sourceRestorable"] is True
+    assert result["afterTotal"] == 12
+    assert result["afterRows"] == [
+        {"id": "5.1", "total": 8, "corrected": True},
+        {"id": "5.2", "total": 0, "corrected": False},
+        {"id": "5.2.1", "total": 2, "corrected": True},
+        {"id": "5.2.2", "total": 2, "corrected": True},
+    ]
+    assert result["q52AfterCorrected"] is False
+
+
+def test_q5_source_restoration_replay_is_idempotent_and_preserves_children():
+    structure = {"questions": [_question("5.1", 3, 0), _question("5.2", 3, 0), _question("5.2.1", 3, 0), _question("5.2.2", 3, 0)], "exceptions": [], "summary": {}}
+    for question in structure["questions"]:
+        question.update({"printed_marks": None, "computed_shorthand_marks": 0, "mark_points": []})
+    old = {
+        "id": "old-q52", "confirmation_status": "confirmed", "applied_at": "2026-10-20T09:27:32Z",
+        "proposed_patch": {"operation": "replace_item_content", "target_id": "5.2", "replacement_id": "5.2", "source_block_index": 3, "expected_total": 2, "mark_points": [{"count": 2, "code": "A", "descriptor": "wrong", "source": "2A wrong"}]},
+    }
+    restore = {
+        "id": "restore-q52", "confirmation_status": "confirmed",
+        "proposed_patch": {"operation": "withdraw_confirmed_correction", "target_id": "5.2", "affected_id": "5.2", "source_block_index": 3, "supersedes_correction_id": "old-q52", "source_restoration": True, "supersession_reason": "teacher_restored_source_state"},
+    }
+    q521 = {
+        "id": "q521", "confirmation_status": "confirmed",
+        "proposed_patch": {"operation": "replace_item_content", "target_id": "5.2.1", "replacement_id": "5.2.1", "source_block_index": 3, "solution_lines": ["Correct child answer"], "expected_total": 2, "mark_points": [{"count": 2, "code": "A", "descriptor": "child", "source": "2A child"}]},
+    }
+    first, _, issues = apply_confirmed_corrections(structure, {}, [old, restore, q521])
+    second, _, second_issues = apply_confirmed_corrections(structure, {}, [old, restore, q521])
+    assert issues == second_issues == []
+    assert first == second
+    assert [q["question_id"] for q in first["questions"]] == ["5.1", "5.2", "5.2.1", "5.2.2"]
+    q52 = next(q for q in first["questions"] if q["question_id"] == "5.2")
+    q521_result = next(q for q in first["questions"] if q["question_id"] == "5.2.1")
+    assert q52["computed_shorthand_marks"] == 0 and q52["mark_points"] == []
+    assert q521_result["computed_shorthand_marks"] == 2
+    assert old["applied_at"] == "2026-10-20T09:27:32Z"
+
+
 def test_source_mark_detection_allows_only_unmarked_structural_source():
     child = _section("CHILD REPAIR MODEL")
     program = child + r"""
@@ -231,7 +374,6 @@ console.log(JSON.stringify(effectiveParentOverlay(x.structure,x.exceptions,x.sta
             {"id": "new", "confirmation_status": "confirmed", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.2", "expected_total": 3, "supersedes_correction_id": "old"}},
             {"id": "pending", "confirmation_status": "pending", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.2", "expected_total": 9}},
             {"id": "rejected", "confirmation_status": "rejected", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.1", "expected_total": 8}},
-            {"id": "applied", "confirmation_status": "confirmed", "applied_at": "2026-10-15T01:00:00Z", "proposed_patch": {"operation": "replace_item_content", "target_id": "1.1", "expected_total": 6}},
         ],
     }
     q3 = {
@@ -295,17 +437,18 @@ def test_frontend_exposes_unflagged_editor_staged_amendment_and_pending_choices(
     assert "Edit any parsed question" in page
     assert "Automatic checks decide what needs attention first" in page
     assert "Edit saved correction" in page
-    assert "The currently effective staged values are loaded below" in page
+    assert "The current effective correction is loaded below" in page
     assert "Replace the currently staged correction for Question" in page
     assert "Previous staged total" in page
     assert "New staged total" in page
     assert "Continue pending correction" in page
     assert "Edit pending correction" in page
     assert "Pending — not saved" in page
-    assert "To restore the original memo state, clear the marking scheme" in page
+    assert "Restore original memo state" in page
     assert "restore_source_state:restorationRequested" in page
     assert "no direct mark allocation" in page
-    assert "The earlier saved version remains in the audit trail" in page
+    assert "The earlier saved correction remains in the audit trail" in page
+    assert "its child questions remain unchanged" in page
 
 
 def test_edge_contracts_validate_amendment_manual_context_and_duplicate_occurrence():
@@ -317,8 +460,11 @@ def test_edge_contracts_validate_amendment_manual_context_and_duplicate_occurren
     assert 'source_line_hash: selectedLineHash' in submit
     assert 'original_source_block_index: selectedSourceIndex' in submit
     assert 'supersession_reason: "teacher_amended_previous_change"' in submit
-    assert 'priorPatch?.operation !== "replace_item_content"' in submit
-    assert "prior.applied_at" in submit
+    assert "correctionPredecessorMatchesSource" in submit
+    child_repair = submit.split('} else if (childRepair && typeof childRepair === "object") {', 1)[1].split('} else if (contentCorrection', 1)[0]
+    prior_guard = child_repair.split('if (supersedesCorrectionId) {', 1)[1].split('const { data: confirmedRows', 1)[0]
+    assert "prior.applied_at" not in prior_guard
+    assert "priorOccurrenceMatches" in prior_guard
     assert 'String(row.proposed_patch?.supersedes_correction_id ?? "") === supersedesCorrectionId' in submit
     assert 'error: "invalid_source_restoration"' in submit
     assert 'operation: "withdraw_confirmed_correction"' in submit

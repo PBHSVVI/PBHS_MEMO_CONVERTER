@@ -253,7 +253,7 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
     html = PAGE.read_text(encoding="utf-8")
     edge = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
     assert 'id="questionWorkspace"' in html
-    assert "Current staged total" in html
+    assert "Current effective total" in html
     assert "Saved changes keep their own audit history" in html
     assert "Review this item" in html
     assert 'id="applyBatch"' in html

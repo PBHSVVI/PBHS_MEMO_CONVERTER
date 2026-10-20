@@ -117,7 +117,7 @@ def test_v410_recovery_and_progressive_disclosure_contract():
     assert "Previous change could not be applied" in html
     assert "Edit previous change" in html and "Withdraw this change" in html
     assert "supersedes_correction_id" in html
-    assert 'prior.confirmation_status !== "confirmed"' in submit and "prior.applied_at" in submit
+    assert 'prior.confirmation_status !== "confirmed"' in submit
     assert 'action === "amend"' in submit and 'action === "withdraw"' in submit
     assert 'operation: "withdraw_confirmed_correction"' in submit
     assert '<details><summary>Technical details</summary>' in html

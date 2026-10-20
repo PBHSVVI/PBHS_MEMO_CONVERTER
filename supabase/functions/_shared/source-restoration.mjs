@@ -13,6 +13,23 @@ export function sourceHasDirectMarkAllocation(question) {
   return hasPoint || points.length > 0 || printed > 0 || computed > 0;
 }
 
+export function correctionPredecessorMatchesSource({
+  prior,
+  targetId,
+  questionSourceIndex,
+  matchingOccurrenceCount,
+}) {
+  if (!prior || prior.confirmation_status !== "confirmed") return false;
+  const patch = prior.proposed_patch && typeof prior.proposed_patch === "object"
+    ? prior.proposed_patch
+    : null;
+  if (!patch || patch.operation !== "replace_item_content") return false;
+  if (String(patch.target_id ?? patch.affected_id ?? "") !== String(targetId ?? "")) return false;
+  if (patch.source_block_index == null) return Number(matchingOccurrenceCount) === 1;
+  const priorSourceIndex = Number(patch.source_block_index);
+  return Number.isInteger(priorSourceIndex) && priorSourceIndex === Number(questionSourceIndex);
+}
+
 export function validateSourceRestoration({
   targetId,
   replacementId,

@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
 import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
-import { validateSourceRestoration } from "../_shared/source-restoration.mjs";
+import { correctionPredecessorMatchesSource, validateSourceRestoration } from "../_shared/source-restoration.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -929,9 +929,13 @@ export default {
             .select("id,job_id,proposed_patch,confirmation_status,applied_at")
             .eq("id", supersedesCorrectionId).eq("job_id", jobId).maybeSingle();
           priorPatch = prior?.proposed_patch && typeof prior.proposed_patch === "object" ? prior.proposed_patch as Record<string, unknown> : null;
-          const priorTarget = String(priorPatch?.target_id ?? priorPatch?.affected_id ?? "");
-          const priorSourceIndex = priorPatch?.source_block_index == null ? null : Number(priorPatch.source_block_index);
-          if (!UUID_RE.test(supersedesCorrectionId) || !prior || prior.confirmation_status !== "confirmed" || prior.applied_at || priorPatch?.operation !== "replace_item_content" || priorTarget !== targetId || (priorSourceIndex !== null && priorSourceIndex !== Number(question.source_block_index))) {
+          const priorOccurrenceMatches = correctionPredecessorMatchesSource({
+            prior,
+            targetId,
+            questionSourceIndex: question.source_block_index,
+            matchingOccurrenceCount: matches.length,
+          });
+          if (!UUID_RE.test(supersedesCorrectionId) || !priorOccurrenceMatches) {
             return Response.json({ error: "prior_correction_not_revisable" }, { status: 400 });
           }
           const { data: confirmedRows, error: confirmedError } = await ctx.supabaseAdmin.from("corrections")
