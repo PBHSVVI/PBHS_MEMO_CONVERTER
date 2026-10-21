@@ -146,7 +146,7 @@ def test_parent_viewer_has_distinct_discrepancy_and_context_treatment():
     assert "@media(max-width:600px)" in page
 
 
-def test_review_version_is_4_12_7():
+def test_review_version_is_4_12_8():
     page = PAGE.read_text(encoding="utf-8")
-    assert "Phase 8 Review v4.12.7" in page
-    assert "phase8-review-v4.12.7" in page
+    assert "Phase 8 Review v4.12.8" in page
+    assert "phase8-review-v4.12.8" in page

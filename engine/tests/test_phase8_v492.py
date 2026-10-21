@@ -75,7 +75,7 @@ def test_staged_q6_insertion_projects_twenty_and_materializes_row():
 
 def test_all_existing_rows_are_editable_and_prefilled():
     html = PAGE.read_text(encoding="utf-8")
-    assert "row.staged?'Edit saved correction':'Edit'" in html
+    assert "row.staged?'Edit correction':'Edit'" in html
     assert "row.staged?row.projected:(row.printed??(row.computed>0?row.computed:''))" in html
     assert "markingSchemeText(points)" in html
     assert "I may have missed a subquestion" in html

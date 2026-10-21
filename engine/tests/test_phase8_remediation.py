@@ -376,7 +376,7 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     html = PAGE.read_text(encoding="utf-8")
     submit = (ROOT / "supabase" / "functions" / "submit-correction" / "index.ts").read_text(encoding="utf-8")
     confirm = (ROOT / "supabase" / "functions" / "confirm-correction" / "index.ts").read_text(encoding="utf-8")
-    assert "row.staged?'Edit saved correction':'Edit'" in html
+    assert "row.staged?'Edit correction':'Edit'" in html
     assert "Add a missing subquestion" in html
     assert "Review this correction" in html
     assert "SHOW-BACK — not applied yet" in html

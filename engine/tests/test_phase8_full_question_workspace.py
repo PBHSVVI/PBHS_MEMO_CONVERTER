@@ -173,7 +173,7 @@ console.log(JSON.stringify({projected:model.projected_total,effective:effectiveS
     })
     assert result["effective"] == []
     assert result["projected"] == 9
-    assert result["rows"][0] == {"id": "2.1", "total": 0, "staged": False}
+    assert result["rows"][0] == {"id": "2.1", "total": 0, "staged": True}
 
 
 def test_applied_q52_correction_is_editable_and_source_occurrence_bound():
@@ -284,11 +284,11 @@ console.log(JSON.stringify({
     assert result["afterTotal"] == 12
     assert result["afterRows"] == [
         {"id": "5.1", "total": 8, "corrected": True},
-        {"id": "5.2", "total": 0, "corrected": False},
+        {"id": "5.2", "total": 0, "corrected": True},
         {"id": "5.2.1", "total": 2, "corrected": True},
         {"id": "5.2.2", "total": 2, "corrected": True},
     ]
-    assert result["q52AfterCorrected"] is False
+    assert result["q52AfterCorrected"] is True
 
 
 def test_q5_source_restoration_replay_is_idempotent_and_preserves_children():
@@ -317,6 +317,83 @@ def test_q5_source_restoration_replay_is_idempotent_and_preserves_children():
     assert q52["computed_shorthand_marks"] == 0 and q52["mark_points"] == []
     assert q521_result["computed_shorthand_marks"] == 2
     assert old["applied_at"] == "2026-10-20T09:27:32Z"
+
+
+def test_q5_corrected_current_structure_uses_immutable_source_for_restoration_projection():
+    dependency = _section("REVIEW DEPENDENCY MODEL")
+    child = _section("CHILD REPAIR MODEL")
+    support = r"""
+function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
+"""
+    program = dependency + support + child + r"""
+const x=JSON.parse(process.argv[1]);
+const immutable=new Map(Object.entries(x.immutable));
+const before=questionLedgerModel(x.structure,x.exceptions,x.stagedBefore,'5',x.historyBefore,immutable);
+const after=questionLedgerModel(x.structure,x.exceptions,x.stagedAfter,'5',x.historyAfter,immutable);
+const currentQ52=x.structure.questions.find(q=>q.question_id==='5.2');
+const originalQ52=immutable.get('5.2@3');
+console.log(JSON.stringify({
+ currentQ52Total:currentQ52.computed_shorthand_marks,
+ immutableQ52Direct:originalQ52.has_direct_marks,
+ sourceRestorable:!sourceQuestionHasDirectMarks(originalQ52),
+ beforeTotal:before.projected_total,
+ afterTotal:after.projected_total,
+ documentTotal:38+after.projected_total,
+ afterRows:after.rows.map(row=>({id:row.question_id,total:row.projected,correction:row.staged_correction_id})),
+}));
+"""
+    def question(identifier: str, total: int) -> dict:
+        return {
+            "question_id": identifier, "source_block_index": 3,
+            "printed_marks": total or None, "computed_shorthand_marks": total,
+            "mark_points": [] if not total else [{"count": total, "code": "A", "source": f"{total}A corrected"}],
+        }
+    structure = {"questions": [question("5.1", 8), question("5.2", 2), question("5.2.1", 2), question("5.2.2", 2)]}
+    immutable = {
+        "5.1@3": {**question("5.1", 0), "has_direct_marks": False, "structural_parent": False},
+        "5.2@3": {**question("5.2", 0), "has_direct_marks": False, "structural_parent": True},
+        "5.2.1@3": {**question("5.2.1", 0), "has_direct_marks": False, "structural_parent": False},
+        "5.2.2@3": {**question("5.2.2", 0), "has_direct_marks": False, "structural_parent": False},
+    }
+    def correction(identifier: str, target: str, total: int, applied: bool = True) -> dict:
+        return {"id": identifier, "confirmation_status": "confirmed", "applied_at": "2026-10-20T09:27:32Z" if applied else None,
+                "proposed_patch": {"operation": "replace_item_content", "target_id": target, "replacement_id": target,
+                                   "source_block_index": 3, "expected_total": total,
+                                   "mark_points": [{"count": total, "code": "A", "source": f"{total}A {target}"}]}}
+    q51 = correction("q51", "5.1", 8)
+    q52 = correction("bbcefbbd-5281-4400-b26a-cd485a5e4b0f", "5.2", 2)
+    q521 = correction("q521", "5.2.1", 2, False)
+    q522 = correction("q522", "5.2.2", 2)
+    restore = {"id": "q52-restore", "confirmation_status": "confirmed", "applied_at": None,
+               "proposed_patch": {"operation": "withdraw_confirmed_correction", "target_id": "5.2",
+                                  "affected_id": "5.2", "source_block_index": 3,
+                                  "supersedes_correction_id": q52["id"], "source_restoration": True}}
+    result = _node(program, {
+        "structure": structure, "immutable": immutable,
+        "exceptions": [{"id": "q5", "category": "question_total_mismatch", "affected_id": "5", "message": "subtotal 12"}],
+        "stagedBefore": [q521], "historyBefore": [q51, q52, q521, q522],
+        "stagedAfter": [q521, restore], "historyAfter": [q51, q52, q521, q522, restore],
+    })
+    assert result == {
+        "currentQ52Total": 2, "immutableQ52Direct": False, "sourceRestorable": True,
+        "beforeTotal": 14, "afterTotal": 12, "documentTotal": 50,
+        "afterRows": [
+            {"id": "5.1", "total": 8, "correction": "q51"},
+            {"id": "5.2", "total": 0, "correction": "q52-restore"},
+            {"id": "5.2.1", "total": 2, "correction": "q521"},
+            {"id": "5.2.2", "total": 2, "correction": "q522"},
+        ],
+    }
+
+
+def test_q5_restoration_controls_use_immutable_source_and_offer_overwrite():
+    page = PAGE.read_text(encoding="utf-8")
+    assert "immutableSourceStateForQuestionOccurrence(await ensureNormalized()" in page
+    assert "immutableSourceStateForQuestionOccurrence(normalized,question.question_id,question.source_block_index)" in page
+    assert "Edit / overwrite correction" in page
+    assert "Restore original memo state" in page
+    assert "Original memo state: structural question with no direct mark allocation" in page
+    assert "sourceQuestionHasDirectMarks(question)" not in page
 
 
 def test_source_mark_detection_allows_only_unmarked_structural_source():

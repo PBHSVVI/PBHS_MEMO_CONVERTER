@@ -1,15 +1,16 @@
-export function sourceHasDirectMarkAllocation(question) {
-  if (!question || typeof question !== "object") return true;
-  const points = Array.isArray(question.mark_points) ? question.mark_points : [];
+export function sourceHasDirectMarkAllocation(immutableSource) {
+  if (!immutableSource || typeof immutableSource !== "object") return true;
+  if (typeof immutableSource.has_direct_marks === "boolean") return immutableSource.has_direct_marks;
+  const points = Array.isArray(immutableSource.mark_points) ? immutableSource.mark_points : [];
   const hasPoint = points.some((point) => {
     if (!point || typeof point !== "object") return false;
     const count = Number(point.count);
     return Number.isFinite(count) ? count > 0 : true;
   });
-  const printed = question.printed_marks == null ? 0 : Number(question.printed_marks);
-  const computed = question.computed_shorthand_marks == null
+  const printed = immutableSource.printed_marks == null ? 0 : Number(immutableSource.printed_marks);
+  const computed = immutableSource.computed_shorthand_marks == null
     ? 0
-    : Number(question.computed_shorthand_marks);
+    : Number(immutableSource.computed_shorthand_marks);
   return hasPoint || points.length > 0 || printed > 0 || computed > 0;
 }
 
@@ -37,7 +38,7 @@ export function validateSourceRestoration({
   markingText,
   supersedesCorrectionId,
   priorIsEffective,
-  question,
+  immutableSource,
 }) {
   if (!supersedesCorrectionId) return { ok: false, error: "missing_predecessor" };
   if (!priorIsEffective) return { ok: false, error: "predecessor_not_effective" };
@@ -46,7 +47,10 @@ export function validateSourceRestoration({
   if (!(printedMarks == null || printedMarks === "" || Number(printedMarks) === 0)) {
     return { ok: false, error: "total_not_blank_or_zero" };
   }
-  if (sourceHasDirectMarkAllocation(question)) {
+  if (!immutableSource || String(immutableSource.question_id ?? "") !== String(targetId ?? "")) {
+    return { ok: false, error: "immutable_source_unavailable" };
+  }
+  if (sourceHasDirectMarkAllocation(immutableSource)) {
     return { ok: false, error: "source_has_direct_mark_allocation" };
   }
   return { ok: true, error: null };

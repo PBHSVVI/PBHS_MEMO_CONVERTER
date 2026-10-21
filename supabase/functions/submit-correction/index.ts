@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
 import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
 import { correctionPredecessorMatchesSource, validateSourceRestoration } from "../_shared/source-restoration.mjs";
+import { immutableSourceStateForQuestionOccurrence } from "../_shared/immutable-source-state.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -90,6 +91,18 @@ function ordinal(value: number): string {
 
 async function loadStructure(ctx: any, userId: string, jobId: string): Promise<Record<string, unknown> | null> {
   const path = `${userId}/${jobId}/internal/structure.json`;
+  const { data, error } = await ctx.supabaseAdmin.storage.from("memo-files").download(path);
+  if (error || !data) return null;
+  try {
+    const parsed = JSON.parse(await data.text());
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadNormalized(ctx: any, userId: string, jobId: string): Promise<Record<string, unknown> | null> {
+  const path = `${userId}/${jobId}/internal/normalized.json`;
   const { data, error } = await ctx.supabaseAdmin.storage.from("memo-files").download(path);
   if (error || !data) return null;
   try {
@@ -953,6 +966,9 @@ export default {
         const renameRequested = replacementId !== targetId;
         const restorationRequested = value.restore_source_state === true;
         if (restorationRequested) {
+          const normalized = await loadNormalized(ctx, job.user_id, jobId);
+          const immutableSource = selectedSourceIndex === null ? null
+            : immutableSourceStateForQuestionOccurrence(normalized, targetId, selectedSourceIndex);
           const restoration = validateSourceRestoration({
             targetId,
             replacementId,
@@ -960,7 +976,7 @@ export default {
             markingText,
             supersedesCorrectionId,
             priorIsEffective,
-            question,
+            immutableSource,
           });
           if (!restoration.ok) {
             return Response.json({ error: "invalid_source_restoration", reason: restoration.error }, { status: 400 });

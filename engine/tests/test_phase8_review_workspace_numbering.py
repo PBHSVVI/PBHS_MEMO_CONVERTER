@@ -216,8 +216,8 @@ def test_durable_save_feedback_and_parent_workspace_retention_contract():
     assert "Done with Question ${esc(major)} / Recheck Question ${esc(major)}" in page
     assert "blockUnsavedWorkspaceNavigation()" in page
     assert "before moving away" in page
-    assert "Edit saved correction" in page
-    assert "row.staged?'Edit saved correction':'Edit'" in page
+    assert "Edit correction" in page
+    assert "row.staged?'Edit correction':'Edit'" in page
     assert 'patch.correction_scope === "numbering_only"' in confirm
     assert "sameNumberingSource" in confirm
     assert "correction: confirmedCorrection" in confirm
