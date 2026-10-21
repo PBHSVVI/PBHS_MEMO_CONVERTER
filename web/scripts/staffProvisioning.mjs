@@ -52,12 +52,45 @@ export function selectTrustedCredential(environment = {}) {
 }
 
 export class ProvisioningError extends Error {
-  constructor(code, message, action = "Review the staff record before trying again.") {
+  constructor(code, message, action = "Review the staff record before trying again.", report = null) {
     super(message);
     this.name = "ProvisioningError";
     this.code = code;
     this.action = action;
+    this.report = report;
   }
+}
+
+export function parseProvisioningCsv(text, { batch = false } = {}) {
+  const lines = String(text || "").trim().split(/\r?\n/).filter(Boolean);
+  const rows = lines.map((line) => {
+    const cells = [];
+    let value = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === '"' && quoted && line[index + 1] === '"') { value += '"'; index += 1; }
+      else if (char === '"') quoted = !quoted;
+      else if (char === "," && !quoted) { cells.push(value); value = ""; }
+      else value += char;
+    }
+    if (quoted) throw new ProvisioningError("INVALID_CSV", "The provisioning CSV contains an unterminated quoted value.");
+    cells.push(value);
+    return cells;
+  });
+  const headers = rows.shift()?.map((value) => value.trim()) || [];
+  const required = ["display_name", "email", "role", "hod_scope", "staff_code"];
+  if (headers.length !== required.length || required.some((header, index) => headers[index] !== header)) {
+    throw new ProvisioningError("INVALID_CSV_HEADERS", `CSV headers must be exactly: ${required.join(",")}.`);
+  }
+  if (!rows.length) throw new ProvisioningError("EMPTY_BATCH", "The provisioning CSV contains no staff records.");
+  if (!batch && rows.length !== 1) {
+    throw new ProvisioningError("SINGLE_RECORD_REQUIRED", "Provision exactly one staff record per invocation unless --batch is used.");
+  }
+  return rows.map((row) => {
+    if (row.length !== headers.length) throw new ProvisioningError("INVALID_CSV_ROW", "Each provisioning CSV row must contain exactly five columns.");
+    return Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""]));
+  });
 }
 
 export function validateStaffRecord(input) {
@@ -117,6 +150,38 @@ export function deriveTemporaryPassword(value) {
     throw new ProvisioningError("INVALID_STAFF_CODE", "A valid runtime staff code is required.");
   }
   return validateTemporaryPassword(`${staffCode.toUpperCase()}${staffCode.toLowerCase()}12!`);
+}
+
+export function validateStaffBatch(inputs) {
+  if (!Array.isArray(inputs) || inputs.length < 1) {
+    throw new ProvisioningError("EMPTY_BATCH", "Batch provisioning requires at least one staff record.");
+  }
+  const seenEmails = new Set();
+  const seenCodes = new Set();
+  return inputs.map((input, index) => {
+    let record;
+    let staffCode;
+    try {
+      record = validateStaffRecord(input);
+      staffCode = String(input?.staff_code || "").trim();
+      deriveTemporaryPassword(staffCode);
+    } catch (error) {
+      if (error instanceof ProvisioningError) {
+        throw new ProvisioningError(error.code, `Batch row ${index + 1}: ${error.message}`, error.action);
+      }
+      throw error;
+    }
+    const normalizedCode = staffCode.toLowerCase();
+    if (seenEmails.has(record.email)) {
+      throw new ProvisioningError("DUPLICATE_BATCH_EMAIL", `Batch row ${index + 1} repeats email ${record.email}.`);
+    }
+    if (seenCodes.has(normalizedCode)) {
+      throw new ProvisioningError("DUPLICATE_BATCH_STAFF_CODE", `Batch row ${index + 1} repeats a staff code.`);
+    }
+    seenEmails.add(record.email);
+    seenCodes.add(normalizedCode);
+    return { record, staffCode };
+  });
 }
 
 function isConfirmed(user) {
@@ -182,6 +247,187 @@ export function safeProvisioningReport(classification, dryRun = true, temporaryP
   };
 }
 
+export async function inspectProvisioningState(admin, input) {
+  const record = validateStaffRecord(input);
+  const users = await admin.listUsersByEmail(record.email);
+  const emailProfiles = await admin.listProfilesByEmail(record.email);
+  const userProfiles = users[0] && admin.listProfilesByUserId
+    ? await admin.listProfilesByUserId(users[0].id)
+    : [];
+  const profiles = [...emailProfiles, ...userProfiles.filter((candidate) =>
+    !emailProfiles.some((existing) => existing.user_id === candidate.user_id))];
+  return classifyProvisioningState(record, users, profiles);
+}
+
+function safeBatchStaff(record, values = {}) {
+  return {
+    display_name: record.display_name,
+    email: record.email,
+    role: record.role,
+    hod_scope: record.hod_scope,
+    ...values,
+  };
+}
+
+function batchSummary(requested, staff, dryRun) {
+  return {
+    batch: {
+      dry_run: dryRun,
+      requested,
+      provisioned: staff.filter((entry) => entry.provisioned).length,
+      verified: staff.filter((entry) => entry.verified).length,
+      failed: staff.filter((entry) => entry.disposition === "failed").length,
+      not_attempted: staff.filter((entry) => entry.disposition === "not_attempted").length,
+      burner_file_deleted: false,
+    },
+    staff,
+  };
+}
+
+export async function preflightStaffBatch({ admin, inputs }) {
+  const validated = validateStaffBatch(inputs);
+  const inspected = [];
+  for (const entry of validated) {
+    try {
+      const classification = await inspectProvisioningState(admin, entry.record);
+      inspected.push({ ...entry, classification });
+    } catch (error) {
+      inspected.push({ ...entry, error });
+    }
+  }
+  const failures = inspected.filter((entry) => entry.error || entry.classification?.state !== "new");
+  if (failures.length) {
+    const staff = inspected.map((entry) => safeBatchStaff(entry.record, {
+      state: entry.error?.code || entry.classification?.state || "preflight_failed",
+      disposition: entry.error || entry.classification?.state !== "new" ? "failed" : "not_attempted",
+      provisioned: false,
+      verified: false,
+      temporary_password_supplied: true,
+    }));
+    throw new ProvisioningError(
+      "BATCH_PREFLIGHT_FAILED",
+      "Every batch record must classify as new before provisioning can begin.",
+      "Resolve every reported Auth/profile state, then rerun the complete batch preflight.",
+      batchSummary(validated.length, staff, true),
+    );
+  }
+  return inspected;
+}
+
+function verifyProvisionedClassification(expected, classification) {
+  const profile = classification.profile;
+  const user = classification.user;
+  const errors = [];
+  if (classification.state !== "active_confirmed") errors.push(`state=${classification.state}`);
+  if (!user || !isConfirmed(user)) errors.push("auth_not_confirmed");
+  if (String(user?.email || "").trim().toLowerCase() !== expected.email) errors.push("auth_email_mismatch");
+  if (!profile) errors.push("profile_missing");
+  if (profile?.user_id !== user?.id) errors.push("profile_uuid_mismatch");
+  for (const field of ["email", "display_name", "role", "hod_scope"]) {
+    if ((profile?.[field] ?? null) !== (expected[field] ?? null)) errors.push(`${field}_mismatch`);
+  }
+  if (profile?.active !== true) errors.push("profile_inactive");
+  if (profile?.must_change_password !== true) errors.push("password_change_gate_missing");
+  return errors;
+}
+
+export async function provisionStaffBatch({
+  admin,
+  inputs,
+  redirectTo,
+  dryRun = false,
+  cleanup = null,
+}) {
+  const preflight = await preflightStaffBatch({ admin, inputs });
+  if (dryRun) {
+    return batchSummary(preflight.length, preflight.map(({ record, classification }) => safeBatchStaff(record, {
+      state: classification.state,
+      disposition: "preflight_passed",
+      provisioned: false,
+      verified: false,
+      temporary_password_supplied: true,
+    })), true);
+  }
+
+  const staff = preflight.map(({ record }) => safeBatchStaff(record, {
+    state: "not_attempted",
+    disposition: "not_attempted",
+    provisioned: false,
+    verified: false,
+    temporary_password_supplied: true,
+  }));
+  for (let index = 0; index < preflight.length; index += 1) {
+    const { record, staffCode } = preflight[index];
+    try {
+      const result = await provisionStaff({
+        admin,
+        input: record,
+        redirectTo,
+        staffCode,
+        temporaryPasswordRecovery: true,
+      });
+      staff[index] = safeBatchStaff(record, {
+        state: result.state,
+        disposition: "provisioned",
+        provisioned: true,
+        verified: false,
+        auth_user_id: result.auth_user_id,
+        profile_user_id: result.profile_user_id,
+        must_change_password: true,
+        temporary_password_supplied: true,
+      });
+    } catch (error) {
+      staff[index] = safeBatchStaff(record, {
+        state: error instanceof ProvisioningError ? error.code : "provisioning_failed",
+        disposition: "failed",
+        provisioned: false,
+        verified: false,
+        temporary_password_supplied: true,
+      });
+      throw new ProvisioningError(
+        "BATCH_RUNTIME_FAILED",
+        `Batch provisioning stopped at ${record.email}.`,
+        "Retain the private input and inspect the redacted partial report before any retry.",
+        batchSummary(preflight.length, staff, false),
+      );
+    }
+  }
+
+  for (let index = 0; index < preflight.length; index += 1) {
+    const { record } = preflight[index];
+    try {
+      const classification = await inspectProvisioningState(admin, record);
+      const errors = verifyProvisionedClassification(record, classification);
+      if (errors.length) throw new ProvisioningError("BATCH_VERIFICATION_MISMATCH", errors.join(", "));
+      staff[index] = safeBatchStaff(record, {
+        state: "temporary_password_ready",
+        disposition: "verified",
+        provisioned: true,
+        verified: true,
+        auth_user_id: classification.user.id,
+        profile_user_id: classification.profile.user_id,
+        must_change_password: true,
+        temporary_password_supplied: true,
+      });
+    } catch (error) {
+      staff[index] = { ...staff[index], state: error instanceof ProvisioningError ? error.code : "verification_failed", disposition: "failed", verified: false };
+      throw new ProvisioningError(
+        "BATCH_VERIFICATION_FAILED",
+        `Batch verification failed for ${record.email}.`,
+        "Retain the private input and inspect the redacted partial report before any retry.",
+        batchSummary(preflight.length, staff, false),
+      );
+    }
+  }
+
+  const result = batchSummary(preflight.length, staff, false);
+  if (cleanup) {
+    await cleanup();
+    result.batch.burner_file_deleted = true;
+  }
+  return result;
+}
+
 export async function provisionStaff({
   admin,
   input,
@@ -199,14 +445,7 @@ export async function provisionStaff({
     throw new ProvisioningError("TEMPORARY_PASSWORD_REQUIRED", "Temporary-password recovery requires a runtime staff code.");
   }
   const redirect = validateInviteRedirect(redirectTo);
-  const users = await admin.listUsersByEmail(record.email);
-  const emailProfiles = await admin.listProfilesByEmail(record.email);
-  const userProfiles = users[0] && admin.listProfilesByUserId
-    ? await admin.listProfilesByUserId(users[0].id)
-    : [];
-  const profiles = [...emailProfiles, ...userProfiles.filter((candidate) =>
-    !emailProfiles.some((existing) => existing.user_id === candidate.user_id))];
-  let current = classifyProvisioningState(record, users, profiles);
+  let current = await inspectProvisioningState(admin, record);
   if (runtimePassword) {
     const planned = current.state === "new"
       ? ["create_auth_identity", "set_temporary_password", "create_profile", "require_password_change"]
@@ -296,10 +535,10 @@ export function createSupabaseAdmin({ url, secret, fetchImpl = fetch }) {
       return matches;
     },
     async listProfilesByEmail(email) {
-      return request(`/rest/v1/department_profiles?email=eq.${encodeURIComponent(email)}&select=user_id,display_name,email,role,hod_scope,active`);
+      return request(`/rest/v1/department_profiles?email=eq.${encodeURIComponent(email)}&select=user_id,display_name,email,role,hod_scope,active,must_change_password`);
     },
     async listProfilesByUserId(userId) {
-      return request(`/rest/v1/department_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,display_name,email,role,hod_scope,active`);
+      return request(`/rest/v1/department_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,display_name,email,role,hod_scope,active,must_change_password`);
     },
     async createUser(email, displayName, temporaryPassword = null) {
       const body = {

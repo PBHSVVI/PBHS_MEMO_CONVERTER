@@ -45,11 +45,30 @@ directory and contains these columns:
 
 `display_name,email,role,hod_scope,staff_code`
 
-Supply exactly one staff record per invocation. Do not place real values in
-source, documentation, shell history, screenshots, or generated reports. The
-same explicit mode can preserve an existing matching Auth identity and profile
-while setting a new temporary password and the first-login flag. It refuses
-identity/profile mismatches and does not alter role, HOD scope, or active state.
+Normal mode still requires exactly one staff record per invocation. Explicit
+`--batch` mode accepts multiple rows from one named private CSV and requires
+`--temporary-password`. It performs complete input validation and live
+Auth/profile classification for every row before the first write. Every row
+must classify as `new`; existing, conflicting, missing-profile, inactive, or
+otherwise unsafe states abort the whole write phase. Batch mode never performs
+profile repair, profile update, invite reissue, or existing-account password
+recovery.
+
+After a clean batch preflight, accounts are provisioned sequentially with the
+same trusted single-user primitive. A runtime failure stops later rows, retains
+the private CSV, and returns a redacted partial disposition. Complete success
+is followed by an independent Auth/profile verification for every requested
+row, including confirmed identity, matching UUID and profile fields, active
+membership, and `must_change_password = true`. Only after every verification
+passes does the CLI delete the named burner CSV and confirm that it is absent.
+Safe output includes names, emails, roles, scopes, UUIDs, and status; it omits
+staff codes and derived passwords.
+
+Do not place real values in source, documentation, shell history, screenshots,
+or generated reports. Single-user temporary-password recovery can preserve an
+existing matching Auth identity and profile while setting a new temporary password
+and the first-login flag; this recovery behavior is deliberately not
+available in batch onboarding.
 
 ## Scanner-safe architecture
 
