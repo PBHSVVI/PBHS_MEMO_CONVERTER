@@ -17,6 +17,7 @@ from .math_notation import normalize_visual_math
 
 SCHEMA_VERSION = "1.0"
 OWNERSHIP_ALGORITHM_VERSION = "anchored-crop-v2"
+SPATIAL_PRESERVATION_VERSION = "source-crop-v1"
 EVIDENCE_KINDS = {
     "answer",
     "answer_working",
@@ -64,11 +65,31 @@ def visual_checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool
 
 
 def visual_checkpoint_is_compatible(candidate: Any, source_sha256: str | None) -> bool:
-    return bool(
+    compatible = bool(
         isinstance(candidate, dict)
         and candidate.get("schema_version") == SCHEMA_VERSION
         and candidate.get("source_sha256") == source_sha256
         and visual_checkpoint_ownership_is_compatible(candidate)
+    )
+    if not compatible:
+        return False
+    spatial_refs = {
+        str(item.get("rendered_asset_ref") or "")
+        for item in candidate.get("evidence") or []
+        if isinstance(item, dict)
+        and item.get("effective", True)
+        and item.get("kind") == "diagram_entry"
+    }
+    if not spatial_refs:
+        return True
+    assets = {
+        str(item.get("path") or ""): item
+        for item in candidate.get("assets") or []
+        if isinstance(item, dict)
+    }
+    return bool(
+        candidate.get("spatial_preservation_version") == SPATIAL_PRESERVATION_VERSION
+        and all(ref in assets for ref in spatial_refs)
     )
 
 
@@ -245,6 +266,8 @@ def _render_regions(source_bytes: bytes, normalized: dict[str, Any]) -> list[dic
         return []
     if kind in {"png", "jpeg"}:
         extension = "png" if kind == "png" else "jpg"
+        with Image.open(io.BytesIO(source_bytes)) as image:
+            width, height = image.size
         return [{
             "page": 1,
             "question_refs": [],
@@ -253,6 +276,12 @@ def _render_regions(source_bytes: bytes, normalized: dict[str, Any]) -> list[dic
             "image_bytes": source_bytes,
             "mime_type": "image/png" if kind == "png" else "image/jpeg",
             "printed_text": flagged[0].get("effective_text", ""),
+            "render_bbox": [0.0, 0.0, float(width), float(height)],
+            "owned_bbox": [0.0, 0.0, float(width), float(height)],
+            "page_bbox": [0.0, 0.0, float(width), float(height)],
+            "pixel_width": int(width),
+            "pixel_height": int(height),
+            "render_scale": 1.0,
         }]
 
     try:
@@ -295,6 +324,9 @@ def _render_regions(source_bytes: bytes, normalized: dict[str, Any]) -> list[dic
                     "mime_type": "image/png",
                     "printed_text": page_meta.get("digital_text", ""),
                     "region_index": region_index,
+                    "page_bbox": [0.0, 0.0, float(page.rect.width), float(page.rect.height)],
+                    "pixel_width": int(pixmap.width),
+                    "pixel_height": int(pixmap.height),
                 })
             if len(regions) >= max_regions:
                 break
@@ -832,6 +864,8 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "rendered_asset_ref": region["asset_path"],
             "source_page_bbox": source_page_bbox,
             "owned_bbox": region.get("owned_bbox"),
+            "render_bbox": region.get("render_bbox"),
+            "page_bbox": region.get("page_bbox"),
             "owned_question_ref": owned_question_ref,
             "association_status": association_status,
             "extractor_provider": str(payload.get("provider") or "groq"),
@@ -917,11 +951,13 @@ def extract_visual_evidence(
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "ownership_algorithm_version": OWNERSHIP_ALGORITHM_VERSION,
+        "spatial_preservation_version": SPATIAL_PRESERVATION_VERSION,
         "phase": "phase2_visual_evidence",
         "job_id": normalized.get("job_id"),
         "source_sha256": normalized.get("source", {}).get("sha256"),
         "evidence": [],
         "mark_changes": [],
+        "assets": [],
         "warnings": [],
         "runs": [],
         "retry_history": [],
@@ -956,6 +992,7 @@ def extract_visual_evidence(
         ]
         record["evidence"] = list(checkpoint_record.get("evidence") or [])
         record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
+        record["assets"] = list(checkpoint_record.get("assets") or [])
         record["warnings"] = [
             item for item in checkpoint_record.get("warnings", [])
             if isinstance(item, dict) and item.get("code") == "VISUAL_MODEL_WARNING"
@@ -992,6 +1029,20 @@ def extract_visual_evidence(
             "content_type": region["mime_type"],
             "sha256": digest,
         }
+        record["assets"].append({
+            "path": region["asset_path"],
+            "sha256": digest,
+            "size_bytes": len(region["image_bytes"]),
+            "mime_type": region["mime_type"],
+            "pixel_width": int(region.get("pixel_width") or 0),
+            "pixel_height": int(region.get("pixel_height") or 0),
+            "page": int(region["page"]),
+            "question_refs": [str(value) for value in region.get("question_refs") or []],
+            "render_bbox": region.get("render_bbox"),
+            "owned_bbox": region.get("owned_bbox"),
+            "page_bbox": region.get("page_bbox"),
+            "preservation_method": "source_crop",
+        })
         artifacts.append(artifact)
         unique_regions.append((region, artifact))
         record["summary"]["regions_rendered"] += 1
@@ -1125,6 +1176,11 @@ def extract_visual_evidence(
             checkpoint_callback(record, artifact)
     _deduplicate_visual_items(record["evidence"])
     _deduplicate_visual_items(record["mark_changes"])
+    record["assets"] = list({
+        str(item.get("path")): item
+        for item in record.get("assets") or []
+        if isinstance(item, dict) and item.get("path")
+    }.values())
     record["summary"]["effective_evidence_count"] = sum(
         1 for item in record["evidence"] if item.get("effective", True)
     )
@@ -1134,6 +1190,158 @@ def extract_visual_evidence(
     return record, artifacts
 
 
+def _finite_bbox(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        box = [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if not all(item == item and abs(item) != float("inf") for item in box):
+        return None
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    return box
+
+
+def _bbox_inside(inner: list[float], outer: list[float]) -> bool:
+    return bool(
+        outer[0] <= inner[0] < inner[2] <= outer[2]
+        and outer[1] <= inner[1] < inner[3] <= outer[3]
+    )
+
+
+def _bbox_union(boxes: list[list[float]]) -> list[float] | None:
+    if not boxes:
+        return None
+    return [
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    ]
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def spatial_visual_groups(
+    evidence_items: list[dict[str, Any]],
+    assets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build stable source-crop groups for position-dependent answer evidence."""
+    ensure_visual_evidence_ids(evidence_items)
+    asset_by_path = {
+        str(asset.get("path") or ""): asset
+        for asset in assets
+        if isinstance(asset, dict) and asset.get("path")
+    }
+    grouped: dict[tuple[str, int, str], list[tuple[int, dict[str, Any]]]] = {}
+    for order, item in enumerate(evidence_items):
+        if not item.get("effective", True) or item.get("kind") != "diagram_entry":
+            continue
+        qid = str(item.get("question_ref") or "")
+        asset_ref = str(item.get("rendered_asset_ref") or "")
+        try:
+            page = int(item.get("page"))
+        except (TypeError, ValueError):
+            page = 0
+        grouped.setdefault((qid, page, asset_ref), []).append((order, item))
+
+    result: list[dict[str, Any]] = []
+    for (qid, page, asset_ref), ordered_items in grouped.items():
+        observations = [item for _, item in ordered_items]
+        asset = asset_by_path.get(asset_ref)
+        page_bbox = _finite_bbox((asset or {}).get("page_bbox"))
+        crop_bbox = _finite_bbox((asset or {}).get("render_bbox"))
+        owned_bbox = _finite_bbox((asset or {}).get("owned_bbox"))
+        evidence_boxes = [
+            box for item in observations
+            if (box := _finite_bbox(item.get("source_page_bbox"))) is not None
+        ]
+        reasons: list[str] = []
+        if not qid or page < 1 or not asset_ref:
+            reasons.append("unstable_owner_identity")
+        if any(
+            item.get("association_status") != "owned"
+            or str(item.get("owned_question_ref") or "") != qid
+            for item in observations
+        ):
+            reasons.append("owner_association_unresolved")
+        if any(float(item.get("confidence") or 0) < VISUAL_REVIEW_THRESHOLD for item in observations):
+            reasons.append("evidence_confidence_below_threshold")
+        if asset is None:
+            reasons.append("source_crop_asset_missing")
+        else:
+            if str(asset.get("preservation_method") or "") != "source_crop":
+                reasons.append("unsupported_asset_method")
+            if (_positive_int(asset.get("size_bytes")) or 0) <= 256:
+                reasons.append("source_crop_empty")
+            if (
+                (_positive_int(asset.get("pixel_width")) or 0) < 64
+                or (_positive_int(asset.get("pixel_height")) or 0) < 64
+            ):
+                reasons.append("source_crop_dimensions_invalid")
+            asset_owners = {str(value) for value in asset.get("question_refs") or []}
+            if asset_owners != {qid}:
+                reasons.append("source_crop_owner_mismatch")
+            try:
+                asset_page = int(asset.get("page"))
+            except (TypeError, ValueError):
+                asset_page = 0
+            if asset_page != page:
+                reasons.append("source_crop_page_mismatch")
+        if page_bbox is None or crop_bbox is None or owned_bbox is None:
+            reasons.append("source_crop_bounds_missing")
+        elif not _bbox_inside(crop_bbox, page_bbox) or not _bbox_inside(owned_bbox, page_bbox):
+            reasons.append("source_crop_bounds_invalid")
+        else:
+            crop_area = (crop_bbox[2] - crop_bbox[0]) * (crop_bbox[3] - crop_bbox[1])
+            page_area = (page_bbox[2] - page_bbox[0]) * (page_bbox[3] - page_bbox[1])
+            if page_area <= 0 or crop_area / page_area > 0.75:
+                reasons.append("source_crop_excessive")
+            if any(not _bbox_inside(box, owned_bbox) for box in evidence_boxes):
+                reasons.append("evidence_outside_owner_bounds")
+        if len(evidence_boxes) != len(observations):
+            reasons.append("evidence_bounds_missing")
+        if classify_visual_review_unit(observations)["classification"] == "runaway_model_output":
+            reasons.append("runaway_visual_evidence")
+
+        evidence_ids = [str(item["evidence_id"]) for item in observations]
+        identity = json.dumps({
+            "owner": qid,
+            "page": page,
+            "asset": asset_ref,
+            "evidence_ids": evidence_ids,
+        }, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        result.append({
+            "spatial_visual_group_id": "spatial_" + digest[:20],
+            "asset_id": "visual_asset_" + str((asset or {}).get("sha256") or digest)[:16],
+            "owner_question_id": qid or None,
+            "source_question_id": qid or None,
+            "page": page or None,
+            "rendered_asset_ref": asset_ref or None,
+            "crop_bounds": crop_bbox,
+            "owned_bbox": owned_bbox,
+            "page_bbox": page_bbox,
+            "evidence_bbox_union": _bbox_union(evidence_boxes),
+            "visual_evidence_ids": evidence_ids,
+            "evidence_order": min(order for order, _ in ordered_items),
+            "spatial_semantics_required": True,
+            "preservation_method": "source_crop",
+            "reliable": not reasons,
+            "reliability_failures": list(dict.fromkeys(reasons)),
+            "asset": dict(asset) if asset is not None else None,
+        })
+    return result
+
+
 def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     questions = {str(item.get("question_id")): item for item in structure.get("questions", [])}
     attached = 0
@@ -1141,6 +1349,12 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
     _deduplicate_visual_items(evidence_items)
     mark_changes = visual.get("mark_changes", [])
     _deduplicate_visual_items(mark_changes)
+    spatial_groups = spatial_visual_groups(evidence_items, visual.get("assets") or [])
+    spatial_evidence_ids = {
+        evidence_id
+        for group in spatial_groups
+        for evidence_id in group.get("visual_evidence_ids") or []
+    }
     association_items = [
         item for item in [*evidence_items, *mark_changes]
         if item.get("evidence_status") in {"cross_anchor_mismatch", "context_only"}
@@ -1162,7 +1376,33 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             ),
             "suggestions": [unit],
         })
-    for item in evidence_items:
+    for group in spatial_groups:
+        target = questions.get(str(group.get("owner_question_id") or ""))
+        if target is not None:
+            target.setdefault("essential_visual_evidence", []).append(group)
+        if target is not None and group.get("reliable"):
+            target.setdefault("spatial_visual_groups", []).append(group)
+            continue
+        structure.setdefault("exceptions", []).append({
+            "level": "red",
+            "category": "essential_visual_preservation_required",
+            "affected_id": group.get("owner_question_id"),
+            "message": (
+                f"Spatial answer evidence for {group.get('owner_question_id') or '[unresolved]'} "
+                "could not be preserved as a reliable source-backed figure."
+            ),
+            "suggestions": [{
+                "source_question_id": group.get("source_question_id"),
+                "source_page": group.get("page"),
+                "rendered_asset_ref": group.get("rendered_asset_ref"),
+                "visual_evidence_ids": group.get("visual_evidence_ids"),
+                "reason": group.get("reliability_failures"),
+                "association_unresolved": "owner_association_unresolved" in (
+                    group.get("reliability_failures") or []
+                ),
+            }],
+        })
+    for evidence_order, item in enumerate(evidence_items):
         question_ref = item.get("question_ref")
         target = questions.get(str(question_ref)) if question_ref is not None else None
         confidence = float(item.get("confidence") or 0)
@@ -1172,6 +1412,10 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             continue
         target.setdefault("visual_evidence", []).append(item)
         attached += 1
+        if str(item.get("evidence_id") or "") in spatial_evidence_ids:
+            # Spatial labels remain auditable in visual_evidence but never
+            # degrade into a linear visual_solution_segments stream.
+            continue
         normalization_issue = item.get("math_normalization_issue")
         solution_kind = item.get("kind") in {"answer", "answer_working", "diagram_entry"}
         if normalization_issue and solution_kind:
@@ -1197,6 +1441,7 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
                     "rendered_asset_ref": item.get("rendered_asset_ref"),
                     "confidence": confidence,
                     "canonical_latex": item.get("normalized_math"),
+                    "evidence_order": evidence_order,
                 })
         if confidence < VISUAL_REVIEW_THRESHOLD:
             structure.setdefault("exceptions", []).append({

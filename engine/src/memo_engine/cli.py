@@ -768,11 +768,39 @@ def run_job(job_id: str) -> int:
         render_validation_path = (
             f"{job['user_id']}/{job['id']}/internal/render_validation.json"
         )
+        supplemental_assets: dict[str, tuple[bytes, str]] = {}
+        for asset in canonical.get("source", {}).get("assets", []):
+            storage_path = str(asset.get("storage_path") or "")
+            asset_id = str(asset.get("asset_id") or "")
+            if not storage_path:
+                continue
+            if (
+                not asset_id
+                or not storage_path.startswith("internal/visual/")
+                or ".." in storage_path.split("/")
+            ):
+                raise RenderingError(
+                    "RENDER_ASSET_PATH_INVALID",
+                    "A canonical visual asset path is invalid.",
+                )
+            data = db.download_object(
+                BUCKET,
+                f"{job['user_id']}/{job['id']}/{storage_path}",
+            )
+            supplemental_assets[asset_id] = (
+                data,
+                str(asset.get("mime_type") or "image/png"),
+            )
 
         with tempfile.TemporaryDirectory(prefix=f"pbhs-render-{job_id}-") as td:
             td_path = Path(td)
             try:
-                rendered = render_outputs(canonical, source_bytes, td_path)
+                rendered = render_outputs(
+                    canonical,
+                    source_bytes,
+                    td_path,
+                    supplemental_assets=supplemental_assets,
+                )
             except RenderingError as exc:
                 diagnostic_docx = td_path / "memo.docx"
                 if diagnostic_docx.exists() and diagnostic_docx.stat().st_size:

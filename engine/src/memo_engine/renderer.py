@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -540,23 +541,41 @@ def _add_text(paragraph, text: str, *, bold=False, italic=False, size=9) -> None
     _set_font(run, size=size, bold=bold, italic=italic)
 
 
-def _asset_bytes(source_bytes: bytes, canonical: dict[str, Any]) -> dict[str, tuple[bytes, str]]:
+def _asset_bytes(
+    source_bytes: bytes,
+    canonical: dict[str, Any],
+    supplemental_assets: dict[str, tuple[bytes, str]] | None = None,
+) -> dict[str, tuple[bytes, str]]:
     assets = {item["asset_id"]: item for item in canonical.get("source", {}).get("assets", [])}
-    result: dict[str, tuple[bytes, str]] = {}
+    result: dict[str, tuple[bytes, str]] = dict(supplemental_assets or {})
     if not assets:
         return result
-    try:
-        with zipfile.ZipFile(io.BytesIO(source_bytes)) as archive:
-            for asset_id, meta in assets.items():
-                path = meta.get("package_path")
-                if not path:
-                    continue
-                try:
-                    result[asset_id] = (archive.read(path), str(meta.get("mime_type") or "application/octet-stream"))
-                except KeyError:
-                    continue
-    except zipfile.BadZipFile as exc:
-        raise RenderingError("RENDER_SOURCE_PACKAGE_INVALID", "The source DOCX could not be reopened for figure rendering.") from exc
+    package_assets = {
+        asset_id: meta for asset_id, meta in assets.items()
+        if meta.get("package_path")
+    }
+    if package_assets:
+        try:
+            with zipfile.ZipFile(io.BytesIO(source_bytes)) as archive:
+                for asset_id, meta in package_assets.items():
+                    path = meta.get("package_path")
+                    try:
+                        result[asset_id] = (
+                            archive.read(path),
+                            str(meta.get("mime_type") or "application/octet-stream"),
+                        )
+                    except KeyError:
+                        continue
+        except zipfile.BadZipFile as exc:
+            raise RenderingError("RENDER_SOURCE_PACKAGE_INVALID", "The source DOCX could not be reopened for figure rendering.") from exc
+    for asset_id, (data, _) in result.items():
+        meta = assets.get(asset_id) or {}
+        expected_sha = str(meta.get("sha256") or "")
+        expected_size = int(meta.get("size_bytes") or 0)
+        if expected_sha and hashlib.sha256(data).hexdigest() != expected_sha:
+            raise RenderingError("RENDER_ASSET_DIGEST_MISMATCH", "A canonical figure asset failed its integrity check.")
+        if expected_size and len(data) != expected_size:
+            raise RenderingError("RENDER_ASSET_SIZE_MISMATCH", "A canonical figure asset failed its size check.")
     return result
 
 
@@ -948,6 +967,7 @@ def render_docx(
     output_path: str | Path,
     *,
     page_count: int | None = None,
+    supplemental_assets: dict[str, tuple[bytes, str]] | None = None,
 ) -> dict[str, Any]:
     if canonical.get("status") != "render_ready":
         raise RenderingError("RENDER_INPUT_NOT_READY", "The canonical memo is not render-ready.")
@@ -955,7 +975,7 @@ def render_docx(
         raise RenderingError("RENDER_PROFILE_UNSUPPORTED", "The selected renderer profile is not supported by Phase 6.")
 
     bank = _pandoc_math_bank(canonical)
-    assets = _asset_bytes(source_bytes, canonical)
+    assets = _asset_bytes(source_bytes, canonical, supplemental_assets)
 
     document = Document()
     _set_doc_defaults(document)
@@ -1002,6 +1022,8 @@ def preflight_docx(path: str | Path, canonical: dict[str, Any]) -> dict[str, Any
         with zipfile.ZipFile(path) as archive:
             xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
             settings = archive.read("word/settings.xml").decode("utf-8", errors="replace")
+            rels_xml = archive.read("word/_rels/document.xml.rels")
+            package_names = set(archive.namelist())
     except Exception as exc:
         raise RenderingError("RENDER_DOCX_INVALID", "The generated DOCX package could not be inspected.") from exc
 
@@ -1026,11 +1048,35 @@ def preflight_docx(path: str | Path, canonical: dict[str, Any]) -> dict[str, Any
     if "✓" not in xml:
         issues.append("CHECK_MARK_MISSING")
 
+    expected_figures = sum(
+        1 for block in _iter_blocks(canonical) if block.get("type") == "figure"
+    )
+    actual_figures = xml.count("<w:drawing")
+    if actual_figures < expected_figures:
+        issues.append(f"FIGURE_COUNT:{actual_figures}<{expected_figures}")
+    relationship_root = ET.fromstring(rels_xml)
+    image_targets = {
+        str(node.get("Id")): str(node.get("Target") or "")
+        for node in relationship_root
+        if str(node.get("Type") or "").endswith("/image")
+    }
+    embedded_image_ids = re.findall(r'<a:blip[^>]+r:embed="([^"]+)"', xml)
+    for relationship_id in embedded_image_ids:
+        target = image_targets.get(relationship_id)
+        if not target:
+            issues.append("FIGURE_RELATIONSHIP_MISSING")
+            continue
+        package_path = posixpath.normpath(posixpath.join("word", target))
+        if package_path not in package_names:
+            issues.append("FIGURE_MEDIA_MISSING")
+
     return {
         "passed": not issues,
         "issues": issues,
         "expected_math_blocks": expected_math,
         "native_math_elements": actual_math,
+        "expected_figure_blocks": expected_figures,
+        "embedded_figure_elements": actual_figures,
         "renderer_version": RENDERER_VERSION,
         "render_profile": RENDER_PROFILE,
     }
@@ -1222,6 +1268,8 @@ def render_outputs(
     canonical: dict[str, Any],
     source_bytes: bytes,
     output_dir: str | Path,
+    *,
+    supplemental_assets: dict[str, tuple[bytes, str]] | None = None,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1229,13 +1277,19 @@ def render_outputs(
 
     # First pass obtains actual pagination from the same office engine used for
     # the final PDF. Second pass writes the cover extent and exports again.
-    draft_preflight = render_docx(canonical, source_bytes, docx_path, page_count=None)
+    draft_preflight = render_docx(
+        canonical, source_bytes, docx_path, page_count=None,
+        supplemental_assets=supplemental_assets,
+    )
     if not draft_preflight["passed"]:
         raise RenderingError("RENDER_DOCX_PREFLIGHT_FAILED", "The generated DOCX failed structural preflight.")
     draft_pdf = convert_docx_to_pdf(docx_path, output_dir)
     pages = pdf_page_count(draft_pdf)
 
-    final_preflight = render_docx(canonical, source_bytes, docx_path, page_count=pages)
+    final_preflight = render_docx(
+        canonical, source_bytes, docx_path, page_count=pages,
+        supplemental_assets=supplemental_assets,
+    )
     if not final_preflight["passed"]:
         raise RenderingError("RENDER_DOCX_PREFLIGHT_FAILED", "The final DOCX failed structural preflight.")
     pdf_path = convert_docx_to_pdf(docx_path, output_dir)
@@ -1243,7 +1297,10 @@ def render_outputs(
     if final_pages != pages:
         # One bounded correction pass if the extent text itself changed pagination.
         pages = final_pages
-        final_preflight = render_docx(canonical, source_bytes, docx_path, page_count=pages)
+        final_preflight = render_docx(
+            canonical, source_bytes, docx_path, page_count=pages,
+            supplemental_assets=supplemental_assets,
+        )
         pdf_path = convert_docx_to_pdf(docx_path, output_dir)
         final_pages = pdf_page_count(pdf_path)
     if final_pages != pages:

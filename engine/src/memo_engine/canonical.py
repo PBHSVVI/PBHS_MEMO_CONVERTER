@@ -904,9 +904,26 @@ def _content_segments(
                 for line in lines
             ]
 
-    visual_segments = qdata.get("visual_solution_segments")
-    if isinstance(visual_segments, list) and visual_segments:
+    classified_source = [_classified_source_segment(segment) for segment in source_segments]
+    native_figure_source = [
+        segment for segment in classified_source
+        if segment.get("drawing_assets")
+        and str(segment.get("content_role") or "") in SOLUTION_CONTENT_ROLES
+    ]
+    if native_figure_source:
         return [
+            segment for segment in classified_source
+            if str(segment.get("content_role") or "") in SOLUTION_CONTENT_ROLES
+        ]
+
+    visual_segments = qdata.get("visual_solution_segments")
+    spatial_groups = [
+        group for group in qdata.get("spatial_visual_groups") or []
+        if isinstance(group, dict) and group.get("reliable")
+    ]
+    visual_content: list[dict[str, Any]] = []
+    if isinstance(visual_segments, list):
+        visual_content.extend([
             {
                 "text": str(segment.get("text") or ""),
                 "content_role": "visual_answer",
@@ -917,11 +934,37 @@ def _content_segments(
                     "confidence": segment.get("confidence"),
                 },
                 "canonical_latex": segment.get("canonical_latex"),
+                "evidence_order": int(segment.get("evidence_order") or 0),
             }
             for segment in visual_segments
             if str(segment.get("text") or "").strip()
-        ]
-    classified_source = [_classified_source_segment(segment) for segment in source_segments]
+        ])
+    visual_content.extend({
+        "text": "",
+        "content_role": "figure",
+        "source_ref": {"file_id": "source_1", "page": group.get("page")},
+        "evidence_order": int(group.get("evidence_order") or 0),
+        "figure": {
+            "asset_id": group.get("asset_id"),
+            "semantic_role": "visual_answer",
+            "spatial_semantics_required": True,
+            "preservation_method": group.get("preservation_method"),
+            "spatial_visual_group_id": group.get("spatial_visual_group_id"),
+            "source_question_id": (
+                qdata.get("source_question_id") or group.get("source_question_id")
+            ),
+            "owner_question_id": qdata.get("question_id") or group.get("owner_question_id"),
+            "source_page": group.get("page"),
+            "crop_bounds": group.get("crop_bounds"),
+            "owned_bbox": group.get("owned_bbox"),
+            "page_bbox": group.get("page_bbox"),
+            "evidence_bbox_union": group.get("evidence_bbox_union"),
+            "visual_evidence_ids": group.get("visual_evidence_ids"),
+            "rendered_asset_ref": group.get("rendered_asset_ref"),
+        },
+    } for group in spatial_groups)
+    if visual_content:
+        return sorted(visual_content, key=lambda segment: int(segment.get("evidence_order") or 0))
     return [
         segment for segment in classified_source
         if str(segment.get("content_role") or "") in SOLUTION_CONTENT_ROLES
@@ -970,8 +1013,47 @@ def _source_evidence_summary(
             if segment not in selected_segments
         }),
         "visual_evidence_present": bool(qdata.get("visual_evidence")),
-        "usable_visual_evidence_present": bool(qdata.get("visual_solution_segments")),
+        "usable_visual_evidence_present": bool(
+            qdata.get("visual_solution_segments") or qdata.get("spatial_visual_groups")
+        ),
+        "essential_visual_evidence": list(qdata.get("essential_visual_evidence") or []),
     }
+
+
+def _visual_crop_assets(qmap: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    assets: dict[str, dict[str, Any]] = {}
+    for qid, qdata in qmap.items():
+        for group in qdata.get("spatial_visual_groups") or []:
+            if not isinstance(group, dict) or not group.get("reliable"):
+                continue
+            raw = group.get("asset") or {}
+            asset_id = str(group.get("asset_id") or "")
+            storage_path = str(raw.get("path") or group.get("rendered_asset_ref") or "")
+            if not asset_id or not storage_path:
+                continue
+            assets[asset_id] = {
+                "asset_id": asset_id,
+                "source_file_id": "source_1",
+                "storage_path": storage_path,
+                "sha256": raw.get("sha256"),
+                "size_bytes": raw.get("size_bytes"),
+                "mime_type": raw.get("mime_type") or "image/png",
+                "pixel_width": raw.get("pixel_width"),
+                "pixel_height": raw.get("pixel_height"),
+                "media_class": "essential_spatial_answer",
+                "owner_question_id": qid,
+                "source_question_id": qdata.get("source_question_id") or group.get("source_question_id") or qid,
+                "source_page": group.get("page"),
+                "crop_bounds": group.get("crop_bounds"),
+                "owned_bbox": group.get("owned_bbox"),
+                "page_bbox": group.get("page_bbox"),
+                "evidence_bbox_union": group.get("evidence_bbox_union"),
+                "visual_evidence_ids": group.get("visual_evidence_ids") or [],
+                "spatial_visual_group_id": group.get("spatial_visual_group_id"),
+                "spatial_semantics_required": True,
+                "preservation_method": "source_crop",
+            }
+    return list(assets.values())
 
 
 def _marking_text(qdata: dict[str, Any], record: dict[str, Any]) -> str:
@@ -1035,6 +1117,20 @@ def _blocks_from_segments(
     for segment in segments:
         segment_role = str(segment.get("content_role") or "other")
         text = _collapse(segment.get("text", ""))
+        if segment_role == "figure" and isinstance(segment.get("figure"), dict):
+            add_block({
+                "type": "figure",
+                "semantic_role": "visual_answer",
+                "figure": dict(segment["figure"]),
+                "source_refs": _source_ref(segment),
+                "confidence": {
+                    "score": 1.0,
+                    "band": "green",
+                    "rationale": "Essential spatial evidence preserved from a reliable source crop.",
+                },
+                "warnings": [],
+            })
+            continue
         if text.upper() == "OR" and not segment.get("equations"):
             continue
         drawings = segment.get("drawing_assets") or []
@@ -1902,13 +1998,38 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
         for item in source_files
         if item.get("file_id")
     }
+    known_item_numbers = {
+        str(item.get("number"))
+        for question in memo.get("questions", [])
+        for item in _iter_items(question.get("items", []))
+    }
+
+    def valid_bbox(value: Any) -> list[float] | None:
+        if not isinstance(value, list) or len(value) != 4:
+            return None
+        try:
+            box = [float(part) for part in value]
+        except (TypeError, ValueError):
+            return None
+        if not all(part == part and abs(part) != float("inf") for part in box):
+            return None
+        return box if box[2] > box[0] and box[3] > box[1] else None
+
+    def positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     asset_ids: set[str] = set()
+    asset_by_id: dict[str, dict[str, Any]] = {}
     for asset in source.get("assets") or []:
         asset_id = asset.get("asset_id")
         if asset_id:
             ids.append(str(asset_id))
             asset_ids.add(str(asset_id))
+            asset_by_id[str(asset_id)] = asset
         source_file_id = asset.get("source_file_id")
         if source_file_id and source_file_id not in file_ids:
             issues.append({
@@ -1917,6 +2038,65 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                 "affected_id": str(asset_id) if asset_id else None,
                 "message": "A figure asset refers to an unknown source file.",
             })
+        if asset.get("preservation_method") == "source_crop":
+            path = str(asset.get("storage_path") or "")
+            crop = valid_bbox(asset.get("crop_bounds"))
+            owned = valid_bbox(asset.get("owned_bbox"))
+            page_box = valid_bbox(asset.get("page_bbox"))
+            evidence_union = valid_bbox(asset.get("evidence_bbox_union"))
+            owner = str(asset.get("owner_question_id") or "")
+            invalid = []
+            if not path.startswith("internal/visual/") or ".." in path.split("/"):
+                invalid.append("storage_path")
+            if not re.fullmatch(r"[0-9a-f]{64}", str(asset.get("sha256") or "")):
+                invalid.append("sha256")
+            if positive_int(asset.get("size_bytes")) is None:
+                invalid.append("size_bytes")
+            if (
+                positive_int(asset.get("pixel_width")) is None
+                or positive_int(asset.get("pixel_height")) is None
+            ):
+                invalid.append("pixel_dimensions")
+            if owner not in known_item_numbers:
+                invalid.append("owner")
+            try:
+                source_page = int(asset.get("source_page"))
+            except (TypeError, ValueError):
+                source_page = 0
+            source_page_limit = page_limits.get(str(asset.get("source_file_id") or ""), 0)
+            if source_page < 1 or (source_page_limit and source_page > source_page_limit):
+                invalid.append("source_page")
+            if crop is None or owned is None or page_box is None or not (
+                page_box[0] <= crop[0] < crop[2] <= page_box[2]
+                and page_box[1] <= crop[1] < crop[3] <= page_box[3]
+                and page_box[0] <= owned[0] < owned[2] <= page_box[2]
+                and page_box[1] <= owned[1] < owned[3] <= page_box[3]
+            ):
+                invalid.append("crop_bounds")
+            elif (
+                (crop[2] - crop[0]) * (crop[3] - crop[1])
+                / ((page_box[2] - page_box[0]) * (page_box[3] - page_box[1]))
+                > 0.75
+            ):
+                invalid.append("crop_extent")
+            if evidence_union is None or owned is None or not (
+                owned[0] <= evidence_union[0] < evidence_union[2] <= owned[2]
+                and owned[1] <= evidence_union[1] < evidence_union[3] <= owned[3]
+            ):
+                invalid.append("evidence_bounds")
+            if not asset.get("spatial_visual_group_id") or not asset.get("visual_evidence_ids"):
+                invalid.append("spatial_provenance")
+            if invalid:
+                issues.append({
+                    "level": "red",
+                    "category": "essential_visual_asset_invalid",
+                    "affected_id": owner or str(asset_id or ""),
+                    "message": (
+                        "A preserved spatial figure asset failed deterministic "
+                        "provenance or bounds validation."
+                    ),
+                    "suggestions": [{"invalid_fields": invalid}],
+                })
 
     def validate_source_refs(
         refs: list[dict[str, Any]] | None,
@@ -2038,6 +2218,38 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
             ]
             prompt_overlap = any(overlap for _, overlap in alternative_checks)
             has_solution_evidence = any(valid for valid, _ in alternative_checks)
+            essential_groups = list(evidence.get("essential_visual_evidence") or [])
+            figure_group_ids = {
+                str((block.get("figure") or {}).get("spatial_visual_group_id") or "")
+                for alternative in alternatives
+                for block in alternative.get("blocks") or []
+                if block.get("type") == "figure"
+            }
+            unresolved_essential = [
+                group for group in essential_groups
+                if not group.get("reliable")
+                or str(group.get("spatial_visual_group_id") or "") not in figure_group_ids
+            ]
+            if not children and computed > 0 and unresolved_essential:
+                issues.append({
+                    "level": "red",
+                    "category": "essential_visual_preservation_required",
+                    "affected_id": item_number,
+                    "message": (
+                        f"Spatial answer evidence for {item_number} could not be "
+                        "preserved as a reliable source-backed figure."
+                    ),
+                    "suggestions": [{
+                        "spatial_visual_group_ids": [
+                            group.get("spatial_visual_group_id")
+                            for group in unresolved_essential
+                        ],
+                        "reason": [
+                            group.get("reliability_failures") or ["canonical_figure_missing"]
+                            for group in unresolved_essential
+                        ],
+                    }],
+                })
             if not children and computed > 0 and prompt_overlap:
                 issues.append({
                     "level": "red",
@@ -2172,7 +2384,8 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                     validate_source_refs(block.get("source_refs"), affected_id=item_number)
 
                     if block.get("type") == "figure":
-                        asset_id = block.get("figure", {}).get("asset_id")
+                        figure = block.get("figure", {})
+                        asset_id = figure.get("asset_id")
                         if asset_id not in asset_ids:
                             issues.append({
                                 "level": "red",
@@ -2182,6 +2395,22 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                                     f"Figure block {block_id} references an unknown asset."
                                 ),
                             })
+                        else:
+                            asset = asset_by_id.get(str(asset_id)) or {}
+                            if asset.get("preservation_method") == "source_crop" and (
+                                str(asset.get("owner_question_id") or "") != item_number
+                                or str(asset.get("spatial_visual_group_id") or "")
+                                != str(figure.get("spatial_visual_group_id") or "")
+                            ):
+                                issues.append({
+                                    "level": "red",
+                                    "category": "essential_visual_asset_invalid",
+                                    "affected_id": item_number,
+                                    "message": (
+                                        f"Figure block {block_id} does not match its "
+                                        "source-crop owner or spatial group."
+                                    ),
+                                })
 
                     if block.get("type") == "math":
                         math = block.get("math") or {}
@@ -2467,7 +2696,11 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                 code in error_codes
                 for code in {"math_parse_failed", "math_shape_invalid"}
             ),
-            "ASSET_RESOLVES": "asset_unresolved" not in error_codes,
+            "ASSET_RESOLVES": not any(
+                code in error_codes
+                for code in {"asset_unresolved", "essential_visual_asset_invalid"}
+            ),
+            "ESSENTIAL_VISUAL": "essential_visual_preservation_required" not in error_codes,
         },
     }
 
@@ -2488,6 +2721,12 @@ def build_canonical_memo(
     qmap: dict[str, dict[str, Any]] = {}
     for question in structure.get("questions", []):
         qmap.setdefault(str(question["question_id"]), question)
+    visual_crop_assets = _visual_crop_assets(qmap)
+    existing_asset_ids = {str(asset.get("asset_id")) for asset in assets}
+    assets.extend(
+        asset for asset in visual_crop_assets
+        if str(asset.get("asset_id")) not in existing_asset_ids
+    )
 
     segments_by_qid: dict[str, list[dict[str, Any]]] = {qid: [] for qid in qmap}
     for record in records:
