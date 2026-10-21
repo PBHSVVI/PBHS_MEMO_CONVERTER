@@ -344,3 +344,11 @@ def test_review_acceptance_uses_source_defined_total():
     assert "total_150" not in html
     assert "eleven_questions" not in html
     assert "computed_total)===Number(canonical?.totals?.computed)" in html
+
+
+def test_mathematical_conflict_uses_teacher_language_and_content_tool():
+    html = REVIEW_PAGE.read_text(encoding="utf-8")
+    assert "mathematical_consistency_conflict:'Displayed calculation needs checking'" in html
+    assert "case 'mathematical_consistency_conflict'" in html
+    assert "The system will not change the answer automatically." in html
+    assert "if(ex.category==='mathematical_consistency_conflict')options.push(['content','Content']" in html

@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 
 from .geometry_validation import geometry_consistency_issues
 from .math_notation import SUPPORTED_LATEX_COMMANDS, unsupported_latex_commands
+from .mathematical_consistency import check_canonical_mathematics
 from .metadata import MetadataValidationError, resolve_document_metadata
 from .structure import MAJOR_QUESTION_BOUNDARY_RE, find_question_ids, parse_mark_points
 
@@ -2612,6 +2613,8 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                 })
 
     issues.extend(geometry_consistency_issues(memo))
+    mathematical_consistency = check_canonical_mathematics(memo)
+    issues.extend(mathematical_consistency["issues"])
 
     issues = _dedupe_issues(issues)
     open_red = sum(
@@ -2645,6 +2648,7 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
         "amber_count": sum(1 for issue in issues if issue["level"] == "amber"),
         "error_codes": sorted(error_codes),
         "issues": issues,
+        "mathematical_consistency": mathematical_consistency,
         "gates": {
             "ID_UNIQUE": "id_not_unique" not in error_codes,
             "REF_RESOLVES": not any(
@@ -2695,6 +2699,9 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
             "MATH_PARSE": not any(
                 code in error_codes
                 for code in {"math_parse_failed", "math_shape_invalid"}
+            ),
+            "MATH_CONSISTENCY": (
+                "mathematical_consistency_conflict" not in error_codes
             ),
             "ASSET_RESOLVES": not any(
                 code in error_codes
@@ -2984,6 +2991,13 @@ def build_canonical_memo(
     }
 
     validation = validate_canonical(memo)
+    memo["audit"]["mathematical_consistency"] = {
+        "checker_version": validation["mathematical_consistency"]["checker_version"],
+        "counts": validation["mathematical_consistency"]["counts"],
+        "checked_expression_count": validation["mathematical_consistency"]["checked_expression_count"],
+        "conflict_count": validation["mathematical_consistency"]["conflict_count"],
+        "limit_reached": validation["mathematical_consistency"]["limit_reached"],
+    }
     validation_issue_records = _dedupe_issues(validation["issues"])
     existing_keys = {(ex["category"], tuple(ex["affected_ids"]), ex["message"]) for ex in memo["exceptions"]}
     for item in validation_issue_records:
