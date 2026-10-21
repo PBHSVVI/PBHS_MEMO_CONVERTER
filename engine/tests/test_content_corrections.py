@@ -18,7 +18,7 @@ def test_teacher_content_override_replaces_segments_and_preserves_source_ref():
     result = _content_segments(question, source)
 
     assert [segment["text"] for segment in result] == [
-        "Corrected question", "First corrected step", "Final answer",
+        "First corrected step", "Final answer",
     ]
     assert all(segment["source_ref"] == source[0]["source_ref"] for segment in result)
     assert all(segment["teacher_correction_id"] == "corr-content" for segment in result)
@@ -27,7 +27,7 @@ def test_teacher_content_override_replaces_segments_and_preserves_source_ref():
 
 def test_source_content_is_unchanged_without_confirmed_override():
     source = [{"text": "original"}]
-    assert _content_segments({}, source) is source
+    assert _content_segments({}, source) == []
     assert _marking_text({}, {"marking_text": "old marks"}) == "old marks"
 
 
@@ -71,7 +71,7 @@ def test_item_tree_renders_teacher_content_and_marking():
     leaf = items[0]["children"][0]
     blocks = leaf["alternatives"][0]["blocks"]
     assert [block["text"] for block in blocks] == [
-        "Corrected question wording", "Corrected method", "The final answer is 42",
+        "Corrected method", "The final answer is 42",
     ]
     assert leaf["marks"] == {"observed": 2, "computed": 2, "status": "match"}
     assert len(leaf["alternatives"][0]["marking_points"]) == 2

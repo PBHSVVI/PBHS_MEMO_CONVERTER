@@ -5,13 +5,14 @@ import io
 import os
 import re
 import zipfile
+from difflib import SequenceMatcher
 from typing import Any
 from xml.etree import ElementTree as ET
 
 from .geometry_validation import geometry_consistency_issues
 from .math_notation import SUPPORTED_LATEX_COMMANDS, unsupported_latex_commands
 from .metadata import MetadataValidationError, resolve_document_metadata
-from .structure import find_question_ids, parse_mark_points
+from .structure import MAJOR_QUESTION_BOUNDARY_RE, find_question_ids, parse_mark_points
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -55,6 +56,22 @@ QUESTION_TOKEN_RE = re.compile(
 )
 OR_LINE_RE = re.compile(r"(?im)^\s*OR\s*$")
 TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")
+
+SOURCE_CONTENT_ROLES = {
+    "question_prompt", "solution_working", "final_answer", "marking_annotation",
+    "heading", "subtotal", "visual_answer", "figure", "other",
+}
+SOLUTION_CONTENT_ROLES = {
+    "solution_working", "final_answer", "visual_answer", "figure",
+}
+PROMPT_OPENING_RE = re.compile(
+    r"(?i)^(?:calculate|determine|find|show|prove|evaluate|solve|state|give|"
+    r"write|draw|sketch|construct|complete|use|explain|justify|would|what|"
+    r"which|how|is|are|does|do)\b"
+)
+PRINTED_ALLOCATION_TAIL_RE = re.compile(
+    r"(?:\(\s*\d{1,2}\s*\)|\[\s*\d{1,3}\s*\])(?:\s|$)", re.I
+)
 
 
 class CanonicalizationError(RuntimeError):
@@ -456,6 +473,7 @@ def _source_records(
                 "paragraphs": [{
                     "text": text,
                     "equations": [],
+                    "content_role": "other",
                     "source_ref": {"file_id": "source_1", "page": int(page.get("page") or 1)},
                 }],
             })
@@ -513,6 +531,7 @@ def _source_records(
                         "segments": unit.get("segments") or [],
                         "equations": unit.get("equations") or [],
                         "drawing_assets": drawing_map.get((unit_index, None, None, 0), []),
+                        "content_role": "other",
                         "source_ref": {
                             "file_id": "source_1",
                             "page": page_map.get((unit_index, None, None, 0), 1),
@@ -553,6 +572,7 @@ def _source_records(
                 allocation_text = cells[-1]
 
             paragraphs: list[dict[str, Any]] = []
+            has_separate_answer_cell = len(source_cell_indexes) >= 2
             for cell_index in source_cell_indexes:
                 cell = row[cell_index]
                 for paragraph_index, paragraph in enumerate(cell.get("paragraphs", [])):
@@ -565,6 +585,13 @@ def _source_records(
                         "segments": paragraph.get("segments") or [],
                         "equations": paragraph.get("equations") or [],
                         "drawing_assets": drawing_assets,
+                        "content_role": (
+                            "question_prompt"
+                            if has_separate_answer_cell and cell_index == source_cell_indexes[0]
+                            else "solution_working"
+                            if has_separate_answer_cell
+                            else "other"
+                        ),
                         "source_ref": {
                             "file_id": "source_1",
                             "page": page_map.get((unit_index, row_index, cell_index, paragraph_index), 1),
@@ -678,6 +705,59 @@ def _paragraph_from_slice(
     }
 
 
+def _looks_like_question_prompt(text: str) -> bool:
+    """Recognise prompt-shaped content using combined structural evidence.
+
+    No individual verb is authoritative. A prompt needs an interrogative or
+    instruction shape together with a question mark or printed allocation.
+    """
+    value = _collapse(text)
+    if not value:
+        return False
+    prompt_shape = bool(PROMPT_OPENING_RE.match(value)) or "?" in value
+    allocation = bool(PRINTED_ALLOCATION_TAIL_RE.search(value))
+    return prompt_shape and ("?" in value or allocation)
+
+
+def _looks_like_source_solution(segment: dict[str, Any]) -> bool:
+    if segment.get("equations") or segment.get("drawing_assets"):
+        return True
+    ordered = segment.get("segments") or []
+    if any(item.get("type") == "math" for item in ordered):
+        return True
+    text = _collapse(segment.get("text", ""))
+    if not text:
+        return False
+    if re.search(r"(?:=|≈|≠|≤|≥|⇒|∴|\btherefore\b)", text, re.I):
+        return True
+    if re.match(r"(?i)^(?:yes|no)\b", text) and len(text.split()) > 1:
+        return True
+    if re.search(r"(?i)\b(?:answer|solution|working)\b", text):
+        return True
+    return False
+
+
+def _classified_source_segment(segment: dict[str, Any]) -> dict[str, Any]:
+    """Attach the controlled content role used by canonical selection."""
+    result = dict(segment)
+    explicit = str(result.get("content_role") or "").strip()
+    if explicit in SOURCE_CONTENT_ROLES and explicit != "other":
+        return result
+    text = str(result.get("text") or "")
+    if MAJOR_QUESTION_BOUNDARY_RE.fullmatch(text.strip()):
+        result["content_role"] = "heading"
+    elif _looks_like_question_prompt(text):
+        result["content_role"] = "question_prompt"
+    elif _looks_like_source_solution(result):
+        result["content_role"] = "solution_working"
+    else:
+        # Unknown source prose is retained as evidence but cannot silently earn
+        # solution completeness. Typed source answers can opt in through a
+        # structurally owned answer cell or deterministic answer evidence.
+        result["content_role"] = "other"
+    return result
+
+
 def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {qid: [] for qid in qids}
     deepest = sorted(qids, key=lambda value: (value.count("."), len(value)), reverse=True)
@@ -686,20 +766,41 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
     for paragraph in record["paragraphs"]:
         text = paragraph.get("text", "")
         matches = list(QUESTION_TOKEN_RE.finditer(text))
+        headings = list(MAJOR_QUESTION_BOUNDARY_RE.finditer(text))
+        terminal_boundaries = [
+            match.start()
+            for match in re.finditer(r"(?im)^[ \t]*TOTAL\s*[:=-]", text)
+        ]
         if not matches:
             if current is not None:
-                result.setdefault(current, []).append(paragraph)
+                boundary = min(
+                    [heading.start() for heading in headings] + terminal_boundaries
+                    or [len(text)]
+                )
+                prefix = _paragraph_from_slice(
+                    paragraph, 0, boundary, keep_drawings=not headings
+                )
+                if prefix is not None:
+                    result.setdefault(current, []).append(
+                        _classified_source_segment(prefix)
+                    )
+                if headings:
+                    current = None
             continue
 
         if current is not None and matches[0].start() > 0:
+            prefix_end = min(
+                [heading.start() for heading in headings if heading.start() < matches[0].start()]
+                or [matches[0].start()]
+            )
             prefix = _paragraph_from_slice(
                 paragraph,
                 0,
-                matches[0].start(),
+                prefix_end,
                 keep_drawings=False,
             )
             if prefix is not None:
-                result.setdefault(current, []).append(prefix)
+                result.setdefault(current, []).append(_classified_source_segment(prefix))
 
         last_matched: str | None = None
         for idx, match in enumerate(matches):
@@ -709,6 +810,16 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
             last_matched = qid
             start = match.end()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            heading_starts = [
+                heading.start() for heading in headings
+                if start <= heading.start() < end
+            ]
+            terminal_starts = [
+                boundary for boundary in terminal_boundaries
+                if start <= boundary < end
+            ]
+            if heading_starts or terminal_starts:
+                end = min(heading_starts + terminal_starts)
             sliced = _paragraph_from_slice(
                 paragraph,
                 start,
@@ -716,11 +827,15 @@ def _qid_segments(record: dict[str, Any], qids: list[str]) -> dict[str, list[dic
                 keep_drawings=idx == len(matches) - 1,
             )
             if sliced is not None:
-                result[qid].append(sliced)
+                result[qid].append(_classified_source_segment(sliced))
 
         if last_matched is not None:
             descendants = [candidate for candidate in deepest if candidate.startswith(last_matched + ".")]
             current = descendants[0] if descendants else last_matched
+            if headings and any(heading.start() >= matches[-1].end() for heading in headings):
+                current = None
+            if any(boundary >= matches[-1].end() for boundary in terminal_boundaries):
+                current = None
 
     return result
 
@@ -763,13 +878,14 @@ def _content_segments(
     qdata: dict[str, Any],
     source_segments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return teacher-confirmed item content while retaining source provenance."""
+    """Return usable solution evidence while retaining source provenance.
+
+    Prompt and other non-solution source evidence remain available to the item
+    audit, but they are never promoted to canonical working here.
+    """
     override = qdata.get("content_override")
     if isinstance(override, dict):
         lines: list[str] = []
-        question_text = str(override.get("question_text") or "").strip()
-        if question_text:
-            lines.append(question_text)
         raw_solution = override.get("solution_lines")
         if isinstance(raw_solution, list):
             lines.extend(str(line).strip() for line in raw_solution if str(line).strip())
@@ -781,6 +897,7 @@ def _content_segments(
             return [
                 {
                     "text": line,
+                    "content_role": "solution_working",
                     "source_ref": source_ref,
                     "teacher_correction_id": override.get("correction_id"),
                 }
@@ -792,6 +909,7 @@ def _content_segments(
         return [
             {
                 "text": str(segment.get("text") or ""),
+                "content_role": "visual_answer",
                 "source_ref": segment.get("source_ref"),
                 "visual_evidence": {
                     "raw_transcription": segment.get("raw_transcription"),
@@ -803,7 +921,57 @@ def _content_segments(
             for segment in visual_segments
             if str(segment.get("text") or "").strip()
         ]
-    return source_segments
+    classified_source = [_classified_source_segment(segment) for segment in source_segments]
+    return [
+        segment for segment in classified_source
+        if str(segment.get("content_role") or "") in SOLUTION_CONTENT_ROLES
+    ]
+
+
+def _source_evidence_summary(
+    qdata: dict[str, Any],
+    source_segments: list[dict[str, Any]],
+    selected_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    classified_source = [_classified_source_segment(segment) for segment in source_segments]
+    prompt_segments = [
+        segment for segment in classified_source
+        if segment.get("content_role") == "question_prompt"
+    ]
+    prompt_text = " ".join(
+        _collapse(segment.get("text", "")) for segment in prompt_segments
+        if _collapse(segment.get("text", ""))
+    )
+    override = qdata.get("content_override") or {}
+    corrected_prompt = _collapse(override.get("question_text", ""))
+    if corrected_prompt:
+        prompt_text = corrected_prompt
+    source_refs = [
+        ref
+        for segment in prompt_segments
+        for ref in _source_ref(segment)
+    ]
+    source_page = qdata.get("source_page")
+    if source_page is None and source_refs:
+        source_page = source_refs[0].get("page")
+    return {
+        "status": "present" if selected_segments else "missing",
+        "source_question_id": str(
+            qdata.get("source_question_id") or qdata.get("question_id") or ""
+        ),
+        "source_block_index": safe_source_block_index(qdata.get("source_block_index")),
+        "source_page": source_page,
+        "source_character_offset": qdata.get("source_character_offset"),
+        "prompt_text": prompt_text or None,
+        "prompt_source_refs": source_refs,
+        "rejected_content_roles": sorted({
+            str(segment.get("content_role") or "other")
+            for segment in classified_source
+            if segment not in selected_segments
+        }),
+        "visual_evidence_present": bool(qdata.get("visual_evidence")),
+        "usable_visual_evidence_present": bool(qdata.get("visual_solution_segments")),
+    }
 
 
 def _marking_text(qdata: dict[str, Any], record: dict[str, Any]) -> str:
@@ -819,9 +987,11 @@ def _blocks_from_segments(
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     safe_qid = qid.replace(".", "_")
+    segment_role = "other"
 
     def add_block(payload: dict[str, Any]) -> None:
         payload["block_id"] = f"b_{safe_qid}_{alternative_label.lower()}_{len(blocks) + 1}"
+        payload["source_content_role"] = segment_role
         blocks.append(payload)
 
     def add_text_block(value: str, refs: list[dict[str, Any]]) -> None:
@@ -863,6 +1033,7 @@ def _blocks_from_segments(
         })
 
     for segment in segments:
+        segment_role = str(segment.get("content_role") or "other")
         text = _collapse(segment.get("text", ""))
         if text.upper() == "OR" and not segment.get("equations"):
             continue
@@ -1392,9 +1563,12 @@ def _build_item_tree(
         item_id = _canonical_id_for_qid(qid)
         context_blocks: list[dict[str, Any]] = []
         alternatives: list[dict[str, Any]] = []
+        evidence_summary: dict[str, Any] | None = None
 
         if qdata is not None:
-            segments = _content_segments(qdata, segments_by_qid.get(qid, []))
+            source_segments = segments_by_qid.get(qid, [])
+            segments = _content_segments(qdata, source_segments)
+            evidence_summary = _source_evidence_summary(qdata, source_segments, segments)
             if child_paths:
                 context_blocks = _blocks_from_segments(qid, "context", segments, issues)
             else:
@@ -1448,8 +1622,12 @@ def _build_item_tree(
             "confidence": {"score": 1.0, "band": "green", "rationale": "Question hierarchy is deterministic after Phase 3 gates."},
             "warnings": [],
         }
+        if evidence_summary is not None:
+            item["solution_evidence"] = evidence_summary
+            if evidence_summary.get("prompt_text"):
+                item["source_prompt"] = evidence_summary["prompt_text"]
         if qdata is not None and qdata.get("visual_evidence"):
-            item["source_prompt"] = qdata.get("source_preview")
+            item.setdefault("source_prompt", qdata.get("source_preview"))
             item["visual_evidence"] = qdata.get("visual_evidence")
         correction_origin = _correction_origin(qdata) if qdata else None
         if correction_origin is not None:
@@ -1480,6 +1658,51 @@ def _find_item(items: list[dict[str, Any]], qid: str) -> dict[str, Any] | None:
         if str(item.get("number")) == qid:
             return item
     return None
+
+
+def _block_text(block: dict[str, Any]) -> str:
+    if block.get("type") == "math":
+        return str((block.get("math") or {}).get("source_text") or "")
+    return str(block.get("text") or "")
+
+
+def _comparison_text(value: str) -> str:
+    text = re.sub(
+        r"(?im)^[ \t]*QUESTION[ \t]+\d{1,2}[ \t]*[.:-]?[ \t]*$", " ", value
+    )
+    text = re.sub(r"\(\s*\d{1,2}\s*\)|\[\s*\d{1,3}\s*\]", " ", text)
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _prompt_overlap(prompt: str, blocks: list[dict[str, Any]]) -> bool:
+    expected = _comparison_text(prompt)
+    actual = _comparison_text(" ".join(_block_text(block) for block in blocks))
+    if min(len(expected), len(actual)) < 16:
+        return False
+    if expected == actual:
+        return True
+    shorter, longer = sorted((expected, actual), key=len)
+    if len(shorter) >= 24 and shorter in longer:
+        return True
+    return SequenceMatcher(None, expected, actual).ratio() >= 0.9
+
+
+def _alternative_has_solution_evidence(
+    alternative: dict[str, Any], prompt: str | None
+) -> tuple[bool, bool]:
+    blocks = list(alternative.get("blocks") or [])
+    permitted: list[dict[str, Any]] = []
+    for block in blocks:
+        source_role = str(block.get("source_content_role") or "")
+        if source_role in {"question_prompt", "marking_annotation", "heading", "subtotal", "other"}:
+            continue
+        if source_role in SOLUTION_CONTENT_ROLES or (
+            not source_role
+            and block.get("semantic_role") in {"working", "answer", "diagram"}
+        ):
+            permitted.append(block)
+    overlaps = bool(prompt and permitted and _prompt_overlap(prompt, permitted))
+    return bool(permitted) and not overlaps, overlaps
 
 
 def _media_precedes_first_source_qid(
@@ -1806,12 +2029,51 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                 and "source_block_index" in correction_origin
                 and correction_origin.get("source_block_index") is None
             )
-            if not children and computed > 0 and not alternatives:
+            evidence = item.get("solution_evidence") or {}
+            prompt = str(evidence.get("prompt_text") or item.get("source_prompt") or "").strip()
+            alternative_checks = [
+                _alternative_has_solution_evidence(alternative, prompt)
+                for alternative in alternatives
+                if alternative.get("label") != "NOTE_ONLY"
+            ]
+            prompt_overlap = any(overlap for _, overlap in alternative_checks)
+            has_solution_evidence = any(valid for valid, _ in alternative_checks)
+            if not children and computed > 0 and prompt_overlap:
+                issues.append({
+                    "level": "red",
+                    "category": "question_prompt_used_as_solution",
+                    "affected_id": item_number,
+                    "message": (
+                        f"Scored leaf {item_number} repeats its source question "
+                        "prompt as solution content."
+                    ),
+                    "suggestions": [{
+                        "source_question_id": evidence.get("source_question_id") or item_number,
+                        "source_block_index": evidence.get("source_block_index"),
+                        "source_page": evidence.get("source_page"),
+                        "reason": "prompt_solution_overlap",
+                    }],
+                })
+            if not children and computed > 0 and not has_solution_evidence:
                 issues.append({
                     "level": "red",
                     "category": "leaf_solution_missing",
                     "affected_id": item_number,
-                    "message": f"Scored leaf {item_number} has no solution alternative.",
+                    "message": (
+                        f"Scored leaf {item_number} has no usable answer or "
+                        "solution evidence."
+                    ),
+                    "suggestions": [{
+                        "source_question_id": evidence.get("source_question_id") or item_number,
+                        "source_block_index": evidence.get("source_block_index"),
+                        "source_page": evidence.get("source_page"),
+                        "source_character_offset": evidence.get("source_character_offset"),
+                        "rejected_content_roles": evidence.get("rejected_content_roles") or [],
+                        "rejected_question_prompt": bool(prompt),
+                        "visual_evidence_present": bool(evidence.get("visual_evidence_present")),
+                        "usable_visual_evidence_present": bool(evidence.get("usable_visual_evidence_present")),
+                        "reason": "solution_evidence_missing",
+                    }],
                 })
 
             alt_marks = [
@@ -2295,8 +2557,10 @@ def build_canonical_memo(
         major_qid = str(major)
         if major_qid in qmap and not items and not qmap[major_qid].get("context_only"):
             qdata = qmap[major_qid]
+            major_source_segments = segments_by_qid.get(major_qid, [])
+            selected_major_segments = _content_segments(qdata, major_source_segments)
             source_branches = _split_alternative_segments(
-                _content_segments(qdata, segments_by_qid.get(major_qid, []))
+                selected_major_segments
             )
             alt_blocks = [
                 _blocks_from_segments(major_qid, "primary" if idx == 0 else f"or{idx}", branch, issues)
@@ -2335,11 +2599,17 @@ def build_canonical_memo(
                 "confidence": {"score": 1.0, "band": "green", "rationale": "Standalone scored major question represented as a canonical leaf item."},
                 "warnings": [],
             }
+            evidence_summary = _source_evidence_summary(
+                qdata, major_source_segments, selected_major_segments
+            )
+            item["solution_evidence"] = evidence_summary
+            if evidence_summary.get("prompt_text"):
+                item["source_prompt"] = evidence_summary["prompt_text"]
             correction_origin = _correction_origin(qdata)
             if correction_origin is not None:
                 item["correction_origin"] = correction_origin
             if qdata.get("visual_evidence"):
-                item["source_prompt"] = qdata.get("source_preview")
+                item.setdefault("source_prompt", qdata.get("source_preview"))
                 item["visual_evidence"] = qdata.get("visual_evidence")
             items = [item]
 

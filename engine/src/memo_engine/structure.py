@@ -11,6 +11,13 @@ JAMMED_QUESTION_RE = re.compile(
     r"(?m)^[ \t]*(\d{1,2}\.\d{1,2}\.\d{1,2})(?=[A-Za-z])"
 )
 QUESTION_HEADING_RE = re.compile(r"(?im)^[ \t]*QUESTION[ \t]+(\d{1,2})\b")
+# A canonical span boundary is deliberately stricter than heading discovery:
+# the whole line must be a heading. This prevents ordinary prose such as
+# ``Question 4 illustrates ...`` from terminating an item's evidence.
+MAJOR_QUESTION_BOUNDARY_RE = re.compile(
+    r"(?im)^[ \t]*QUESTION[ \t]+(\d{1,2})[ \t]*[.:-]?[ \t]*"
+    r"(?:\[\s*\d{1,3}\s*\])?[ \t]*(?=\r?$|\n)"
+)
 PAGE_LABEL_RE = re.compile(r"(?im)\bPage[ \t]+(\d{1,3})[ \t]+of[ \t]+\d{1,3}\b")
 SUBTOTAL_RE = re.compile(r"\[(\d{1,3})\]")
 DOCUMENT_TOTAL_RE = re.compile(r"(?i)\bTOTAL\s*[:=-]?\s*(\d{1,3})\b")

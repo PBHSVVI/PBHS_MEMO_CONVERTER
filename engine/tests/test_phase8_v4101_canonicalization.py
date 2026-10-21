@@ -112,8 +112,10 @@ def test_teacher_inserted_child_without_source_block_canonicalizes_q6_to_20():
         **inserted["correction_overlay"],
         "source_block_index": None,
     }
-    assert validation["passed"] is True
-    assert issues == []
+    assert validation["passed"] is False
+    assert "leaf_solution_missing" in validation["error_codes"]
+    assert any(issue["category"] == "leaf_solution_missing" for issue in issues)
+    assert memo["status"] == "blocked"
 
 
 def test_source_backed_and_renamed_questions_keep_source_segmentation():

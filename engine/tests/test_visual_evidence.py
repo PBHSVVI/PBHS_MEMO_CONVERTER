@@ -324,9 +324,7 @@ def test_confirmed_teacher_content_override_outweighs_visual_solution_and_preser
 
     content = _content_segments(question, source)
 
-    assert [segment["text"] for segment in content] == [
-        "Teacher-corrected question", "Teacher-corrected solution",
-    ]
+    assert [segment["text"] for segment in content] == ["Teacher-corrected solution"]
     assert all(segment["source_ref"] == source_ref for segment in content)
     assert all(segment["teacher_correction_id"] == "corr-teacher-3-1" for segment in content)
     assert all("visual_evidence" not in segment for segment in content)
@@ -359,9 +357,7 @@ def test_teacher_correction_outweighs_low_confidence_visual_review_content():
 
     content = _content_segments(question, source)
 
-    assert [segment["text"] for segment in content] == [
-        "Confirmed teacher wording", "Confirmed teacher answer",
-    ]
+    assert [segment["text"] for segment in content] == ["Confirmed teacher answer"]
     assert all(segment["teacher_correction_id"] == "corr-after-visual-review" for segment in content)
     assert question["visual_evidence"][0]["confidence"] == 0.55
 
