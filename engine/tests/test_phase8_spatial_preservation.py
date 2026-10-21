@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import shutil
 import zipfile
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
 from docx import Document
 from PIL import Image, ImageDraw
+from pypdf import PdfReader
 
 from engine.src.memo_engine.canonical import _content_segments, build_canonical_memo
-from engine.src.memo_engine.renderer import render_docx
+from engine.src.memo_engine.renderer import render_docx, render_outputs
 from engine.src.memo_engine.visual_evidence import (
     OWNERSHIP_ALGORITHM_VERSION,
     SPATIAL_PRESERVATION_VERSION,
@@ -164,6 +168,35 @@ def _fused(kind: str, *, reliable: bool = True, with_working: bool = False):
     return structure, visual, data
 
 
+def _pdf_image_count(path: Path) -> int:
+    count = 0
+    visited: set[int] = set()
+
+    def visit_resources(resources) -> None:
+        nonlocal count
+        if resources is None:
+            return
+        resources = resources.get_object()
+        xobjects = resources.get("/XObject")
+        if xobjects is None:
+            return
+        for reference in xobjects.get_object().values():
+            object_id = id(reference)
+            if object_id in visited:
+                continue
+            visited.add(object_id)
+            item = reference.get_object()
+            subtype = item.get("/Subtype")
+            if subtype == "/Image":
+                count += 1
+            elif subtype == "/Form":
+                visit_resources(item.get("/Resources"))
+
+    for page in PdfReader(str(path)).pages:
+        visit_resources(page.get("/Resources"))
+    return count
+
+
 def test_venn_entries_become_one_source_backed_figure_without_flattening(tmp_path: Path):
     structure, visual, data = _fused("venn")
     question = structure["questions"][0]
@@ -209,6 +242,60 @@ def test_venn_entries_become_one_source_backed_figure_without_flattening(tmp_pat
     matching_rows = [row for table in document.tables for row in table.rows if "1.1" in row.cells[0].text]
     assert matching_rows
     assert matching_rows[0].cells[1]._tc.xpath(".//w:drawing")
+
+
+@pytest.mark.skipif(
+    not (shutil.which("libreoffice") or shutil.which("soffice")),
+    reason="LibreOffice is required for hosted spatial PDF qualification",
+)
+def test_spatial_figure_survives_hosted_docx_to_pdf_conversion(tmp_path: Path):
+    structure, _, data = _fused("venn")
+    canonical, validation, _ = _build(structure)
+    figure = _item(canonical)["alternatives"][0]["blocks"][0]["figure"]
+    canonical["status"] = "render_ready"
+    canonical["document_metadata"].update({
+        "exam_type": "CONTROLLED TEST", "year": 2026, "subject": "MATHEMATICS",
+        "paper": "PAPER 1", "grade_label": "FORM 5", "duration_minutes": 60,
+    })
+
+    assert validation["passed"] is True
+    result = render_outputs(
+        canonical,
+        b"%PDF-synthetic",
+        tmp_path / "outputs",
+        supplemental_assets={figure["asset_id"]: (data, "image/png")},
+    )
+    docx_path = Path(result["docx_path"])
+    pdf_path = Path(result["pdf_path"])
+    pdf_images = _pdf_image_count(pdf_path)
+
+    assert docx_path.stat().st_size > 0
+    assert pdf_path.stat().st_size > 0
+    assert 1 <= result["page_count"] <= 10
+    assert result["docx_preflight"]["passed"] is True
+    assert result["docx_preflight"]["expected_figure_blocks"] == 1
+    assert result["docx_preflight"]["embedded_figure_elements"] >= 1
+    assert result["pdf_preflight"]["passed"] is True
+    assert result["pdf_preflight"]["missing_glyphs"] == []
+    assert all(font["embedded"] for font in result["pdf_preflight"]["fonts"])
+    assert pdf_images >= 1
+
+    print("HOSTED_SPATIAL_PDF_QUALIFICATION=" + json.dumps({
+        "canonical_figure_blocks": 1,
+        "docx_bytes": docx_path.stat().st_size,
+        "docx_embedded_figures": result["docx_preflight"]["embedded_figure_elements"],
+        "docx_preflight_passed": result["docx_preflight"]["passed"],
+        "pdf_bytes": pdf_path.stat().st_size,
+        "pdf_image_xobjects": pdf_images,
+        "pdf_page_count": result["page_count"],
+        "pdf_preflight_passed": result["pdf_preflight"]["passed"],
+        "pdf_required_glyphs": result["pdf_preflight"]["required_glyphs"],
+        "pdf_missing_glyphs": result["pdf_preflight"]["missing_glyphs"],
+        "pdf_fonts_embedded": all(
+            font["embedded"] for font in result["pdf_preflight"]["fonts"]
+        ),
+        "orphan_or_missing_media": False,
+    }, sort_keys=True))
 
 
 def test_probability_tree_is_preserved_spatially():

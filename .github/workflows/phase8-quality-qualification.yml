@@ -1,0 +1,57 @@
+name: Phase 8 Quality Hosted Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Record checked-out commit
+        run: git rev-parse HEAD
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install deterministic engine and hosted renderer
+        run: |
+          python -m pip install --disable-pip-version-check -r engine/requirements.txt "pytest>=8,<9"
+
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            pandoc \
+            libreoffice-writer \
+            libreoffice-math \
+            poppler-utils \
+            fonts-dejavu-core \
+            fonts-noto-core \
+            fonts-liberation2 \
+            fonts-freefont-otf \
+            fonts-stix
+
+          fc-cache -f
+          (libreoffice --version || soffice --version) | head -n 1
+          pandoc --version | head -n 1
+          pdffonts -v 2>&1 | head -n 1
+
+      - name: Qualify Slice 1 solution evidence
+        run: python -m pytest -q engine/tests/test_phase8_solution_evidence.py
+
+      - name: Qualify Slice 2 spatial DOCX and PDF preservation
+        run: python -m pytest -q -s engine/tests/test_phase8_spatial_preservation.py
+
+      - name: Qualify Slice 3 mathematical consistency
+        run: python -m pytest -q engine/tests/test_phase8_mathematical_consistency.py
