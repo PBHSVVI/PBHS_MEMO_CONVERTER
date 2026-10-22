@@ -2,7 +2,8 @@
 
 Date: 2026-10-22
 
-Status: **OFFLINE QUALIFIED; HOSTED AND LIVE QUALIFICATION PENDING.**
+Status: **HOSTED QUALIFIED; LIVE ACTIVATION STOPPED AFTER TERMS RESPONSE PARSING
+DEFECT. A NEW EXPLICIT LIVE AUTHORISATION IS REQUIRED.**
 
 ## Model decision
 
@@ -28,16 +29,35 @@ fabricated JSON, provider shopping, teacher review noise, or paid fallback.
 
 ## Offline qualification
 
-- Llama contract suite: 20 passed
-- provider/Cloudflare focused suites: 55 passed
+- Llama contract suite: 24 passed
+- provider/Cloudflare focused suites: 59 passed
 - Slice 1: 15 passed
 - Slice 2: 7 passed, 1 skipped locally
 - Slice 3: 23 passed
 - Slice 4: 29 passed
-- full Python: 637 passed, 4 skipped
+- full Python after the offline acknowledgement repair: 641 passed, 4 skipped
 - Python compilation: passed
 - `git diff --check`: passed
 
 The activation workflow permits exactly one terms-acceptance run-path request
 and one synthetic inference request, with all HTTP retries disabled. It uses no
 PBHS, teacher, learner, Supabase, Storage, or production memo data.
+
+## Hosted and live result
+
+Hosted Phase 8 qualification run `39824189266` passed against commit
+`598364dfca90cf76208f46d8311bf8dc5aceee42`. The first hosted runner was
+cancelled after its dependency installation stalled; it never reached tests or
+provider actions.
+
+Activation run `39824349292` confirmed that Llama is visible among 73 account
+models. It made exactly one Meta terms request and no synthetic inference. The
+terms endpoint returned a 2xx JSON acknowledgement whose root was not an object;
+the harness then raised `AttributeError` by assuming an envelope with `.get()`.
+No response content or credential was logged.
+
+The harness now treats any decoded non-object returned by the exact agreement
+request as a successful 2xx acknowledgement while still respecting explicit
+`success=false` object envelopes. This repair is offline only. The agreement
+request was not repeated, the Llama model variable remains unset, and a future
+synthetic inference requires separate explicit authorization.

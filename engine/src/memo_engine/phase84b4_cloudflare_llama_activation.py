@@ -44,13 +44,23 @@ def accept_meta_terms(account_id: str) -> dict[str, Any]:
         max_rate_retries=0,
         max_transient_retries=0,
     )
-    success = payload.get("success") is True
-    errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+    # The agreement endpoint may return a non-object JSON acknowledgement. A
+    # return from _post_json proves that the exact agreement request received a
+    # 2xx response; dict envelopes can additionally expose Cloudflare's success
+    # flag and errors.
+    is_envelope = isinstance(payload, dict)
+    success = payload.get("success") is not False if is_envelope else True
+    errors = (
+        payload.get("errors")
+        if is_envelope and isinstance(payload.get("errors"), list)
+        else []
+    )
     first = errors[0] if errors and isinstance(errors[0], dict) else {}
     return {
         "status": "accepted" if success else "failed",
         "http_status": 200,
         "success": success,
+        "response_type": type(payload).__name__,
         "provider_code": first.get("code") if isinstance(first.get("code"), (str, int)) else None,
     }
 

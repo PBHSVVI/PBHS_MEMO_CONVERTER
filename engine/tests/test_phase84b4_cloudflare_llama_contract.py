@@ -180,12 +180,26 @@ def test_terms_acceptance_is_one_bounded_agree_request(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
     result = activation.accept_meta_terms("account")
     assert result == {
-        "status": "accepted", "http_status": 200, "success": True, "provider_code": None
+        "status": "accepted", "http_status": 200, "success": True,
+        "response_type": "dict", "provider_code": None
     }
     assert len(calls) == 1
     assert calls[0][2] == {"prompt": "agree"}
     assert calls[0][3]["max_rate_retries"] == 0
     assert calls[0][3]["max_transient_retries"] == 0
+
+
+@pytest.mark.parametrize("acknowledgement", [[], "accepted", True, None])
+def test_terms_acceptance_allows_nonobject_2xx_acknowledgement(monkeypatch, acknowledgement):
+    monkeypatch.setattr(
+        activation, "_post_json", lambda *_args, **_kwargs: (acknowledgement, 2)
+    )
+    monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
+    result = activation.accept_meta_terms("account")
+    assert result["status"] == "accepted"
+    assert result["success"] is True
+    assert result["http_status"] == 200
+    assert result["response_type"] == type(acknowledgement).__name__
 
 
 def test_invisible_llama_stops_before_terms_or_inference(monkeypatch):
