@@ -41,3 +41,27 @@ def test_safe_error_projection_excludes_credentials():
     redacted = activation._safe_message("Authorization: Bearer should never be emitted")
     assert redacted == "Cloudflare returned a redacted credential-related message."
     assert "Bearer" not in json.dumps({"message": redacted})
+    account_redacted = activation._safe_message(
+        "Could not route to /client/v4/accounts/0123456789abcdef0123456789abcdef/ai/models/search"
+    )
+    assert "0123456789abcdef" not in account_redacted
+    assert "/accounts/<redacted-account>/" in account_redacted
+
+
+def test_malformed_account_id_stops_before_account_scoped_request(monkeypatch):
+    calls = []
+
+    def fake_verification(path):
+        calls.append(path)
+        return {"http_status": 200, "success": True, "token_status": "active", "errors": []}
+
+    monkeypatch.setattr(activation, "_verification", fake_verification)
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "a" * 31)
+    monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
+    monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")
+    monkeypatch.setenv("MISTRAL_SCHOOL_PRIVATE_APPROVED", "false")
+    report = activation.run()
+    assert calls == ["/user/tokens/verify"]
+    assert report["account_id_format_valid"] is False
+    assert report["model_search"]["status"] == "skipped"
+    assert report["live_inference_calls"] == 0

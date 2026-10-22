@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -54,7 +55,11 @@ def _safe_message(value: Any) -> str | None:
     lowered = value.lower()
     if any(term in lowered for term in ("bearer ", "authorization", "api key", "token=")):
         return "Cloudflare returned a redacted credential-related message."
-    return value
+    return re.sub(
+        r"(?i)(/accounts/)[0-9a-f]{16,64}",
+        r"\1<redacted-account>",
+        value,
+    )
 
 
 def _safe_errors(payload: Any) -> list[dict[str, Any]]:
@@ -199,13 +204,27 @@ def run() -> dict[str, Any]:
     os.environ["MEMO_VISUAL_PROVIDER_RATE_RETRIES"] = "0"
     os.environ["MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES"] = "0"
     user_token = _verification("/user/tokens/verify")
-    account_token = _verification(f"/accounts/{account_id}/tokens/verify")
+    account_id_format_valid = re.fullmatch(r"[0-9a-fA-F]{32}", account_id) is not None
+    account_token = (
+        _verification(f"/accounts/{account_id}/tokens/verify")
+        if account_id_format_valid
+        else {
+            "http_status": None,
+            "success": False,
+            "token_status": None,
+            "errors": [{
+                "code": "CLOUDFLARE_ACCOUNT_ID_INVALID_FORMAT",
+                "message": "The configured Cloudflare account ID must contain 32 hexadecimal characters.",
+            }],
+        }
+    )
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "synthetic_only": True,
         "billable_spend": 0,
         "token_verification": user_token,
         "account_token_verification": account_token,
+        "account_id_format_valid": account_id_format_valid,
         "model_search": None,
         "prior_qwen_404": None,
         "selected_model": None,
@@ -223,6 +242,23 @@ def run() -> dict[str, Any]:
         "live_inference_calls": 0,
     }
     if not (user_token["success"] and user_token["token_status"] == "active"):
+        return report
+    if not account_id_format_valid:
+        report["account_relationship"] = {
+            "valid": False,
+            "basis": "configured_account_id_invalid_format",
+            "workers_ai_read_authorized": False,
+        }
+        report["model_search"] = {
+            "status": "skipped",
+            "error_code": "CLOUDFLARE_ACCOUNT_ID_INVALID_FORMAT",
+            "http_status": None,
+        }
+        report["prior_qwen_404"] = {
+            "http_status": 404,
+            "provider_code": 7003,
+            "explanation": "The prior request used a malformed configured account ID, so Cloudflare could not route the account-scoped URL; the response did not test model availability.",
+        }
         return report
 
     try:
