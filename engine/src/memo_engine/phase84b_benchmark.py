@@ -346,6 +346,23 @@ def run() -> dict[str, Any]:
             ),
             privacy_classification=PRIVACY_SYNTHETIC_TEST,
         )
+        if not captured_cf:
+            attempts = first_record.get("provider_attempts") or []
+            failed = next(
+                (item for item in reversed(attempts) if item.get("status") == "failed"),
+                {},
+            )
+            report["cloudflare"]["preflight"] = {
+                "fixture": "preflight",
+                "provider": "cloudflare",
+                "status": "failed",
+                "schema_valid": False,
+                "error_code": failed.get("error_code", "CLOUDFLARE_PREFLIGHT_FAILED"),
+                "error_category": failed.get("error_category", "unknown"),
+                "http_status": failed.get("http_status"),
+                "retry_after_seconds": failed.get("retry_after_seconds"),
+            }
+            raise RuntimeError("CLOUDFLARE_PREFLIGHT_RECORDED_FAILURE")
         cf_result = captured_cf[-1]
         scored = _score(preflight_fixture, cf_result)
         report["cloudflare"]["preflight"] = {
@@ -376,7 +393,8 @@ def run() -> dict[str, Any]:
             "reused_success_count": second_record["summary"]["reused_success_count"],
         }
     except Exception as exc:
-        report["cloudflare"]["preflight"] = _failure("cloudflare", "preflight", exc)
+        if report["cloudflare"]["preflight"] is None:
+            report["cloudflare"]["preflight"] = _failure("cloudflare", "preflight", exc)
     finally:
         visual_evidence._render_regions = original_render
 
