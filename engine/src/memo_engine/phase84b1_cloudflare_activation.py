@@ -369,6 +369,7 @@ def run() -> dict[str, Any]:
             "result_exists": cloudflare_attempt.get("result_exists"),
             "result_keys": cloudflare_attempt.get("result_keys") or [],
             "response_type": cloudflare_attempt.get("response_type"),
+            "response_path": cloudflare_attempt.get("response_path"),
             "normalization_stage": cloudflare_attempt.get("normalization_stage"),
         }
         report["failover"] = {

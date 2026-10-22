@@ -324,14 +324,29 @@ def _cloudflare_native_content(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     result = payload.get("result")
     result_keys = sorted(str(key) for key in result) if isinstance(result, dict) else []
+    response_path = None
+    response: Any = None
+    if isinstance(result, dict) and "response" in result:
+        response = result.get("response")
+        response_path = "result.response"
+    elif isinstance(result, dict) and "choices" in result:
+        try:
+            response = result["choices"][0]["message"]["content"]
+            if isinstance(response, list):
+                response = "".join(
+                    str(item.get("text") or "")
+                    for item in response
+                    if isinstance(item, dict)
+                )
+            response_path = "result.choices[0].message.content"
+        except (KeyError, IndexError, TypeError):
+            response = None
     diagnostics = {
         "provider_success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
         "result_exists": result is not None,
         "result_keys": result_keys,
-        "response_type": (
-            type(result.get("response")).__name__
-            if isinstance(result, dict) and "response" in result else None
-        ),
+        "response_type": type(response).__name__ if response is not None else None,
+        "response_path": response_path,
         "normalization_stage": "cloudflare_native_envelope",
     }
     if payload.get("success") is False:
@@ -348,7 +363,7 @@ def _cloudflare_native_content(
             provider_message=(provider_message[:300] if provider_message else None),
             diagnostics=diagnostics,
         )
-    if not isinstance(result, dict) or "response" not in result:
+    if not isinstance(result, dict) or response_path is None:
         raise ProviderError(
             "AI_PROVIDER_INVALID_RESPONSE",
             "Cloudflare returned an unreadable native response envelope.",
@@ -356,7 +371,6 @@ def _cloudflare_native_content(
             category="permanent_schema",
             diagnostics=diagnostics,
         )
-    response = result.get("response")
     try:
         normalized = json.loads(response) if isinstance(response, str) else response
     except (TypeError, ValueError) as exc:
@@ -392,14 +406,23 @@ def _result(
     diagnostics: dict[str, Any] = {}
     if payload_extractor is _cloudflare_native_content:
         result = payload.get("result")
+        response_path = None
+        response: Any = None
+        if isinstance(result, dict) and "response" in result:
+            response = result.get("response")
+            response_path = "result.response"
+        elif isinstance(result, dict) and "choices" in result:
+            try:
+                response = result["choices"][0]["message"]["content"]
+                response_path = "result.choices[0].message.content"
+            except (KeyError, IndexError, TypeError):
+                response = None
         diagnostics = {
             "provider_success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
             "result_exists": result is not None,
             "result_keys": sorted(str(key) for key in result) if isinstance(result, dict) else [],
-            "response_type": (
-                type(result.get("response")).__name__
-                if isinstance(result, dict) and "response" in result else None
-            ),
+            "response_type": type(response).__name__ if response is not None else None,
+            "response_path": response_path,
             "normalization_stage": "complete",
         }
     quota = payload.get("_provider_rate_limits") or {}

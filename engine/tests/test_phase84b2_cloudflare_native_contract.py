@@ -70,6 +70,7 @@ def test_cloudflare_native_string_response_and_usage_normalize(monkeypatch):
         "result_exists": True,
         "result_keys": ["response", "usage"],
         "response_type": "str",
+        "response_path": "result.response",
         "normalization_stage": "complete",
     }
 
@@ -77,6 +78,29 @@ def test_cloudflare_native_string_response_and_usage_normalize(monkeypatch):
 def test_cloudflare_native_object_response_normalizes(monkeypatch):
     result, _, _ = _run_cloudflare(monkeypatch, _native_payload(_normalized_result(1)))
     assert result.normalized_result == _normalized_result(1)
+
+
+def test_cloudflare_observed_native_envelope_with_choices_normalizes(monkeypatch):
+    payload = {
+        "result": {
+            "id": "safe-id",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "@cf/google/gemma-4-26b-a4b-it",
+            "choices": [{
+                "message": {"content": json.dumps(_normalized_result(1))},
+            }],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        },
+        "success": True,
+        "errors": [],
+        "messages": [],
+    }
+    result, _, _ = _run_cloudflare(monkeypatch, payload)
+    assert result.normalized_result == _normalized_result(1)
+    assert result.usage["total_tokens"] == 18
+    assert result.diagnostics["response_path"] == "result.choices[0].message.content"
+    assert result.diagnostics["response_type"] == "str"
 
 
 @pytest.mark.parametrize("response", ["not-json", [], [1], 3, True, None])
@@ -105,6 +129,7 @@ def test_cloudflare_success_false_maps_to_provider_error(monkeypatch):
         "result_exists": False,
         "result_keys": [],
         "response_type": None,
+        "response_path": None,
         "normalization_stage": "cloudflare_native_envelope",
     }
 
