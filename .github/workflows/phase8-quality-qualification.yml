@@ -58,3 +58,6 @@ jobs:
 
       - name: Qualify Slice 4 visual-provider resilience
         run: python -m pytest -q engine/tests/test_visual_processing_resilience.py
+
+      - name: Qualify Phase 8.4A zero-cost provider fabric
+        run: python -m pytest -q engine/tests/test_phase84a_provider_fabric.py

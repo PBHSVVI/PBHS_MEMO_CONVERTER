@@ -165,6 +165,8 @@ def _safe_rate_metadata(headers: Any) -> dict[str, Any]:
         "x-ratelimit-limit-tokens": "limit_tokens",
         "x-ratelimit-remaining-requests": "remaining_requests",
         "x-ratelimit-remaining-tokens": "remaining_tokens",
+        "ratelimit-limit": "limit_requests",
+        "ratelimit-remaining": "remaining_requests",
     }
     for header, field in integer_fields.items():
         try:
@@ -177,6 +179,7 @@ def _safe_rate_metadata(headers: Any) -> dict[str, Any]:
         "retry-after": "retry_after_seconds",
         "x-ratelimit-reset-requests": "reset_requests_seconds",
         "x-ratelimit-reset-tokens": "reset_tokens_seconds",
+        "ratelimit-reset": "reset_requests_seconds",
     }
     for header, field in duration_fields.items():
         value = _duration_seconds(headers.get(header))
@@ -296,7 +299,7 @@ def _post_json(
                 rate_attempt += 1
                 wait_seconds = min(120.0, wait_seconds + max(0.0, float(jitter(0.0, 0.75))))
                 print(
-                    "Groq rate limit reached; "
+                    "AI provider rate limit reached; "
                     f"waiting {wait_seconds:.1f}s before retry "
                     f"{rate_attempt}/{max_rate_retries}."
                 )
@@ -362,10 +365,10 @@ def _post_json(
                         "under Groq Settings -> Projects -> Limits."
                     )
                 elif provider_message:
-                    message = f"Groq denied the request: {provider_message}"
+                    message = f"The AI provider denied the request: {provider_message}"
                 else:
                     message = (
-                        "Groq denied the request with HTTP 403. Check organization and "
+                        "The AI provider denied the request with HTTP 403. Check organization and "
                         "project model permissions."
                     )
 

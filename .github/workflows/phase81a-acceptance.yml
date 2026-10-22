@@ -27,6 +27,8 @@ jobs:
       SOURCE_JOB_ID: ${{ inputs.source_job_id }}
       MEMO_PRIVACY_MODE: APPROVED_EXTERNAL_ONLY
       MEMO_APPROVED_PROVIDERS: groq
+      GROQ_PLAN_MODE: free_only
+      GROQ_ZERO_COST_CONFIRMED: "true"
       MEMO_GROQ_FAST_MODEL: openai/gpt-oss-20b
       MEMO_GROQ_STRONG_MODEL: openai/gpt-oss-120b
       MEMO_AI_ESCALATE: "true"

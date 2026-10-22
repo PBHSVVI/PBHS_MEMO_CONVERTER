@@ -14,11 +14,19 @@ from PIL import Image, ImageStat
 
 from .ai_router import ProviderError, _post_json, configured_provider
 from .math_notation import normalize_visual_math
+from .provider_fabric import (
+    PRIVACY_SCHOOL_PRIVATE,
+    TASK_VISUAL_INTERPRETATION,
+    ProviderFabric,
+    ProviderPoolExhausted,
+    ProviderTaskRequest,
+)
 
 
 SCHEMA_VERSION = "1.0"
 OWNERSHIP_ALGORITHM_VERSION = "anchored-crop-v2"
 SPATIAL_PRESERVATION_VERSION = "source-crop-v1"
+VISUAL_TASK_PROMPT_VERSION = "visual-evidence-v1"
 EVIDENCE_KINDS = {
     "answer",
     "answer_working",
@@ -971,7 +979,9 @@ def extract_visual_evidence(
     source_bytes: bytes,
     normalized: dict[str, Any],
     *,
-    runner: Callable[[dict[str, Any], str], dict[str, Any]] = groq_visual_extract,
+    runner: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
+    provider_fabric: ProviderFabric | None = None,
+    privacy_classification: str = PRIVACY_SCHOOL_PRIVATE,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     checkpoint_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
     checkpoint_record: dict[str, Any] | None = None,
@@ -1001,6 +1011,7 @@ def extract_visual_evidence(
         "assets": [],
         "warnings": [],
         "runs": [],
+        "provider_attempts": [],
         "retry_history": [],
         "provider_state": {
             "status": "ready",
@@ -1038,6 +1049,7 @@ def extract_visual_evidence(
             item for item in checkpoint_record.get("runs", [])
             if isinstance(item, dict) and item.get("success") is not True
         ]
+        record["provider_attempts"] = list(checkpoint_record.get("provider_attempts") or [])
         record["evidence"] = list(checkpoint_record.get("evidence") or [])
         record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
         record["assets"] = list(checkpoint_record.get("assets") or [])
@@ -1056,6 +1068,7 @@ def extract_visual_evidence(
         return record, []
 
     model = os.environ.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip() or "qwen/qwen3.8-27b"
+    fabric = provider_fabric or ProviderFabric(clock=clock)
     try:
         regions = _render_regions(source_bytes, normalized)
     except VisualEvidenceError as exc:
@@ -1108,11 +1121,11 @@ def extract_visual_evidence(
         minimum=0.0,
         maximum=60.0,
     )
-    provider_attempts: dict[str, int] = {}
+    region_attempt_counts: dict[str, int] = {}
     for previous in record.get("retry_history") or []:
         ref = previous.get("rendered_asset_ref") if isinstance(previous, dict) else None
         if ref:
-            provider_attempts[str(ref)] = provider_attempts.get(str(ref), 0) + 1
+            region_attempt_counts[str(ref)] = region_attempt_counts.get(str(ref), 0) + 1
     pending_rate_wait: float | None = None
 
     def defer_provider(
@@ -1125,6 +1138,8 @@ def extract_visual_evidence(
         retry_after_seconds: float | None,
         http_status: int | None,
         rate_limits: dict[str, Any] | None,
+        provider_id: str = "provider_pool",
+        circuits: list[dict[str, Any]] | None = None,
     ) -> None:
         opened_at = dt.datetime.now(dt.timezone.utc)
         bounded_retry = (
@@ -1132,7 +1147,7 @@ def extract_visual_evidence(
             if retry_after_seconds is not None else None
         )
         circuit = {
-            "provider": "groq",
+            "provider": provider_id,
             "reason": code,
             "category": category,
             "opened_at": opened_at.isoformat(),
@@ -1148,10 +1163,10 @@ def extract_visual_evidence(
                 "configuration_failed" if category == "auth_configuration"
                 else "deferred"
             ),
-            "circuits": [circuit],
+            "circuits": circuits or [circuit],
         }
         record["runs"].append({
-            "provider": "groq",
+            "provider": provider_id,
             "model": model,
             "page": region["page"],
             "image_count": 1,
@@ -1167,7 +1182,7 @@ def extract_visual_evidence(
             "source_digest": record["source_sha256"],
             "crop_digest": artifact["sha256"],
             "interpretation_schema_version": SCHEMA_VERSION,
-            "attempt": provider_attempts.get(region["asset_path"], 1),
+            "attempt": region_attempt_counts.get(region["asset_path"], 1),
         })
         unresolved = sum(
             1
@@ -1224,7 +1239,7 @@ def extract_visual_evidence(
             "source_digest": record["source_sha256"],
             "crop_digest": artifact["sha256"],
             "interpretation_schema_version": SCHEMA_VERSION,
-            "attempt": provider_attempts.get(region["asset_path"], 1),
+            "attempt": region_attempt_counts.get(region["asset_path"], 1),
         })
         record["summary"]["failure_count"] += 1
         record["summary"]["new_failure_count"] += 1
@@ -1272,23 +1287,96 @@ def extract_visual_evidence(
             break
 
         emit_progress("processing", index, region)
-        record["summary"]["vision_calls"] += 1
         record["summary"]["retried_region_count"] += 1
-        provider_attempts[region["asset_path"]] = provider_attempts.get(region["asset_path"], 0) + 1
+        region_attempt_counts[region["asset_path"]] = region_attempt_counts.get(region["asset_path"], 0) + 1
+        provider_result = None
         try:
-            if runner is groq_visual_extract:
-                raw = runner(
-                    region,
-                    model,
+            if runner is None:
+                prompt = visual_system_prompt() + "\n\nKnown question anchors: " + json.dumps(
+                    region["question_refs"]
+                )
+                if region.get("question_refs"):
+                    prompt += (
+                        "\nThis is an anchored crop. The named question owns the central region. "
+                        "The crop margins may show neighbouring questions for context; do not "
+                        "return their content as evidence for this crop."
+                    )
+                prompt += (
+                    "\nDigitally extracted printed text (context only):\n"
+                    + str(region["printed_text"])[:12000]
+                )
+                provider_result = fabric.route(
+                    ProviderTaskRequest(
+                        task_type=TASK_VISUAL_INTERPRETATION,
+                        region_id=region["asset_path"],
+                        current_question_owner=(
+                            str(region["question_refs"][0])
+                            if len(region.get("question_refs") or []) == 1 else None
+                        ),
+                        source_question=(
+                            str(region["question_refs"][0])
+                            if region.get("question_refs") else None
+                        ),
+                        source_page=int(region["page"]),
+                        source_digest=str(record["source_sha256"] or ""),
+                        crop_digest=artifact["sha256"],
+                        crop_bytes=region["image_bytes"],
+                        crop_mime_type=region["mime_type"],
+                        interpretation_schema_version=SCHEMA_VERSION,
+                        task_prompt_version=VISUAL_TASK_PROMPT_VERSION,
+                        privacy_classification=privacy_classification,
+                        prompt=prompt,
+                        response_schema=_vision_schema(int(region["page"])),
+                    ),
                     deadline_monotonic=phase_started + phase_timeout_seconds,
                     remaining_requests=total_regions - index + 1,
-                    clock=clock,
+                )
+                raw = dict(provider_result.normalized_result)
+                raw.update({
+                    "provider": provider_result.provider_id,
+                    "model": provider_result.model_id,
+                    "elapsed_ms": provider_result.latency_ms,
+                    "usage": provider_result.usage,
+                    "rate_limits": provider_result.quota,
+                })
+                for attempt in provider_result.route_attempts:
+                    record["provider_attempts"].append({
+                        **attempt,
+                        "region_id": region["asset_path"],
+                        "crop_digest": artifact["sha256"],
+                    })
+                record["provider_state"] = {
+                    "status": "ready",
+                    "circuits": fabric.circuit_audit(),
+                }
+                record["summary"]["vision_calls"] += sum(
+                    item.get("status") in {"success", "failed"}
+                    for item in provider_result.route_attempts
+                )
+            elif runner is groq_visual_extract:
+                record["summary"]["vision_calls"] += 1
+                raw = runner(
+                    region, model,
+                    deadline_monotonic=phase_started + phase_timeout_seconds,
+                    remaining_requests=total_regions - index + 1, clock=clock,
                 )
             else:
+                record["summary"]["vision_calls"] += 1
                 raw = runner(region, model)
             result = validate_visual_response(raw, region)
-        except (ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
+        except (ProviderPoolExhausted, ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
             code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
+            route_attempts = list(getattr(exc, "attempts", None) or getattr(exc, "route_attempts", None) or [])
+            for attempt in route_attempts:
+                record["provider_attempts"].append({
+                    **attempt,
+                    "region_id": region["asset_path"],
+                    "crop_digest": artifact["sha256"],
+                })
+            if runner is None:
+                record["summary"]["vision_calls"] += sum(
+                    item.get("status") in {"success", "failed"} for item in route_attempts
+                )
             category = getattr(exc, "category", None)
             if isinstance(exc, VisualEvidenceError):
                 category = (
@@ -1307,6 +1395,11 @@ def extract_visual_evidence(
                 retry_after_seconds=getattr(exc, "retry_after_seconds", None),
                 http_status=getattr(exc, "http_status", None),
                 rate_limits=getattr(exc, "rate_limits", None),
+                provider_id=(
+                    str(route_attempts[-1].get("provider"))
+                    if route_attempts else ("provider_pool" if runner is None else "groq")
+                ),
+                circuits=list(getattr(exc, "circuits", None) or fabric.circuit_audit()),
             )
             break
         record["evidence"].extend(result["evidence"])
@@ -1331,10 +1424,14 @@ def extract_visual_evidence(
             "source_digest": record["source_sha256"],
             "crop_digest": artifact["sha256"],
             "interpretation_schema_version": SCHEMA_VERSION,
-            "result_digest": hashlib.sha256(
-                json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest(),
-            "attempt": provider_attempts[region["asset_path"]],
+            "result_digest": (
+                provider_result.result_digest if provider_result is not None
+                else hashlib.sha256(
+                    json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+            ),
+            "attempt": region_attempt_counts[region["asset_path"]],
+            "task_prompt_version": VISUAL_TASK_PROMPT_VERSION,
             "rate_limits": result.get("rate_limits") or {},
         })
         record["summary"]["success_count"] += 1
@@ -1355,7 +1452,7 @@ def extract_visual_evidence(
             and remaining_tokens < request_tokens
         ):
             capacity_exhausted = True
-        if capacity_exhausted:
+        if capacity_exhausted and runner is not None:
             waits = [
                 rate_limits.get("reset_requests_seconds"),
                 rate_limits.get("reset_tokens_seconds"),
