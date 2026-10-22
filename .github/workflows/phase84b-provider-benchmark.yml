@@ -2,6 +2,12 @@ name: Phase 8.4B Free Provider Synthetic Benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      run_mistral:
+        description: Run the bounded Mistral model discovery and synthetic calls
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ jobs:
       MEMO_APPROVED_PROVIDERS: groq,cloudflare,mistral
       MEMO_VISUAL_PROVIDER_ORDER: groq,cloudflare,mistral
       PHASE84B_REPORT_PATH: /tmp/phase84b-report.json
+      PHASE84B_RUN_MISTRAL: ${{ inputs.run_mistral }}
 
     steps:
       - name: Checkout current main
@@ -58,12 +65,14 @@ jobs:
         run: python -m engine.src.memo_engine.phase84b_benchmark
 
       - name: Scan sanitized report
+        if: always()
         shell: bash
         run: |
           ! grep -Eqi 'authorization|bearer|api[_-]?key|sb_secret_|service_role|signed[_-]?url|data:image' "$PHASE84B_REPORT_PATH"
           python -m json.tool "$PHASE84B_REPORT_PATH" >/dev/null
 
       - name: Upload sanitized benchmark report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: phase84b-sanitized-report

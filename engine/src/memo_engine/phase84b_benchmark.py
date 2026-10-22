@@ -338,7 +338,9 @@ def run() -> dict[str, Any]:
     try:
         first_record, _ = visual_evidence.extract_visual_evidence(
             b"phase84b-cloudflare-cache-source",
-            {"job_id": "synthetic-phase84b", "source": {}, "content": {"pages": [{}]}},
+            {"job_id": "synthetic-phase84b", "source": {}, "content": {
+                "pages": [{"visual_inspection_required": True}]
+            }},
             provider_fabric=ProviderFabric(
                 registry=cf_registry, adapters={"cloudflare": counted_cloudflare}, env=env
             ),
@@ -359,7 +361,9 @@ def run() -> dict[str, Any]:
         before_second = cloudflare_calls
         second_record, _ = visual_evidence.extract_visual_evidence(
             b"phase84b-cloudflare-cache-source",
-            {"job_id": "synthetic-phase84b", "source": {}, "content": {"pages": [{}]}},
+            {"job_id": "synthetic-phase84b", "source": {}, "content": {
+                "pages": [{"visual_inspection_required": True}]
+            }},
             provider_fabric=ProviderFabric(
                 registry=cf_registry, adapters={"cloudflare": counted_cloudflare}, env=env
             ),
@@ -393,17 +397,21 @@ def run() -> dict[str, Any]:
                 )
                 break
 
+    run_mistral = os.environ.get("PHASE84B_RUN_MISTRAL", "true").strip().lower() == "true"
     selected_model = None
-    try:
-        cards, visible_count = list_mistral_models()
-        selected_model, candidates = select_mistral_vision_model(cards)
-        report["mistral"]["model_list_count"] = visible_count
-        report["mistral"]["vision_candidates"] = candidates
-        report["mistral"]["selected_model"] = selected_model
-    except Exception as exc:
-        report["mistral"]["model_list_error"] = (
-            str(exc) if str(exc).startswith("MISTRAL_") else type(exc).__name__
-        )
+    if run_mistral:
+        try:
+            cards, visible_count = list_mistral_models()
+            selected_model, candidates = select_mistral_vision_model(cards)
+            report["mistral"]["model_list_count"] = visible_count
+            report["mistral"]["vision_candidates"] = candidates
+            report["mistral"]["selected_model"] = selected_model
+        except Exception as exc:
+            report["mistral"]["model_list_error"] = (
+                str(exc) if str(exc).startswith("MISTRAL_") else type(exc).__name__
+            )
+    else:
+        report["mistral"]["status"] = "skipped_call_budget_already_consumed"
 
     if selected_model:
         mistral_spec = replace(registry["mistral"], model_id=selected_model, enabled=True)
@@ -495,7 +503,7 @@ def run() -> dict[str, Any]:
     }
     report["cloudflare"]["live_inference_calls"] = cloudflare_calls
     report["mistral"]["live_inference_calls"] = mistral_calls
-    report["mistral"]["model_list_calls"] = 1
+    report["mistral"]["model_list_calls"] = 1 if run_mistral else 0
     return report
 
 
@@ -517,7 +525,12 @@ def main() -> int:
         "billable_spend": 0,
     }
     print("PHASE84B_SAFE_SUMMARY=" + json.dumps(summary, sort_keys=True))
-    return 0
+    cloudflare_ok = report["cloudflare"]["preflight"].get("status") == "success"
+    mistral_ok = (
+        not run_mistral
+        or (report["mistral"]["preflight"] or {}).get("status") == "success"
+    )
+    return 0 if cloudflare_ok and mistral_ok else 1
 
 
 if __name__ == "__main__":
