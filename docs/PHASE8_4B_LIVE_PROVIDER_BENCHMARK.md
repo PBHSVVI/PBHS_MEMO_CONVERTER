@@ -113,4 +113,3 @@ Recommended current orders:
 
 - School-private: `Groq -> defer`
 - Synthetic: `Groq -> Mistral (technical/benchmark use) -> defer`
-
