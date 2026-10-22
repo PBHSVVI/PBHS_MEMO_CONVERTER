@@ -57,3 +57,29 @@ parser. No second live request was made. Consequently live normalized
 Provider spend remained R0.00 / $0.00. No paid feature, Mistral call, production
 memo job, Supabase data, Storage data or protected historical job was accessed
 or changed.
+
+## Qualification
+
+Offline qualification after adding explicit support for the observed native
+completion envelope passed:
+
+- Cloudflare/provider/activation focused suite: 35 passed
+- combined Phase 8 quality slices: 92 passed
+- full Python suite: 617 passed, 4 skipped
+- Python compilation: passed
+- `git diff --check`: passed
+
+Hosted Phase 8 quality qualification run `39769169171` passed against commit
+`4a91b3668d49e8f327879fa7a4492600ccc1e259` on Python 3.13.16:
+
+- Slice 1 solution evidence: 15 passed
+- Slice 2 spatial DOCX/PDF preservation: 8 passed
+- Slice 3 mathematical consistency: 23 passed
+- Slice 4 visual-provider resilience: 29 passed
+- Phase 8.4A zero-cost provider fabric: 16 passed
+
+Activation remains deliberately incomplete. The one-call limit prevented a
+second live request after the account-specific completion envelope was learned.
+Cloudflare therefore remains unactivated for school-private routing until one
+future authorized synthetic call proves live normalization, after which cache
+reuse and failover can be checked without another provider inference.
