@@ -21,7 +21,7 @@ jobs:
       MISTRAL_PLAN_MODE: free_only
       MEMO_APPROVED_PROVIDERS: groq,cloudflare,mistral
       MEMO_VISUAL_PROVIDER_ORDER: groq,cloudflare,mistral
-      PHASE84B_REPORT_PATH: ${{ runner.temp }}/phase84b-report.json
+      PHASE84B_REPORT_PATH: /tmp/phase84b-report.json
 
     steps:
       - name: Checkout current main
@@ -67,6 +67,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: phase84b-sanitized-report
-          path: ${{ runner.temp }}/phase84b-report.json
+          path: /tmp/phase84b-report.json
           if-no-files-found: error
           retention-days: 14
