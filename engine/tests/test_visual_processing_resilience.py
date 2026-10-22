@@ -80,7 +80,7 @@ def test_each_visual_region_emits_reading_and_completed_heartbeats(monkeypatch):
     assert record["summary"]["success_count"] == 21
 
 
-def test_one_vision_timeout_becomes_review_and_next_region_proceeds(monkeypatch):
+def test_one_vision_timeout_defers_without_teacher_review_flood(monkeypatch):
     monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
     calls = []
 
@@ -97,10 +97,11 @@ def test_one_vision_timeout_becomes_review_and_next_region_proceeds(monkeypatch)
         {"questions": [], "exceptions": [], "summary": {}}, record
     )
 
-    assert len(calls) == 2
-    assert record["summary"]["failure_count"] == 1
-    assert record["summary"]["success_count"] == 1
-    assert any(item["category"] == "visual_evidence_unread" for item in fused["exceptions"])
+    assert len(calls) == 1
+    assert record["summary"]["failure_count"] == 0
+    assert record["summary"]["infrastructure_deferred"] is True
+    assert record["summary"]["unprocessed_count"] == 2
+    assert fused["exceptions"] == []
 
 
 def test_visual_request_uses_its_bounded_timeout(monkeypatch):
@@ -125,9 +126,36 @@ def test_visual_request_uses_its_bounded_timeout(monkeypatch):
     assert observed["timeout"] == 45
 
 
-def test_visual_phase_budget_degrades_remaining_regions_to_review(monkeypatch):
+def test_success_response_exposes_only_normalized_rate_metadata(monkeypatch):
+    class Response:
+        headers = Message()
+        headers["x-ratelimit-limit-requests"] = "30"
+        headers["x-ratelimit-remaining-requests"] = "0"
+        headers["x-ratelimit-reset-requests"] = "3m2.5s"
+        headers["authorization"] = "must-not-leak"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+    payload, _ = _post_json("https://example.invalid", {}, {})
+    assert payload["_provider_rate_limits"] == {
+        "limit_requests": 30,
+        "remaining_requests": 0,
+        "reset_requests_seconds": 182.5,
+    }
+    assert "authorization" not in str(payload).lower()
+
+
+def test_visual_phase_budget_defers_remaining_regions_without_review(monkeypatch):
     monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(3))
-    values = iter([0.0, 1.0, 16.0])
+    values = iter([0.0, 1.0, 16.0, 16.0])
     calls = []
 
     record, _ = visual_evidence.extract_visual_evidence(
@@ -140,20 +168,16 @@ def test_visual_phase_budget_degrades_remaining_regions_to_review(monkeypatch):
 
     assert len(calls) == 1
     assert record["summary"]["success_count"] == 1
-    assert record["summary"]["failure_count"] == 2
-    assert {item["code"] for item in record["warnings"]} == {
-        "VISUAL_PHASE_BUDGET_EXCEEDED"
-    }
+    assert record["summary"]["failure_count"] == 0
+    assert record["summary"]["unprocessed_count"] == 2
+    assert record["warnings"] == []
     fused = visual_evidence.fuse_visual_evidence(
         {"questions": [], "exceptions": [], "summary": {}}, record
     )
-    assert sum(
-        item["category"] == "visual_evidence_unread"
-        for item in fused["exceptions"]
-    ) == 2
+    assert fused["exceptions"] == []
 
 
-def test_repeated_transport_failures_open_circuit(monkeypatch):
+def test_transport_failure_opens_provider_circuit_without_fabricated_region_runs(monkeypatch):
     monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(6))
     calls = []
 
@@ -165,11 +189,11 @@ def test_repeated_transport_failures_open_circuit(monkeypatch):
         b"source", _normalized(), runner=unavailable
     )
 
-    assert len(calls) == 3
-    assert record["summary"]["failure_count"] == 6
-    assert [item["error_code"] for item in record["runs"]][3:] == [
-        "VISUAL_PROVIDER_CIRCUIT_OPEN"
-    ] * 3
+    assert len(calls) == 1
+    assert record["summary"]["failure_count"] == 0
+    assert record["summary"]["unprocessed_count"] == 6
+    assert len(record["runs"]) == 1
+    assert record["provider_state"]["circuits"][0]["provider"] == "groq"
 
 
 def test_partial_success_is_checkpointed_before_later_failure(monkeypatch):
@@ -204,7 +228,8 @@ def test_partial_success_is_checkpointed_before_later_failure(monkeypatch):
     assert checkpoints[0][0]["evidence"][0]["transcription"] == "x=2"
     assert checkpoints[0][1].endswith("region-1.png")
     assert record["summary"]["success_count"] == 1
-    assert record["summary"]["failure_count"] == 1
+    assert record["summary"]["failure_count"] == 0
+    assert record["summary"]["infrastructure_deferred"] is True
 
 
 def test_retry_reuses_successful_checkpoint_and_retries_failed_region(monkeypatch):
@@ -311,7 +336,7 @@ def test_complete_success_or_deterministic_failure_can_be_full_cache():
     assert visual_evidence.visual_cache_is_complete(candidate, "sha")
 
 
-def test_exhausted_rate_limit_opens_visual_circuit_immediately(monkeypatch):
+def test_exhausted_rate_limit_defers_without_fabricating_unread_regions(monkeypatch):
     monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(6))
     calls = []
 
@@ -329,9 +354,253 @@ def test_exhausted_rate_limit_opens_visual_circuit_immediately(monkeypatch):
 
     assert len(calls) == 1
     assert record["runs"][0]["error_code"] == "AI_PROVIDER_RATE_LIMITED"
-    assert [item["error_code"] for item in record["runs"][1:]] == [
-        "VISUAL_PROVIDER_CIRCUIT_OPEN"
-    ] * 5
+    assert len(record["runs"]) == 1
+    assert record["summary"]["unprocessed_count"] == 6
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+    assert fused["exceptions"] == []
+
+
+def test_twenty_one_region_rate_limit_preserves_first_and_does_not_flood_review(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(21))
+    calls = []
+
+    def one_then_rate_limit(region, model):
+        calls.append(region["asset_path"])
+        if len(calls) == 2:
+            raise ProviderError(
+                "AI_PROVIDER_RATE_LIMITED",
+                "capacity",
+                retry_after_seconds=120,
+                provider_saturated=True,
+                category="transient_capacity",
+                http_status=429,
+            )
+        return _success(region, model)
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=one_then_rate_limit
+    )
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+
+    assert calls == [
+        "internal/visual/regions/region-1.png",
+        "internal/visual/regions/region-2.png",
+    ]
+    assert record["summary"]["success_count"] == 1
+    assert record["summary"]["unprocessed_count"] == 20
+    assert record["runs"][0]["crop_digest"]
+    assert record["runs"][0]["result_digest"]
+    assert fused["exceptions"] == []
+
+
+def test_short_retry_after_retries_without_real_sleep(monkeypatch):
+    headers = Message()
+    headers["retry-after"] = "1"
+    calls = 0
+    sleeps = []
+
+    class Response:
+        headers = Message()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise urllib.error.HTTPError(
+                "https://example.invalid", 429, "rate limited", headers, io.BytesIO(b"{}")
+            )
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    payload, _ = _post_json(
+        "https://example.invalid", {}, {},
+        sleeper=lambda seconds: sleeps.append(seconds),
+        jitter=lambda *_: 0.0,
+        max_rate_retries=1,
+    )
+    assert payload["ok"] is True
+    assert calls == 2
+    assert sleeps == [2.5]
+
+
+def test_transient_503_retries_without_real_sleep(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    class Response:
+        headers = Message()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise urllib.error.HTTPError(
+                "https://example.invalid", 503, "capacity", Message(), io.BytesIO(b"{}")
+            )
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    payload, _ = _post_json(
+        "https://example.invalid", {}, {},
+        sleeper=lambda seconds: sleeps.append(seconds),
+        jitter=lambda *_: 0.0,
+        max_transient_retries=1,
+    )
+    assert payload["ok"] is True
+    assert calls == 2
+    assert sleeps == [1.0]
+
+
+def test_long_rate_reset_from_success_headers_defers_before_next_call(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(3))
+    calls = []
+
+    def exhausted_after_success(region, model):
+        calls.append(region["asset_path"])
+        result = _success(region, model)
+        result["rate_limits"] = {
+            "remaining_requests": 0,
+            "reset_requests_seconds": 180,
+        }
+        return result
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=exhausted_after_success
+    )
+    assert calls == ["internal/visual/regions/region-1.png"]
+    assert record["summary"]["success_count"] == 1
+    assert record["summary"]["unprocessed_count"] == 2
+    assert record["provider_state"]["circuits"][0]["retry_after_seconds"] == 180
+
+
+def test_partial_cache_reuses_seven_successes_after_rate_limit(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(10))
+    first_calls = []
+
+    def first_attempt(region, model):
+        first_calls.append(region["asset_path"])
+        if len(first_calls) == 8:
+            raise ProviderError(
+                "AI_PROVIDER_RATE_LIMITED", "capacity",
+                retry_after_seconds=120, category="transient_capacity",
+            )
+        return _success(region, model)
+
+    first, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=first_attempt
+    )
+    second_calls = []
+    second, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(),
+        runner=lambda region, model: second_calls.append(region["asset_path"]) or _success(region, model),
+        checkpoint_record=first,
+    )
+    assert len(first_calls) == 8
+    assert second_calls == [
+        "internal/visual/regions/region-8.png",
+        "internal/visual/regions/region-9.png",
+        "internal/visual/regions/region-10.png",
+    ]
+    assert second["summary"]["reused_success_count"] == 7
+    assert second["summary"]["success_count"] == 10
+    assert second["summary"]["infrastructure_deferred"] is False
+
+
+def test_genuine_unread_content_remains_one_teacher_review_item(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(2))
+    calls = []
+
+    def unread_then_success(region, model):
+        calls.append(region["asset_path"])
+        if len(calls) == 1:
+            raise visual_evidence.VisualEvidenceError(
+                "VISUAL_SOURCE_UNREAD", "The crop is genuinely unreadable."
+            )
+        return _success(region, model)
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=unread_then_success
+    )
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+    assert len(calls) == 2
+    assert record["summary"]["content_failure_count"] == 1
+    assert [item["category"] for item in fused["exceptions"]] == ["visual_evidence_unread"]
+
+
+def test_auth_failure_is_infrastructure_not_teacher_review(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(4))
+
+    def auth_failure(_region, _model):
+        raise ProviderError(
+            "AI_PROVIDER_AUTH_CONFIGURATION_FAILED",
+            "credential invalid",
+            retryable=False,
+            category="auth_configuration",
+            http_status=401,
+        )
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=auth_failure
+    )
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+    assert record["provider_state"]["status"] == "configuration_failed"
+    assert record["summary"]["unprocessed_count"] == 4
+    assert fused["exceptions"] == []
+    assert "credential invalid" not in str(record)
+
+
+def test_non_retryable_bad_crop_affects_only_that_region(monkeypatch):
+    monkeypatch.setattr(visual_evidence, "_render_regions", lambda *_: _regions(3))
+    calls = []
+
+    def bad_crop(region, model):
+        calls.append(region["asset_path"])
+        if len(calls) == 2:
+            raise ProviderError(
+                "AI_PROVIDER_REQUEST_REJECTED",
+                "bad crop",
+                retryable=False,
+                category="content_request",
+                http_status=400,
+            )
+        return _success(region, model)
+
+    record, _ = visual_evidence.extract_visual_evidence(
+        b"source", _normalized(), runner=bad_crop
+    )
+    fused = visual_evidence.fuse_visual_evidence(
+        {"questions": [], "exceptions": [], "summary": {}}, record
+    )
+    assert len(calls) == 3
+    assert record["summary"]["success_count"] == 2
+    assert record["summary"]["content_failure_count"] == 1
+    assert len(fused["exceptions"]) == 1
 
 
 def test_retry_after_that_cannot_serve_remaining_regions_skips_wait(monkeypatch):

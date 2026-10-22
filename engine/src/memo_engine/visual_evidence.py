@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import io
 import json
@@ -32,11 +33,20 @@ VISUAL_REVIEW_THRESHOLD = 0.85
 VISUAL_EVIDENCE_MAX_ITEMS = 40
 DEFAULT_VISUAL_PHASE_TIMEOUT_SECONDS = 900.0
 DEFAULT_VISION_REQUEST_TIMEOUT_SECONDS = 45.0
-VISUAL_FAILURE_CIRCUIT_THRESHOLD = 3
+DEFAULT_VISUAL_INLINE_WAIT_SECONDS = 20.0
+DEFAULT_VISUAL_PROVIDER_RATE_RETRIES = 1
+DEFAULT_VISUAL_PROVIDER_TRANSIENT_RETRIES = 2
 NON_RETRYABLE_VISUAL_FAILURE_CODES = {
     "VISUAL_INVALID_RESPONSE",
     "VISUAL_SOURCE_UNSUPPORTED",
     "AI_PROVIDER_UNSUPPORTED",
+}
+VISUAL_CONTENT_FAILURE_CODES = {
+    "VISUAL_SOURCE_UNREAD",
+    "VISUAL_SOURCE_UNSUPPORTED",
+    "VISUAL_INVALID_IMAGE",
+    "AI_PROVIDER_REQUEST_REJECTED",
+    "AI_PROVIDER_HTTP_ERROR",
 }
 QUESTION_REF_RE = re.compile(r"^\d{1,2}(?:\.\d{1,2}){0,2}$")
 QUESTION_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2}(?:\.\d{1,2}){1,2})\.?(?!\d)")
@@ -48,6 +58,14 @@ class VisualEvidenceError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.public_message = message
+
+
+class VisualProviderDeferred(RuntimeError):
+    def __init__(self, code: str, message: str, diagnostics: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+        self.diagnostics = diagnostics
 
 
 def visual_checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool:
@@ -418,6 +436,13 @@ def groq_visual_extract(
     if configured_provider() != "groq":
         raise ProviderError("AI_PROVIDER_UNSUPPORTED", "Only approved Groq vision is supported.", retryable=False)
     key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        raise ProviderError(
+            "AI_PROVIDER_AUTH_CONFIGURATION_FAILED",
+            "The configured visual provider credential is missing.",
+            retryable=False,
+            category="auth_configuration",
+        )
     encoded = base64.b64encode(region["image_bytes"]).decode("ascii")
     prompt = visual_system_prompt() + "\n\nKnown question anchors: " + json.dumps(region["question_refs"])
     if region.get("question_refs"):
@@ -452,6 +477,20 @@ def groq_visual_extract(
         deadline_monotonic=deadline_monotonic,
         remaining_requests=remaining_requests,
         clock=clock,
+        max_rate_retries=max(
+            0,
+            min(3, int(os.environ.get(
+                "MEMO_VISUAL_PROVIDER_RATE_RETRIES",
+                str(DEFAULT_VISUAL_PROVIDER_RATE_RETRIES),
+            ))),
+        ),
+        max_transient_retries=max(
+            0,
+            min(3, int(os.environ.get(
+                "MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES",
+                str(DEFAULT_VISUAL_PROVIDER_TRANSIENT_RETRIES),
+            ))),
+        ),
     )
     try:
         result = json.loads(payload["choices"][0]["message"]["content"])
@@ -461,6 +500,7 @@ def groq_visual_extract(
     result["model"] = model
     result["elapsed_ms"] = elapsed_ms
     result["usage"] = payload.get("usage") or {}
+    result["rate_limits"] = payload.get("_provider_rate_limits") or {}
     return result
 
 
@@ -810,7 +850,7 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
     if not isinstance(payload, dict):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response must be an object.")
     required = {"schema_version", "page", "visual_content_present", "evidence", "mark_changes", "warnings"}
-    allowed = required | {"provider", "model", "elapsed_ms", "usage"}
+    allowed = required | {"provider", "model", "elapsed_ms", "usage", "rate_limits"}
     if set(payload) - allowed or not required.issubset(payload):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response fields do not match the closed schema.")
     if payload["schema_version"] != SCHEMA_VERSION or payload["page"] != region["page"]:
@@ -937,6 +977,7 @@ def extract_visual_evidence(
     checkpoint_record: dict[str, Any] | None = None,
     phase_timeout_seconds: float | None = None,
     clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     phase_started = clock()
     if phase_timeout_seconds is None:
@@ -961,6 +1002,10 @@ def extract_visual_evidence(
         "warnings": [],
         "runs": [],
         "retry_history": [],
+        "provider_state": {
+            "status": "ready",
+            "circuits": [],
+        },
         "summary": {
             "pages_screened": len(screened_pages),
             "pages_flagged": len(flagged_pages),
@@ -976,6 +1021,9 @@ def extract_visual_evidence(
             "new_success_count": 0,
             "new_failure_count": 0,
             "unprocessed_count": 0,
+            "content_failure_count": 0,
+            "infrastructure_deferred": False,
+            "deferred_region_count": 0,
         },
     }
 
@@ -1049,13 +1097,89 @@ def extract_visual_evidence(
         record["summary"]["image_count"] += 1
 
     total_regions = len(unique_regions)
-    completed_refs = {
-        item["rendered_asset_ref"]
+    completed_runs = {
+        item["rendered_asset_ref"]: item
         for item in record["runs"]
         if item.get("success") is True
     }
-    consecutive_transport_failures = 0
-    stop_code: str | None = None
+    inline_wait_limit = _bounded_env_seconds(
+        "MEMO_VISUAL_MAX_INLINE_WAIT_SECONDS",
+        DEFAULT_VISUAL_INLINE_WAIT_SECONDS,
+        minimum=0.0,
+        maximum=60.0,
+    )
+    provider_attempts: dict[str, int] = {}
+    for previous in record.get("retry_history") or []:
+        ref = previous.get("rendered_asset_ref") if isinstance(previous, dict) else None
+        if ref:
+            provider_attempts[str(ref)] = provider_attempts.get(str(ref), 0) + 1
+    pending_rate_wait: float | None = None
+
+    def defer_provider(
+        *,
+        code: str,
+        category: str,
+        index: int,
+        region: dict[str, Any],
+        artifact: dict[str, Any],
+        retry_after_seconds: float | None,
+        http_status: int | None,
+        rate_limits: dict[str, Any] | None,
+    ) -> None:
+        opened_at = dt.datetime.now(dt.timezone.utc)
+        bounded_retry = (
+            min(max(0.0, retry_after_seconds), 3600.0)
+            if retry_after_seconds is not None else None
+        )
+        circuit = {
+            "provider": "groq",
+            "reason": code,
+            "category": category,
+            "opened_at": opened_at.isoformat(),
+            "retry_after_seconds": bounded_retry,
+            "retry_at": (
+                (opened_at + dt.timedelta(seconds=bounded_retry)).isoformat()
+                if bounded_retry is not None else None
+            ),
+            "consecutive_failure_count": 1,
+        }
+        record["provider_state"] = {
+            "status": (
+                "configuration_failed" if category == "auth_configuration"
+                else "deferred"
+            ),
+            "circuits": [circuit],
+        }
+        record["runs"].append({
+            "provider": "groq",
+            "model": model,
+            "page": region["page"],
+            "image_count": 1,
+            "success": False,
+            "status": "deferred",
+            "error_code": code,
+            "error_category": category,
+            "http_status": http_status,
+            "retry_after_seconds": bounded_retry,
+            "rate_limits": rate_limits or {},
+            "rendered_asset_ref": region["asset_path"],
+            "region_id": region["asset_path"],
+            "source_digest": record["source_sha256"],
+            "crop_digest": artifact["sha256"],
+            "interpretation_schema_version": SCHEMA_VERSION,
+            "attempt": provider_attempts.get(region["asset_path"], 1),
+        })
+        unresolved = sum(
+            1
+            for remaining_region, _ in unique_regions[index - 1:]
+            if remaining_region["asset_path"] not in completed_runs
+        )
+        record["summary"]["infrastructure_deferred"] = True
+        record["summary"]["deferred_region_count"] = unresolved
+        record["summary"]["unprocessed_count"] = unresolved
+        emit_progress("deferred", index, region, error_code=code)
+        if checkpoint_callback is not None:
+            checkpoint_callback(record, artifact)
 
     def emit_progress(
         status: str,
@@ -1079,7 +1203,7 @@ def extract_visual_evidence(
             payload["error_code"] = error_code
         progress_callback(payload)
 
-    def record_failure(
+    def record_content_failure(
         region: dict[str, Any],
         artifact: dict[str, Any],
         index: int,
@@ -1093,34 +1217,64 @@ def extract_visual_evidence(
         })
         record["runs"].append({
             "provider": "groq", "model": model, "page": region["page"],
-            "image_count": 1, "success": False, "error_code": code,
+            "image_count": 1, "success": False, "status": "content_failure",
+            "error_code": code, "error_category": "content_request",
             "rendered_asset_ref": region["asset_path"],
+            "region_id": region["asset_path"],
+            "source_digest": record["source_sha256"],
+            "crop_digest": artifact["sha256"],
+            "interpretation_schema_version": SCHEMA_VERSION,
+            "attempt": provider_attempts.get(region["asset_path"], 1),
         })
         record["summary"]["failure_count"] += 1
         record["summary"]["new_failure_count"] += 1
-        if code in {"VISUAL_PHASE_BUDGET_EXCEEDED", "VISUAL_PROVIDER_CIRCUIT_OPEN"}:
-            record["summary"]["unprocessed_count"] += 1
+        record["summary"]["content_failure_count"] += 1
         emit_progress("failed", index, region, error_code=code)
         if checkpoint_callback is not None:
             checkpoint_callback(record, artifact)
 
     for index, (region, artifact) in enumerate(unique_regions, start=1):
-        if region["asset_path"] in completed_refs:
+        completed = completed_runs.get(region["asset_path"])
+        if completed and (
+            not completed.get("crop_digest")
+            or completed.get("crop_digest") == artifact["sha256"]
+        ):
             emit_progress("checkpointed", index, region)
             continue
-        if stop_code:
-            record_failure(region, artifact, index, stop_code)
-            continue
+        if pending_rate_wait is not None:
+            remaining_phase = max(0.0, phase_started + phase_timeout_seconds - clock())
+            if pending_rate_wait <= inline_wait_limit and pending_rate_wait < remaining_phase:
+                sleeper(pending_rate_wait)
+                pending_rate_wait = None
+            else:
+                defer_provider(
+                    code="AI_PROVIDER_RATE_LIMITED",
+                    category="transient_capacity",
+                    index=index,
+                    region=region,
+                    artifact=artifact,
+                    retry_after_seconds=pending_rate_wait,
+                    http_status=429,
+                    rate_limits={},
+                )
+                break
         if clock() - phase_started >= phase_timeout_seconds:
-            stop_code = "VISUAL_PHASE_BUDGET_EXCEEDED"
-            record_failure(
-                region, artifact, index, stop_code
+            defer_provider(
+                code="VISUAL_PHASE_BUDGET_EXCEEDED",
+                category="transient_capacity",
+                index=index,
+                region=region,
+                artifact=artifact,
+                retry_after_seconds=None,
+                http_status=None,
+                rate_limits={},
             )
-            continue
+            break
 
         emit_progress("processing", index, region)
         record["summary"]["vision_calls"] += 1
         record["summary"]["retried_region_count"] += 1
+        provider_attempts[region["asset_path"]] = provider_attempts.get(region["asset_path"], 0) + 1
         try:
             if runner is groq_visual_extract:
                 raw = runner(
@@ -1135,20 +1289,26 @@ def extract_visual_evidence(
             result = validate_visual_response(raw, region)
         except (ProviderError, VisualEvidenceError, ValueError, TypeError) as exc:
             code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
-            record_failure(region, artifact, index, code)
-            if isinstance(exc, ProviderError) and code == "AI_PROVIDER_RATE_LIMITED":
-                # This code is emitted only after provider retry handling is
-                # exhausted or the advertised wait no longer fits the shared
-                # phase budget. Treat it as strong saturation evidence.
-                stop_code = "VISUAL_PROVIDER_CIRCUIT_OPEN"
-            elif isinstance(exc, ProviderError) and exc.retryable:
-                consecutive_transport_failures += 1
-                if consecutive_transport_failures >= VISUAL_FAILURE_CIRCUIT_THRESHOLD:
-                    stop_code = "VISUAL_PROVIDER_CIRCUIT_OPEN"
-            else:
-                consecutive_transport_failures = 0
-            continue
-        consecutive_transport_failures = 0
+            category = getattr(exc, "category", None)
+            if isinstance(exc, VisualEvidenceError):
+                category = (
+                    "content_request" if code in VISUAL_CONTENT_FAILURE_CODES
+                    else "permanent_schema"
+                )
+            if category == "content_request":
+                record_content_failure(region, artifact, index, code)
+                continue
+            defer_provider(
+                code=code,
+                category=str(category or "permanent_schema"),
+                index=index,
+                region=region,
+                artifact=artifact,
+                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+                http_status=getattr(exc, "http_status", None),
+                rate_limits=getattr(exc, "rate_limits", None),
+            )
+            break
         record["evidence"].extend(result["evidence"])
         record["mark_changes"].extend(result["mark_changes"])
         record["warnings"].extend({"code": "VISUAL_MODEL_WARNING", "message": item, "page": region["page"]} for item in result["warnings"])
@@ -1166,6 +1326,16 @@ def extract_visual_evidence(
             "page": region["page"], "image_count": 1, "success": True,
             "rendered_asset_ref": region["asset_path"],
             "elapsed_ms": result.get("elapsed_ms"),
+            "status": "success",
+            "region_id": region["asset_path"],
+            "source_digest": record["source_sha256"],
+            "crop_digest": artifact["sha256"],
+            "interpretation_schema_version": SCHEMA_VERSION,
+            "result_digest": hashlib.sha256(
+                json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "attempt": provider_attempts[region["asset_path"]],
+            "rate_limits": result.get("rate_limits") or {},
         })
         record["summary"]["success_count"] += 1
         record["summary"]["new_success_count"] += 1
@@ -1174,6 +1344,24 @@ def extract_visual_evidence(
         emit_progress("success", index, region)
         if checkpoint_callback is not None:
             checkpoint_callback(record, artifact)
+        rate_limits = result.get("rate_limits") or {}
+        remaining_requests = rate_limits.get("remaining_requests")
+        remaining_tokens = rate_limits.get("remaining_tokens")
+        request_tokens = (result.get("usage") or {}).get("total_tokens")
+        capacity_exhausted = remaining_requests == 0
+        if (
+            isinstance(remaining_tokens, int)
+            and isinstance(request_tokens, int)
+            and remaining_tokens < request_tokens
+        ):
+            capacity_exhausted = True
+        if capacity_exhausted:
+            waits = [
+                rate_limits.get("reset_requests_seconds"),
+                rate_limits.get("reset_tokens_seconds"),
+            ]
+            waits = [float(value) for value in waits if isinstance(value, (int, float)) and value >= 0]
+            pending_rate_wait = max(waits) if waits else inline_wait_limit + 1.0
     _deduplicate_visual_items(record["evidence"])
     _deduplicate_visual_items(record["mark_changes"])
     record["assets"] = list({

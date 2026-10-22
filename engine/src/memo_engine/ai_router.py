@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 import urllib.error
@@ -19,6 +20,9 @@ class ProviderError(RuntimeError):
         retryable: bool = True,
         retry_after_seconds: float | None = None,
         provider_saturated: bool = False,
+        category: str | None = None,
+        http_status: int | None = None,
+        rate_limits: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -26,6 +30,9 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
         self.retry_after_seconds = retry_after_seconds
         self.provider_saturated = provider_saturated
+        self.category = category or ("transient_capacity" if retryable else "permanent_provider")
+        self.http_status = http_status
+        self.rate_limits = rate_limits or {}
 
 
 SEMANTIC_TYPES = [
@@ -148,6 +155,36 @@ def _rate_limit_wait_seconds(
     return min(10.0 * (2 ** attempt), 90.0)
 
 
+def _safe_rate_metadata(headers: Any) -> dict[str, Any]:
+    """Return only bounded, non-sensitive provider capacity metadata."""
+    if headers is None:
+        return {}
+    result: dict[str, Any] = {}
+    integer_fields = {
+        "x-ratelimit-limit-requests": "limit_requests",
+        "x-ratelimit-limit-tokens": "limit_tokens",
+        "x-ratelimit-remaining-requests": "remaining_requests",
+        "x-ratelimit-remaining-tokens": "remaining_tokens",
+    }
+    for header, field in integer_fields.items():
+        try:
+            value = int(str(headers.get(header, "")).strip())
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            result[field] = value
+    duration_fields = {
+        "retry-after": "retry_after_seconds",
+        "x-ratelimit-reset-requests": "reset_requests_seconds",
+        "x-ratelimit-reset-tokens": "reset_tokens_seconds",
+    }
+    for header, field in duration_fields.items():
+        value = _duration_seconds(headers.get(header))
+        if value is not None:
+            result[field] = min(value, 3600.0)
+    return result
+
+
 def _post_json(
     url: str,
     headers: dict[str, str],
@@ -158,15 +195,24 @@ def _post_json(
     remaining_requests: int = 1,
     clock: Any = time.monotonic,
     sleeper: Any = time.sleep,
+    jitter: Any = random.uniform,
+    max_rate_retries: int | None = None,
+    max_transient_retries: int = 2,
 ) -> tuple[dict[str, Any], int]:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     started = clock()
 
-    max_rate_retries = max(
-        0,
-        min(8, int(os.environ.get("MEMO_AI_MAX_RATE_RETRIES", "5"))),
-    )
+    if max_rate_retries is None:
+        max_rate_retries = max(
+            0,
+            min(8, int(os.environ.get("MEMO_AI_MAX_RATE_RETRIES", "5"))),
+        )
+    else:
+        max_rate_retries = max(0, min(8, int(max_rate_retries)))
+    max_transient_retries = max(0, min(4, int(max_transient_retries)))
     rate_attempt = 0
+    transient_attempt = 0
+    response_rate_limits: dict[str, Any] = {}
 
     while True:
         req = urllib.request.Request(
@@ -184,6 +230,7 @@ def _post_json(
         try:
             with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                 raw = response.read()
+                response_rate_limits = _safe_rate_metadata(getattr(response, "headers", None))
                 elapsed_ms = int((clock() - started) * 1000)
                 break
 
@@ -210,12 +257,17 @@ def _post_json(
                 pass
 
             if exc.code == 429:
+                rate_limits = _safe_rate_metadata(exc.headers)
                 if rate_attempt >= max_rate_retries:
                     raise ProviderError(
                         "AI_PROVIDER_RATE_LIMITED",
                         "The AI provider remained rate limited after automatic backoff.",
                         retryable=True,
+                        retry_after_seconds=_rate_limit_wait_seconds(exc, rate_attempt),
                         provider_saturated=True,
+                        category="transient_capacity",
+                        http_status=429,
+                        rate_limits=rate_limits,
                     ) from exc
 
                 wait_seconds = _rate_limit_wait_seconds(exc, rate_attempt)
@@ -237,8 +289,12 @@ def _post_json(
                             retryable=True,
                             retry_after_seconds=wait_seconds,
                             provider_saturated=True,
+                            category="transient_capacity",
+                            http_status=429,
+                            rate_limits=rate_limits,
                         ) from exc
                 rate_attempt += 1
+                wait_seconds = min(120.0, wait_seconds + max(0.0, float(jitter(0.0, 0.75))))
                 print(
                     "Groq rate limit reached; "
                     f"waiting {wait_seconds:.1f}s before retry "
@@ -247,11 +303,30 @@ def _post_json(
                 sleeper(wait_seconds)
                 continue
 
+            if exc.code in {500, 502, 503} and transient_attempt < max_transient_retries:
+                wait_seconds = min(12.0, (2.0 ** transient_attempt) + float(jitter(0.0, 0.75)))
+                if deadline_monotonic is not None and clock() + wait_seconds + timeout_seconds > deadline_monotonic:
+                    raise ProviderError(
+                        "AI_PROVIDER_CAPACITY_UNAVAILABLE",
+                        "The AI provider is temporarily unavailable beyond the remaining processing budget.",
+                        retryable=True,
+                        retry_after_seconds=wait_seconds,
+                        provider_saturated=True,
+                        category="transient_capacity",
+                        http_status=exc.code,
+                        rate_limits=_safe_rate_metadata(exc.headers),
+                    ) from exc
+                transient_attempt += 1
+                sleeper(wait_seconds)
+                continue
+
             if exc.code == 400 and provider_code == "tool_use_failed":
                 raise ProviderError(
                     "AI_PROVIDER_TOOL_USE_FAILED",
                     "The AI model could not safely complete the structured semantic response.",
                     retryable=True,
+                    category="permanent_schema",
+                    http_status=400,
                 ) from exc
 
             if exc.code == 400 and provider_code == "json_validate_failed":
@@ -259,6 +334,8 @@ def _post_json(
                     "AI_PROVIDER_JSON_VALIDATE_FAILED",
                     "The AI model generated a structured response that Groq could not validate.",
                     retryable=True,
+                    category="permanent_schema",
+                    http_status=400,
                 ) from exc
 
             if exc.code == 403:
@@ -292,7 +369,22 @@ def _post_json(
                         "project model permissions."
                     )
 
-                raise ProviderError(code, message, retryable=False) from exc
+                raise ProviderError(
+                    code,
+                    message,
+                    retryable=False,
+                    category="auth_configuration",
+                    http_status=403,
+                ) from exc
+
+            if exc.code in {401, 403}:
+                raise ProviderError(
+                    "AI_PROVIDER_AUTH_CONFIGURATION_FAILED",
+                    "The configured AI provider credential or model access is not valid.",
+                    retryable=False,
+                    category="auth_configuration",
+                    http_status=exc.code,
+                ) from exc
 
             raise ProviderError(
                 "AI_PROVIDER_HTTP_ERROR",
@@ -306,6 +398,12 @@ def _post_json(
                     + "."
                 ),
                 retryable=500 <= exc.code < 600,
+                category=(
+                    "transient_capacity" if 500 <= exc.code < 600
+                    else "content_request"
+                ),
+                http_status=exc.code,
+                rate_limits=_safe_rate_metadata(exc.headers),
             ) from exc
 
         except Exception as exc:
@@ -313,6 +411,7 @@ def _post_json(
                 "AI_PROVIDER_NETWORK_ERROR",
                 "The configured AI provider could not be reached.",
                 retryable=True,
+                category="transient_capacity",
             ) from exc
 
     try:
@@ -322,8 +421,10 @@ def _post_json(
             "AI_PROVIDER_INVALID_RESPONSE",
             "The AI provider returned an unreadable response.",
             retryable=True,
+            category="permanent_schema",
         ) from exc
-
+    if response_rate_limits:
+        payload["_provider_rate_limits"] = response_rate_limits
     return payload, elapsed_ms
 
 
@@ -462,6 +563,7 @@ def configured_provider() -> str:
         "AI_PROVIDER_NOT_CONFIGURED",
         "No approved external AI provider is configured.",
         retryable=False,
+        category="auth_configuration",
     )
 
 

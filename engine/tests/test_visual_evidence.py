@@ -407,16 +407,19 @@ def test_vision_outage_after_positive_screening_fails_safe():
 
     visual, _ = extract_visual_evidence(data, _normalized(data, [text]), runner=unavailable)
     structure = fuse_visual_evidence(_structure(), visual)
-    assert visual["summary"]["failure_count"] >= 1
-    assert any(item["category"] == "visual_evidence_unread" and item["level"] == "red" for item in structure["exceptions"])
+    assert visual["summary"]["failure_count"] == 0
+    assert visual["summary"]["infrastructure_deferred"] is True
+    assert structure["exceptions"] == []
 
 
 def test_malformed_model_json_fails_safe():
     text = "3.1 Find the regression equation. (3)"
     data = _pdf(text=text, black=True)
     visual, _ = extract_visual_evidence(data, _normalized(data, [text]), runner=lambda region, model: {"answer": "invented"})
-    assert visual["summary"]["failure_count"] >= 1
-    assert visual["warnings"][0]["code"] == "VISUAL_MODEL_SCHEMA_INVALID"
+    assert visual["summary"]["failure_count"] == 0
+    assert visual["summary"]["infrastructure_deferred"] is True
+    assert visual["provider_state"]["circuits"][0]["reason"] == "VISUAL_MODEL_SCHEMA_INVALID"
+    assert visual["warnings"] == []
 
 
 def test_prompt_forbids_solving_and_invention():

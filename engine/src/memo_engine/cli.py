@@ -16,6 +16,7 @@ from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .structure import extract_structure
 from .visual_evidence import (
+    VisualProviderDeferred,
     extract_visual_evidence,
     fuse_visual_evidence,
     visual_cache_is_complete,
@@ -368,6 +369,26 @@ def run_job(job_id: str) -> int:
             db.upload_json(BUCKET, visual_path, visual)
 
         visual_summary = visual.get("summary", {})
+        if visual_summary.get("infrastructure_deferred"):
+            provider_state = visual.get("provider_state") or {}
+            circuit = (provider_state.get("circuits") or [{}])[0]
+            raise VisualProviderDeferred(
+                str(circuit.get("reason") or "VISUAL_PROVIDER_UNAVAILABLE"),
+                (
+                    "Visual memo processing paused because the configured provider "
+                    "is temporarily unavailable. Retry the conversion later."
+                    if provider_state.get("status") != "configuration_failed"
+                    else "Visual memo processing cannot continue until the provider configuration is corrected."
+                ),
+                {
+                    "provider": circuit.get("provider"),
+                    "category": circuit.get("category"),
+                    "retry_after_seconds": circuit.get("retry_after_seconds"),
+                    "unprocessed_count": visual_summary.get("unprocessed_count", 0),
+                    "reused_success_count": visual_summary.get("reused_success_count", 0),
+                    "new_success_count": visual_summary.get("new_success_count", 0),
+                },
+            )
         db.add_event(
             job,
             "phase2_visual_evidence_complete",
@@ -928,6 +949,16 @@ def run_job(job_id: str) -> int:
         )
         return 0
 
+    except VisualProviderDeferred as exc:
+        fail_processing_job(
+            db,
+            job,
+            code=exc.code,
+            message=exc.public_message,
+            stage="visual_evidence_failed",
+            diagnostics=exc.diagnostics,
+        )
+        raise
     except IngestionError as exc:
         fail_processing_job(
             db, job, code=exc.code, message=exc.public_message, stage="ingestion_failed"

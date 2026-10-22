@@ -55,3 +55,6 @@ jobs:
 
       - name: Qualify Slice 3 mathematical consistency
         run: python -m pytest -q engine/tests/test_phase8_mathematical_consistency.py
+
+      - name: Qualify Slice 4 visual-provider resilience
+        run: python -m pytest -q engine/tests/test_visual_processing_resilience.py
