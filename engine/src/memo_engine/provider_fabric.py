@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -77,6 +78,7 @@ class ProviderResult:
     quota: dict[str, Any]
     result_digest: str
     route_attempts: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,6 +131,21 @@ Adapter = Callable[
     [ProviderTaskRequest, ProviderSpec, float | None, int, Callable[[], float]],
     ProviderResult,
 ]
+PayloadExtractor = Callable[[dict[str, Any]], tuple[dict[str, Any], dict[str, Any]]]
+
+
+def _safe_provider_message(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    compact = " ".join(value.split())[:300]
+    lowered = compact.lower()
+    if any(term in lowered for term in ("authorization", "bearer ", "data:image", "api key", "token=")):
+        return "Provider returned a redacted credential or payload-related message."
+    return re.sub(
+        r"(?i)(/accounts/)[0-9a-f]{16,64}",
+        r"\1<redacted-account>",
+        compact,
+    )
 
 
 def _provider_order() -> list[str]:
@@ -302,13 +319,89 @@ def _structured_content(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[s
     return normalized, envelope.get("usage") or {}
 
 
+def _cloudflare_native_content(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    result = payload.get("result")
+    result_keys = sorted(str(key) for key in result) if isinstance(result, dict) else []
+    diagnostics = {
+        "provider_success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
+        "result_exists": result is not None,
+        "result_keys": result_keys,
+        "response_type": (
+            type(result.get("response")).__name__
+            if isinstance(result, dict) and "response" in result else None
+        ),
+        "normalization_stage": "cloudflare_native_envelope",
+    }
+    if payload.get("success") is False:
+        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+        first = errors[0] if errors and isinstance(errors[0], dict) else {}
+        provider_code = first.get("code") if isinstance(first.get("code"), (str, int)) else None
+        provider_message = first.get("message") if isinstance(first.get("message"), str) else None
+        raise ProviderError(
+            "AI_PROVIDER_CLOUDFLARE_ERROR",
+            "Cloudflare reported that the Workers AI request was unsuccessful.",
+            retryable=False,
+            category="permanent_provider",
+            provider_code=provider_code,
+            provider_message=(provider_message[:300] if provider_message else None),
+            diagnostics=diagnostics,
+        )
+    if not isinstance(result, dict) or "response" not in result:
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare returned an unreadable native response envelope.",
+            retryable=True,
+            category="permanent_schema",
+            diagnostics=diagnostics,
+        )
+    response = result.get("response")
+    try:
+        normalized = json.loads(response) if isinstance(response, str) else response
+    except (TypeError, ValueError) as exc:
+        diagnostics["normalization_stage"] = "cloudflare_native_response_json"
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare returned invalid structured response JSON.",
+            retryable=True,
+            category="permanent_schema",
+            diagnostics=diagnostics,
+        ) from exc
+    if not isinstance(normalized, dict):
+        diagnostics["normalization_stage"] = "cloudflare_native_response_object"
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare's structured response was not an object.",
+            retryable=True,
+            category="permanent_schema",
+            diagnostics=diagnostics,
+        )
+    diagnostics["normalization_stage"] = "complete"
+    return normalized, result.get("usage") or {}
+
+
 def _result(
     request: ProviderTaskRequest,
     spec: ProviderSpec,
     payload: dict[str, Any],
     elapsed_ms: int,
+    payload_extractor: PayloadExtractor = _structured_content,
 ) -> ProviderResult:
-    normalized, usage = _structured_content(payload)
+    normalized, usage = payload_extractor(payload)
+    diagnostics: dict[str, Any] = {}
+    if payload_extractor is _cloudflare_native_content:
+        result = payload.get("result")
+        diagnostics = {
+            "provider_success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
+            "result_exists": result is not None,
+            "result_keys": sorted(str(key) for key in result) if isinstance(result, dict) else [],
+            "response_type": (
+                type(result.get("response")).__name__
+                if isinstance(result, dict) and "response" in result else None
+            ),
+            "normalization_stage": "complete",
+        }
     quota = payload.get("_provider_rate_limits") or {}
     digest = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -324,6 +417,7 @@ def _result(
         usage=usage,
         quota=quota,
         result_digest=digest,
+        diagnostics=diagnostics,
     )
 
 
@@ -337,6 +431,7 @@ def _post_adapter_json(
     deadline_monotonic: float | None,
     remaining_requests: int,
     clock: Callable[[], float],
+    payload_extractor: PayloadExtractor = _structured_content,
 ) -> ProviderResult:
     payload, elapsed_ms = _post_json(
         url,
@@ -359,7 +454,7 @@ def _post_adapter_json(
             0, min(3, int(os.environ.get("MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES", "2")))
         ),
     )
-    return _result(request, spec, payload, elapsed_ms)
+    return _result(request, spec, payload, elapsed_ms, payload_extractor)
 
 
 def groq_visual_adapter(
@@ -412,16 +507,17 @@ def cloudflare_visual_adapter(
             ]}],
             "temperature": 0,
             "max_tokens": 4096,
-            "response_format": {"type": "json_schema", "json_schema": {
-                "name": "memo_visual_evidence", "strict": True,
-                "schema": request.response_schema,
-            }},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": request.response_schema,
+            },
         },
         request=request,
         spec=spec,
         deadline_monotonic=deadline_monotonic,
         remaining_requests=remaining_requests,
         clock=clock,
+        payload_extractor=_cloudflare_native_content,
     )
 
 
@@ -582,6 +678,11 @@ class ProviderFabric:
                     "http_status": exc.http_status,
                     "retry_after_seconds": exc.retry_after_seconds,
                     "quota": exc.rate_limits,
+                    "provider_error_code": getattr(exc, "provider_code", None),
+                    "provider_error_message": _safe_provider_message(
+                        getattr(exc, "provider_message", None)
+                    ),
+                    **dict(getattr(exc, "diagnostics", None) or {}),
                 }
                 attempts.append(attempt)
                 if exc.category == "content_request":
@@ -621,6 +722,7 @@ class ProviderFabric:
                 "decision": "accepted",
                 "latency_ms": result.latency_ms,
                 "quota": result.quota,
+                **result.diagnostics,
             })
             result.route_attempts = attempts
             return result

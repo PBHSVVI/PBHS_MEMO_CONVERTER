@@ -349,6 +349,10 @@ def run() -> dict[str, Any]:
             (item for item in reversed(attempts) if item.get("status") == "failed"),
             {},
         )
+        cloudflare_attempt = next(
+            (item for item in reversed(attempts) if item.get("provider") == "cloudflare"),
+            failed_attempt,
+        )
         report["preflight"] = {
             "status": "success" if successful else "failed",
             "model": selected,
@@ -359,6 +363,13 @@ def run() -> dict[str, Any]:
             "error_code": failed_attempt.get("error_code"),
             "error_category": failed_attempt.get("error_category"),
             "http_status": failed_attempt.get("http_status"),
+            "cloudflare_success": cloudflare_attempt.get("provider_success"),
+            "provider_error_code": failed_attempt.get("provider_error_code"),
+            "provider_error_message": _safe_message(failed_attempt.get("provider_error_message")),
+            "result_exists": cloudflare_attempt.get("result_exists"),
+            "result_keys": cloudflare_attempt.get("result_keys") or [],
+            "response_type": cloudflare_attempt.get("response_type"),
+            "normalization_stage": cloudflare_attempt.get("normalization_stage"),
         }
         report["failover"] = {
             "passed": bool(successful) and any(

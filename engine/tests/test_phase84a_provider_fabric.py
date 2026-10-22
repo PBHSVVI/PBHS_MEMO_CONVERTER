@@ -450,6 +450,15 @@ def test_cloudflare_and_mistral_adapters_use_direct_zero_cost_contracts(monkeypa
 
     def fake_post(url, headers, body, **_kwargs):
         calls.append((url, headers, body))
+        if "cloudflare.com" in url:
+            return {
+                "result": {
+                    "response": json.dumps(_normalized_result(1)),
+                    "usage": {"total_tokens": 5},
+                },
+                "success": True,
+                "errors": [],
+            }, 4
         return {
             "choices": [{"message": {"content": json.dumps(_normalized_result(1))}}],
             "usage": {"total_tokens": 5},
@@ -475,6 +484,10 @@ def test_cloudflare_and_mistral_adapters_use_direct_zero_cost_contracts(monkeypa
     assert "/accounts/account/ai/run/@cf/qwen/qwen3.8-27b" in calls[0][0]
     assert "gateway" not in calls[0][0].lower()
     assert "model" not in calls[0][2]
+    assert calls[0][2]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": request.response_schema,
+    }
     assert calls[1][0] == "https://api.mistral.ai/v1/chat/completions"
     assert calls[1][2]["service_tier"] == "standard_only"
     assert "Bearer token" not in json.dumps([call[2] for call in calls])

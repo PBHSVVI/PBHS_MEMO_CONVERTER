@@ -23,6 +23,9 @@ class ProviderError(RuntimeError):
         category: str | None = None,
         http_status: int | None = None,
         rate_limits: dict[str, Any] | None = None,
+        provider_code: str | int | None = None,
+        provider_message: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -33,6 +36,9 @@ class ProviderError(RuntimeError):
         self.category = category or ("transient_capacity" if retryable else "permanent_provider")
         self.http_status = http_status
         self.rate_limits = rate_limits or {}
+        self.provider_code = provider_code
+        self.provider_message = provider_message
+        self.diagnostics = diagnostics or {}
 
 
 SEMANTIC_TYPES = [
@@ -246,12 +252,18 @@ def _post_json(
             try:
                 parsed = json.loads(detail)
                 error = parsed.get("error") if isinstance(parsed, dict) else None
+                if not isinstance(error, dict) and isinstance(parsed, dict):
+                    errors = parsed.get("errors")
+                    if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+                        error = errors[0]
                 if isinstance(error, dict):
                     raw_code = error.get("code")
                     raw_type = error.get("type")
                     raw_message = error.get("message")
                     if isinstance(raw_code, str):
                         provider_code = raw_code[:120]
+                    elif isinstance(raw_code, int):
+                        provider_code = raw_code
                     if isinstance(raw_type, str):
                         provider_type = raw_type[:120]
                     if isinstance(raw_message, str):
@@ -378,6 +390,8 @@ def _post_json(
                     retryable=False,
                     category="auth_configuration",
                     http_status=403,
+                    provider_code=provider_code,
+                    provider_message=provider_message,
                 ) from exc
 
             if exc.code in {401, 403}:
@@ -387,6 +401,8 @@ def _post_json(
                     retryable=False,
                     category="auth_configuration",
                     http_status=exc.code,
+                    provider_code=provider_code,
+                    provider_message=provider_message,
                 ) from exc
 
             raise ProviderError(
@@ -407,6 +423,8 @@ def _post_json(
                 ),
                 http_status=exc.code,
                 rate_limits=_safe_rate_metadata(exc.headers),
+                provider_code=provider_code,
+                provider_message=provider_message,
             ) from exc
 
         except Exception as exc:
