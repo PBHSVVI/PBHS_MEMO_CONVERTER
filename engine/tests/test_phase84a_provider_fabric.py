@@ -461,15 +461,20 @@ def test_cloudflare_and_mistral_adapters_use_direct_zero_cost_contracts(monkeypa
     monkeypatch.setenv("MISTRAL_API_KEY", "token")
     request = _request(PRIVACY_SYNTHETIC_TEST)
     cloudflare = provider_fabric.cloudflare_visual_adapter(
-        request, _spec("cloudflare", 0), None, 1, lambda: 0
+        request,
+        replace(_spec("cloudflare", 0), model_id="@cf/qwen/qwen3.8-27b"),
+        None,
+        1,
+        lambda: 0,
     )
     mistral = provider_fabric.mistral_visual_adapter(
         request, _spec("mistral", 0), None, 1, lambda: 0
     )
     assert cloudflare.normalized_result == _normalized_result(1)
     assert mistral.normalized_result == _normalized_result(1)
-    assert "/accounts/account/ai/v1/chat/completions" in calls[0][0]
+    assert "/accounts/account/ai/run/@cf/qwen/qwen3.8-27b" in calls[0][0]
     assert "gateway" not in calls[0][0].lower()
+    assert "model" not in calls[0][2]
     assert calls[1][0] == "https://api.mistral.ai/v1/chat/completions"
     assert calls[1][2]["service_tier"] == "standard_only"
     assert "Bearer token" not in json.dumps([call[2] for call in calls])

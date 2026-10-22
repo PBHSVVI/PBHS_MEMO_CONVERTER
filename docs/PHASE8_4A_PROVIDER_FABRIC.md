@@ -35,7 +35,8 @@ free-only plan mode, privacy policy, and enabled state.
 | Cloudflare Workers AI | `@cf/qwen/qwen3.8-27b` | allowed | Direct account REST API; the free-model allowlist and `free_only` plan guard must both match |
 | Mistral Free | Explicit `MEMO_MISTRAL_VISION_MODEL` configuration | denied by default | No default model is assumed; requires an approved current multimodal Free-mode model and explicit privacy approval for school-private data |
 
-Cloudflare uses the direct account Workers AI endpoint. The adapter does not set
+Cloudflare uses the model's direct account Workers AI
+`/ai/run/@cf/qwen/qwen3.8-27b` endpoint. The adapter does not set
 an AI Gateway ID and therefore cannot opt into AI Gateway prepaid credits or
 Unified Billing. Its configured model must remain in the code-reviewed free model
 allowlist.

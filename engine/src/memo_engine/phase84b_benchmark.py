@@ -303,7 +303,7 @@ def run() -> dict[str, Any]:
         "billable_spend": 0,
         "cloudflare": {
             "model": cloudflare.model_id,
-            "endpoint_shape": "https://api.cloudflare.com/client/v4/accounts/<redacted-account>/ai/v1/chat/completions",
+            "endpoint_shape": "https://api.cloudflare.com/client/v4/accounts/<redacted-account>/ai/run/@cf/qwen/qwen3.8-27b",
             "preflight": None,
             "benchmarks": [],
         },
@@ -375,6 +375,7 @@ def run() -> dict[str, Any]:
             "quota": scored["quota"],
             "route_attempts": cf_result.route_attempts,
         }
+        report["cloudflare"]["benchmarks"].append(scored)
         before_second = cloudflare_calls
         second_record, _ = visual_evidence.extract_visual_evidence(
             b"phase84b-cloudflare-cache-source",
@@ -399,7 +400,7 @@ def run() -> dict[str, Any]:
         visual_evidence._render_regions = original_render
 
     if report["cloudflare"]["preflight"].get("status") == "success":
-        for fixture in fixtures:
+        for fixture in fixtures[1:]:
             if cloudflare_calls >= 5:
                 break
             try:

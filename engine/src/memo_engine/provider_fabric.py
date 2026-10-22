@@ -397,11 +397,11 @@ def cloudflare_visual_adapter(
     clock: Callable[[], float],
 ) -> ProviderResult:
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    model_path = spec.model_id
     return _post_adapter_json(
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions",
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model_path}",
         {"Authorization": f"Bearer {os.environ.get('CLOUDFLARE_AI_API_TOKEN', '').strip()}"},
         {
-            "model": spec.model_id,
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": request.prompt},
                 {"type": "image_url", "image_url": {"url": _image_data_url(request)}},
