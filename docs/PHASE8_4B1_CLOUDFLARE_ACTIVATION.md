@@ -2,9 +2,37 @@
 
 Date: 2026-10-22
 
-Status: **BLOCKED — configured Cloudflare account ID is malformed; no inference was run.**
+Status: **BLOCKED — account/model discovery passes, but live inference did not
+produce a usable provider result.**
 
-## Hosted diagnostic
+## Corrected-account rerun
+
+Workflow run `39766916221` used commit
+`053beaa5641d9f8084dfc4762510012591e29ffc` after the repository secret was
+corrected. It established:
+
+- the account ID has the required 32-character hexadecimal format;
+- the token remains active through the user-token verification endpoint;
+- account-scoped model search returned HTTP 200, proving the token can read
+  Workers AI models for this account;
+- the account-scoped token-verification endpoint returned HTTP 401 for this
+  token type, so model search is the relationship proof;
+- 73 models are visible to the account;
+- both `@cf/qwen/qwen3.8-27b` and
+  `@cf/google/gemma-4-26b-a4b-it` are visible;
+- Gemma was selected from the bounded free-compatible vision allowlist;
+- the live adapter produced no successful normalized result, so cache reuse and
+  live failover were not accepted;
+- the provider-model repository variable remains unset.
+
+The diagnostic made two inference calls. The first unsuccessful visual extraction
+returned a deferred checkpoint instead of raising. The original harness then
+mistakenly entered its cache-reuse step, which caused one additional unsuccessful
+call. The harness now stops after one unsuccessful preflight, records the safe
+provider failure fields, and skips cache reuse. No further live inference was made
+after this defect was identified.
+
+## Initial hosted diagnostic
 
 Workflow run `39756392939` used commit
 `7b396fcdbc797e4f100c3ad92eceacb821796784` and established:

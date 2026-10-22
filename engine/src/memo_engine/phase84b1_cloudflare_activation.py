@@ -345,6 +345,10 @@ def run() -> dict[str, Any]:
         successful = [item for item in first_record.get("runs", []) if item.get("status") == "success"]
         selected_run = successful[-1] if successful else {}
         attempts = first_record.get("provider_attempts") or []
+        failed_attempt = next(
+            (item for item in reversed(attempts) if item.get("status") == "failed"),
+            {},
+        )
         report["preflight"] = {
             "status": "success" if successful else "failed",
             "model": selected,
@@ -352,6 +356,9 @@ def run() -> dict[str, Any]:
             "response_received": bool(successful),
             "normalized_provider_result": bool(selected_run.get("result_digest")),
             "schema_compatible": bool(first_record.get("evidence")),
+            "error_code": failed_attempt.get("error_code"),
+            "error_category": failed_attempt.get("error_category"),
+            "http_status": failed_attempt.get("http_status"),
         }
         report["failover"] = {
             "passed": bool(successful) and any(
@@ -360,6 +367,15 @@ def run() -> dict[str, Any]:
             "selected_provider": selected_run.get("provider"),
             "groq_test_state": "unavailable",
         }
+        if not successful:
+            report["cache_reuse"] = {
+                "passed": False,
+                "second_inference_calls": 0,
+                "reused_success_count": 0,
+                "skipped": "preflight_unsuccessful",
+            }
+            report["live_inference_calls"] = calls
+            return report
         before_cache = calls
         second_record, _ = visual_evidence.extract_visual_evidence(
             b"phase84b1-cloudflare-cache-source",

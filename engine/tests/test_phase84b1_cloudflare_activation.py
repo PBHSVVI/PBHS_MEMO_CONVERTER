@@ -1,7 +1,10 @@
 import json
 
 from engine.src.memo_engine import phase84b1_cloudflare_activation as activation
-from engine.src.memo_engine.provider_fabric import CLOUDFLARE_FREE_VISION_MODELS
+from engine.src.memo_engine.ai_router import ProviderError
+from engine.src.memo_engine.provider_fabric import (
+    CLOUDFLARE_FREE_VISION_MODELS,
+)
 
 
 def test_model_selection_uses_only_visible_approved_free_vision_models():
@@ -65,3 +68,34 @@ def test_malformed_account_id_stops_before_account_scoped_request(monkeypatch):
     assert report["account_id_format_valid"] is False
     assert report["model_search"]["status"] == "skipped"
     assert report["live_inference_calls"] == 0
+
+
+def test_failed_preflight_never_enters_cache_reuse_or_second_call(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "a" * 32)
+    monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
+    monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")
+    monkeypatch.setenv("MISTRAL_SCHOOL_PRIVATE_APPROVED", "false")
+    monkeypatch.setattr(
+        activation,
+        "_verification",
+        lambda _path: {"http_status": 200, "success": True, "token_status": "active", "errors": []},
+    )
+    monkeypatch.setattr(
+        activation,
+        "list_account_models",
+        lambda _account: ([{"id": "@cf/google/gemma-4-26b-a4b-it", "vision_declared": True}], 1, 200),
+    )
+    calls = []
+
+    def fail(*_args):
+        calls.append(True)
+        raise ProviderError("AI_PROVIDER_NETWORK_ERROR", "unavailable", category="transient_capacity")
+
+    monkeypatch.setattr(activation, "cloudflare_visual_adapter", fail)
+    report = activation.run()
+    assert len(calls) == 1
+    assert report["preflight"]["status"] == "failed"
+    assert report["preflight"]["error_code"] == "AI_PROVIDER_NETWORK_ERROR"
+    assert report["cache_reuse"]["skipped"] == "preflight_unsuccessful"
+    assert report["cache_reuse"]["second_inference_calls"] == 0
+    assert report["live_inference_calls"] == 1
