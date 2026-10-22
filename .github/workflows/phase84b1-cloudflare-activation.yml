@@ -1,0 +1,66 @@
+name: Phase 8.4B.1 Cloudflare Activation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-and-activate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
+      CLOUDFLARE_ZERO_COST_CONFIRMED: ${{ vars.CLOUDFLARE_ZERO_COST_CONFIRMED }}
+      MISTRAL_SCHOOL_PRIVATE_APPROVED: ${{ vars.MISTRAL_SCHOOL_PRIVATE_APPROVED }}
+      CLOUDFLARE_WORKERS_AI_PLAN_MODE: free_only
+      PHASE84B1_REPORT_PATH: /tmp/phase84b1-report.json
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Record checked-out commit
+        run: git rev-parse HEAD
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install bounded diagnostic dependencies
+        run: python -m pip install --disable-pip-version-check -r engine/requirements.txt
+
+      - name: Verify privacy and zero-cost gates without disclosure
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_AI_API_TOKEN"
+          test "$CLOUDFLARE_ZERO_COST_CONFIRMED" = "true"
+          test "$MISTRAL_SCHOOL_PRIVATE_APPROVED" = "false"
+          echo "Cloudflare credentials: configured"
+          echo "Cloudflare zero-cost confirmation: true"
+          echo "Mistral school-private approval: false"
+
+      - name: Run account diagnostic and one-call synthetic activation
+        run: python -m engine.src.memo_engine.phase84b1_cloudflare_activation
+
+      - name: Scan sanitized report
+        if: always()
+        shell: bash
+        run: |
+          ! grep -Eqi 'authorization|bearer|api[_-]?key|sb_secret_|service_role|signed[_-]?url|data:image' "$PHASE84B1_REPORT_PATH"
+          python -m json.tool "$PHASE84B1_REPORT_PATH" >/dev/null
+
+      - name: Upload sanitized diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase84b1-cloudflare-sanitized-report
+          path: /tmp/phase84b1-report.json
+          if-no-files-found: error
+          retention-days: 14

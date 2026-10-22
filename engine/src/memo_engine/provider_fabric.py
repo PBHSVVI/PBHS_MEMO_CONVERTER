@@ -17,6 +17,10 @@ PRIVACY_SCHOOL_PRIVATE = "school_private"
 PRIVACY_SYNTHETIC_TEST = "synthetic_test"
 FREE_ONLY_PLAN_MODE = "free_only"
 DEFAULT_VISUAL_PROVIDER_ORDER = ("groq", "cloudflare", "mistral")
+CLOUDFLARE_FREE_VISION_MODELS = frozenset({
+    "@cf/qwen/qwen3.8-27b",
+    "@cf/google/gemma-4-26b-a4b-it",
+})
 
 
 def _truthy(value: Any) -> bool:
@@ -175,7 +179,7 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
             credential_names=("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_AI_API_TOKEN"),
             priority=priority.get("cloudflare", 100),
             school_private_allowed=True,
-            free_model_ids=frozenset({"@cf/qwen/qwen3.8-27b"}),
+            free_model_ids=CLOUDFLARE_FREE_VISION_MODELS,
             zero_cost_confirmation_env="CLOUDFLARE_ZERO_COST_CONFIRMED",
             plan_mode=os.environ.get(
                 "CLOUDFLARE_WORKERS_AI_PLAN_MODE", FREE_ONLY_PLAN_MODE
