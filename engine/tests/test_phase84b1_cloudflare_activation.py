@@ -9,13 +9,14 @@ from engine.src.memo_engine.provider_fabric import (
 
 def test_model_selection_uses_only_visible_approved_free_vision_models():
     selected, eligible = activation.select_free_vision_model([
+        {"id": "@cf/meta/llama-3.2-11b-vision-instruct", "vision_declared": True},
         {"id": "@cf/qwen/qwen3.8-27b", "vision_declared": True},
         {"id": "@cf/google/gemma-4-26b-a4b-it", "vision_declared": True},
         {"id": "@cf/paid/example", "vision_declared": True},
         {"id": "@cf/text/example", "vision_declared": False},
     ])
-    assert selected == "@cf/google/gemma-4-26b-a4b-it"
-    assert eligible == ["@cf/google/gemma-4-26b-a4b-it", "@cf/qwen/qwen3.8-27b"]
+    assert selected == "@cf/meta/llama-3.2-11b-vision-instruct"
+    assert eligible == ["@cf/meta/llama-3.2-11b-vision-instruct"]
     assert set(eligible) <= CLOUDFLARE_FREE_VISION_MODELS
 
 
@@ -28,8 +29,8 @@ def test_unlisted_or_nonvision_models_are_never_selected():
 
 def test_allowlisted_vision_model_does_not_depend_on_incomplete_catalogue_badge():
     assert activation.select_free_vision_model([
-        {"id": "@cf/google/gemma-4-26b-a4b-it", "vision_declared": False},
-    ])[0] == "@cf/google/gemma-4-26b-a4b-it"
+        {"id": "@cf/meta/llama-3.2-11b-vision-instruct", "vision_declared": False},
+    ])[0] == "@cf/meta/llama-3.2-11b-vision-instruct"
 
 
 def test_model_card_parser_accepts_current_name_and_nested_property_shapes():
@@ -83,7 +84,7 @@ def test_failed_preflight_never_enters_cache_reuse_or_second_call(monkeypatch):
     monkeypatch.setattr(
         activation,
         "list_account_models",
-        lambda _account: ([{"id": "@cf/google/gemma-4-26b-a4b-it", "vision_declared": True}], 1, 200),
+        lambda _account: ([{"id": "@cf/meta/llama-3.2-11b-vision-instruct", "vision_declared": True}], 1, 200),
     )
     calls = []
 

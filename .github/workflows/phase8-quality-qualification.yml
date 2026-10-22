@@ -61,3 +61,6 @@ jobs:
 
       - name: Qualify Phase 8.4A zero-cost provider fabric
         run: python -m pytest -q engine/tests/test_phase84a_provider_fabric.py
+
+      - name: Qualify Phase 8.4B.4 Cloudflare Llama contract
+        run: python -m pytest -q engine/tests/test_phase84b4_cloudflare_llama_contract.py

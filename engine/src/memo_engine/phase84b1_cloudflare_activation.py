@@ -16,9 +16,11 @@ from .ai_router import ProviderError
 from .phase84b_benchmark import _region, synthetic_fixtures
 from .provider_fabric import (
     CLOUDFLARE_FREE_VISION_MODELS,
+    CLOUDFLARE_STRUCTURED_VISUAL_MODELS,
     PRIVACY_SYNTHETIC_TEST,
     ProviderFabric,
     ProviderPoolExhausted,
+    cloudflare_model_capabilities,
     cloudflare_visual_adapter,
     default_provider_registry,
 )
@@ -27,8 +29,7 @@ from .provider_fabric import (
 REPORT_SCHEMA = "phase8.4b.1-cloudflare-activation-v1"
 API_ROOT = "https://api.cloudflare.com/client/v4"
 MODEL_PRIORITY = (
-    "@cf/google/gemma-4-26b-a4b-it",
-    "@cf/qwen/qwen3.8-27b",
+    "@cf/meta/llama-3.2-11b-vision-instruct",
 )
 
 
@@ -177,7 +178,12 @@ def select_free_vision_model(cards: list[dict[str, Any]]) -> tuple[str | None, l
     # account catalogue is authoritative for visibility, but not every catalogue
     # card currently repeats the public model page's Vision badge.
     visible = {card["id"] for card in cards}
-    eligible = [model for model in MODEL_PRIORITY if model in visible and model in CLOUDFLARE_FREE_VISION_MODELS]
+    eligible = [
+        model for model in MODEL_PRIORITY
+        if model in visible
+        and model in CLOUDFLARE_FREE_VISION_MODELS
+        and model in CLOUDFLARE_STRUCTURED_VISUAL_MODELS
+    ]
     return (eligible[0] if eligible else None), eligible
 
 
@@ -302,7 +308,10 @@ def run() -> dict[str, Any]:
     report["selected_model"] = selected
     report["endpoint"] = f"{API_ROOT}/accounts/<redacted-account>/ai/run/{selected}"
     registry = default_provider_registry()
-    cloudflare = replace(registry["cloudflare"], model_id=selected, enabled=True, priority=1)
+    cloudflare = replace(
+        registry["cloudflare"], model_id=selected,
+        capabilities=cloudflare_model_capabilities(selected), enabled=True, priority=1,
+    )
     groq = replace(registry["groq"], enabled=True, priority=0)
 
     def groq_unavailable(*_args: Any) -> Any:

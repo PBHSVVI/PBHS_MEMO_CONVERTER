@@ -271,6 +271,20 @@ def _post_json(
             except Exception:
                 pass
 
+            if (
+                provider_message
+                and re.search(r"json mode (?:couldn't|could not) be met", provider_message, re.I)
+            ):
+                raise ProviderError(
+                    "AI_PROVIDER_JSON_MODE_UNMET",
+                    "The model could not satisfy the requested structured JSON schema.",
+                    retryable=False,
+                    category="content_request",
+                    http_status=exc.code,
+                    provider_code=provider_code,
+                    provider_message=provider_message,
+                ) from exc
+
             if exc.code == 429:
                 rate_limits = _safe_rate_metadata(exc.headers)
                 if rate_attempt >= max_rate_retries:

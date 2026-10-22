@@ -18,14 +18,32 @@ PRIVACY_SCHOOL_PRIVATE = "school_private"
 PRIVACY_SYNTHETIC_TEST = "synthetic_test"
 FREE_ONLY_PLAN_MODE = "free_only"
 DEFAULT_VISUAL_PROVIDER_ORDER = ("groq", "cloudflare", "mistral")
+CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 CLOUDFLARE_FREE_VISION_MODELS = frozenset({
     "@cf/qwen/qwen3.8-27b",
     "@cf/google/gemma-4-26b-a4b-it",
+    CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL,
+})
+CLOUDFLARE_MODEL_CAPABILITIES = {
+    "@cf/qwen/qwen3.8-27b": frozenset({"vision", "free_only", "school_private"}),
+    "@cf/google/gemma-4-26b-a4b-it": frozenset({"vision", "free_only", "school_private"}),
+    CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL: frozenset({
+        "vision", "structured_json", "structured_visual", "free_only", "school_private"
+    }),
+}
+CLOUDFLARE_STRUCTURED_VISUAL_MODELS = frozenset({
+    model_id
+    for model_id, capabilities in CLOUDFLARE_MODEL_CAPABILITIES.items()
+    if "structured_visual" in capabilities
 })
 
 
 def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def cloudflare_model_capabilities(model_id: str) -> frozenset[str]:
+    return CLOUDFLARE_MODEL_CAPABILITIES.get(model_id, frozenset())
 
 
 @dataclass(frozen=True)
@@ -173,12 +191,17 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
     order = _provider_order()
     priority = {provider: index for index, provider in enumerate(order)}
     approved = _approved_providers()
+    cloudflare_model = os.environ.get(
+        "MEMO_CLOUDFLARE_VISION_MODEL", "@cf/qwen/qwen3.8-27b"
+    ).strip() or "@cf/qwen/qwen3.8-27b"
     return {
         "groq": ProviderSpec(
             provider_id="groq",
             model_id=os.environ.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
             or "qwen/qwen3.8-27b",
-            capabilities=frozenset({"vision", "structured_output", "semantic_text"}),
+            capabilities=frozenset({
+                "vision", "structured_json", "structured_visual", "semantic_text"
+            }),
             credential_names=("GROQ_API_KEY",),
             priority=priority.get("groq", 100),
             school_private_allowed=True,
@@ -189,10 +212,8 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
         ),
         "cloudflare": ProviderSpec(
             provider_id="cloudflare",
-            model_id=os.environ.get(
-                "MEMO_CLOUDFLARE_VISION_MODEL", "@cf/qwen/qwen3.8-27b"
-            ).strip() or "@cf/qwen/qwen3.8-27b",
-            capabilities=frozenset({"vision", "structured_output", "semantic_text"}),
+            model_id=cloudflare_model,
+            capabilities=cloudflare_model_capabilities(cloudflare_model),
             credential_names=("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_AI_API_TOKEN"),
             priority=priority.get("cloudflare", 100),
             school_private_allowed=True,
@@ -206,7 +227,9 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
         "mistral": ProviderSpec(
             provider_id="mistral",
             model_id=os.environ.get("MEMO_MISTRAL_VISION_MODEL", "").strip(),
-            capabilities=frozenset({"vision", "structured_output", "semantic_text"}),
+            capabilities=frozenset({
+                "vision", "structured_json", "structured_visual", "semantic_text"
+            }),
             credential_names=("MISTRAL_API_KEY",),
             priority=priority.get("mistral", 100),
             school_private_allowed=False,
@@ -228,7 +251,11 @@ def provider_ineligibility_reason(
     env: dict[str, str] | None = None,
 ) -> str | None:
     values = os.environ if env is None else env
-    capability = "vision" if task_type == TASK_VISUAL_INTERPRETATION else "semantic_text"
+    capability = (
+        "structured_visual"
+        if task_type == TASK_VISUAL_INTERPRETATION
+        else "semantic_text"
+    )
     if not spec.enabled:
         return "disabled"
     if capability not in spec.capabilities:
@@ -354,11 +381,19 @@ def _cloudflare_native_content(
         first = errors[0] if errors and isinstance(errors[0], dict) else {}
         provider_code = first.get("code") if isinstance(first.get("code"), (str, int)) else None
         provider_message = first.get("message") if isinstance(first.get("message"), str) else None
+        json_mode_unmet = bool(
+            provider_message
+            and re.search(r"json mode (?:couldn't|could not) be met", provider_message, re.I)
+        )
         raise ProviderError(
-            "AI_PROVIDER_CLOUDFLARE_ERROR",
-            "Cloudflare reported that the Workers AI request was unsuccessful.",
+            "AI_PROVIDER_JSON_MODE_UNMET" if json_mode_unmet else "AI_PROVIDER_CLOUDFLARE_ERROR",
+            (
+                "The model could not satisfy the requested structured JSON schema."
+                if json_mode_unmet
+                else "Cloudflare reported that the Workers AI request was unsuccessful."
+            ),
             retryable=False,
-            category="permanent_provider",
+            category="content_request" if json_mode_unmet else "permanent_provider",
             provider_code=provider_code,
             provider_message=(provider_message[:300] if provider_message else None),
             diagnostics=diagnostics,
@@ -520,21 +555,29 @@ def cloudflare_visual_adapter(
 ) -> ProviderResult:
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
     model_path = spec.model_id
+    llama_transport = spec.model_id == CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL
+    body: dict[str, Any] = {
+        "messages": [{
+            "role": "user",
+            "content": request.prompt if llama_transport else [
+                {"type": "text", "text": request.prompt},
+                {"type": "image_url", "image_url": {"url": _image_data_url(request)}},
+            ],
+        }],
+        "temperature": 0,
+        "max_tokens": 4096,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": request.response_schema,
+        },
+    }
+    if llama_transport:
+        body["image"] = _image_data_url(request)
+        body["stream"] = False
     return _post_adapter_json(
         f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model_path}",
         {"Authorization": f"Bearer {os.environ.get('CLOUDFLARE_AI_API_TOKEN', '').strip()}"},
-        {
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": request.prompt},
-                {"type": "image_url", "image_url": {"url": _image_data_url(request)}},
-            ]}],
-            "temperature": 0,
-            "max_tokens": 4096,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": request.response_schema,
-            },
-        },
+        body,
         request=request,
         spec=spec,
         deadline_monotonic=deadline_monotonic,

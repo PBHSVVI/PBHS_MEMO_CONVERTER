@@ -35,7 +35,7 @@ def _spec(
     return ProviderSpec(
         provider_id=provider_id,
         model_id=f"{provider_id}-vision-free",
-        capabilities=frozenset({"vision", "structured_output"}),
+        capabilities=frozenset({"vision", "structured_json", "structured_visual"}),
         credential_names=(f"{provider_id.upper()}_KEY",),
         priority=priority,
         school_private_allowed=school_private,
