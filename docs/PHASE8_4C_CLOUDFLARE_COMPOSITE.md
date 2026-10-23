@@ -194,3 +194,10 @@ qualification matrix on repair commit
 `fbc89e6ad2b199a280c9a7bb29e6d253fa6987bd`. The workflow was then updated to
 include the new grounding-coverage suite explicitly; the final hosted result is
 recorded below.
+
+Final hosted qualification run `39913423259` passed on commit
+`61f32bf7455b6ff2701f8f4797fba802c1624866`, including all 63 Phase 8.4C
+grounding/composite/activation tests. Phase 8.4C.2 is offline-qualified. Another
+bounded synthetic Stage-V/Stage-S live proof is technically justified, but it
+requires separate authorization. Cloudflare composite remains inactive and
+Stage 1B remains blocked until that proof passes.
