@@ -198,6 +198,45 @@ def test_stage_v_checkpoint_survives_and_reuses_without_second_call(monkeypatch,
     assert second["inference_calls"] == 0
 
 
+def test_legacy_v2_stage_v_checkpoint_reuses_after_composite_v3_bump(
+    monkeypatch, tmp_path
+):
+    _configure(monkeypatch)
+    monkeypatch.setattr(activation, "discover", _discovery)
+    path = tmp_path / "private-stage-v.json"
+    monkeypatch.setenv("PHASE84C_STAGE_V_CHECKPOINT_PATH", str(path))
+    monkeypatch.setenv("PHASE84C_REQUIRE_STAGE_V_REUSE", "true")
+    fixture = activation.synthetic_composite_fixture()
+    request = activation._request(fixture)
+    activation.persist_synthetic_stage_v_checkpoint(
+        path,
+        request=request,
+        fixture=fixture,
+        model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
+        live=_stage_v(),
+    )
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["schema_version"] = "cloudflare-composite-v2"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    loaded = activation.load_synthetic_stage_v_checkpoint(
+        path,
+        fixture=fixture,
+        model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
+    )
+    assert loaded["stage_v_artifact_schema_version"] == "cloudflare-composite-v2"
+    assert loaded["schema_version"] == "cloudflare-composite-v3"
+    monkeypatch.setattr(
+        provider_fabric,
+        "cloudflare_stage_v_call",
+        lambda *_args: pytest.fail("legacy durable checkpoint must avoid inference"),
+    )
+
+    report = activation.run_stage_v()
+
+    assert report["checkpoint_reused"] is True
+    assert report["inference_calls"] == 0
+
+
 def test_stage_v_checkpoint_requires_all_identity_fields(monkeypatch, tmp_path):
     _configure(monkeypatch)
     monkeypatch.setattr(activation, "discover", _discovery)

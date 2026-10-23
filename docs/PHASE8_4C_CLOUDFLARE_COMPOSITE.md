@@ -410,3 +410,13 @@ bounding boxes, application-owned crop association, null normalized mathematics,
 spatial `diagram_entry` guidance, explicit evidence for real mark changes, and no
 diagram-number or zero-delta mark changes. Composite checkpoints are version 3.
 The Stage-V prompt and durable transcript identity remain unchanged.
+
+The first Phase 8.4C.8 proof attempt stopped before inference because the
+synthetic Stage-V artifact loader coupled its top-level version to the composite
+checkpoint version. The durable artifact was valid v2 evidence, while the
+composite wrapper had advanced to v3. Stage-V artifacts now use the independent
+`phase8.4c-stage-v-checkpoint-v1` version. Exact legacy v2/v3 artifacts remain
+reusable only when fixture, source, crop, model, prompt and transcript digest all
+match; the returned composite checkpoint is normalized to the current v3
+version. No replacement Stage-V call is permitted or required. Phase 8.4C.8
+remains pending a separately authorized live proof.

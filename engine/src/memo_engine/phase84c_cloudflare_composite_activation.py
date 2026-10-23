@@ -31,6 +31,11 @@ from .provider_fabric import (
 
 REPORT_SCHEMA = "phase8.4c-cloudflare-composite-live-proof-v1"
 SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA = "phase8.4c-synthetic-stage-v-v1"
+SYNTHETIC_STAGE_V_CHECKPOINT_VERSION = "phase8.4c-stage-v-checkpoint-v1"
+LEGACY_SYNTHETIC_STAGE_V_CHECKPOINT_VERSIONS = frozenset((
+    "cloudflare-composite-v2",
+    "cloudflare-composite-v3",
+))
 SYNTHETIC_STAGE_S_ARTIFACT_SCHEMA = (
     "phase8.4c-synthetic-stage-s-provider-body-v1"
 )
@@ -120,7 +125,7 @@ def persist_synthetic_stage_v_checkpoint(
         "artifact_schema": SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA,
         "privacy_classification": PRIVACY_SYNTHETIC_TEST,
         "fixture_id": identity["fixture_id"],
-        "schema_version": CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
+        "schema_version": SYNTHETIC_STAGE_V_CHECKPOINT_VERSION,
         "stage_v": {
             "status": "success",
             "provider": "cloudflare",
@@ -156,7 +161,10 @@ def load_synthetic_stage_v_checkpoint(
         artifact.get("artifact_schema") == SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA
         and artifact.get("privacy_classification") == PRIVACY_SYNTHETIC_TEST
         and artifact.get("fixture_id") == identity["fixture_id"]
-        and artifact.get("schema_version") == CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION
+        and artifact.get("schema_version") in {
+            SYNTHETIC_STAGE_V_CHECKPOINT_VERSION,
+            *LEGACY_SYNTHETIC_STAGE_V_CHECKPOINT_VERSIONS,
+        }
         and isinstance(stage, dict)
         and stage.get("status") == "success"
         and stage.get("model") == identity["model"]
@@ -170,7 +178,8 @@ def load_synthetic_stage_v_checkpoint(
     if not valid:
         raise RuntimeError("PHASE84C_SYNTHETIC_STAGE_V_CHECKPOINT_IDENTITY_MISMATCH")
     return {
-        "schema_version": artifact["schema_version"],
+        "schema_version": CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
+        "stage_v_artifact_schema_version": artifact["schema_version"],
         "stage_v": dict(stage),
     }
 
