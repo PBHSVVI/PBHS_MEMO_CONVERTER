@@ -168,6 +168,10 @@ def test_stage_v_receives_image_and_stage_s_receives_only_transcript(monkeypatch
     assert TRANSCRIPT in bodies[1]["messages"][0]["content"]
     assert "image" not in bodies[1]
     assert "image_url" not in json.dumps(bodies[1])
+    transport = bodies[1]["response_format"]["json_schema"]
+    assert set(provider_fabric.cloudflare_schema_keyword_inventory(transport)) == set(
+        provider_fabric.CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS
+    )
 
 
 def test_two_stage_success_creates_composite_provider_result(monkeypatch):

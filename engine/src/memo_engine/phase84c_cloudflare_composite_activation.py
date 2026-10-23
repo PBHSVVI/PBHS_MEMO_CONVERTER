@@ -15,6 +15,9 @@ from . import provider_fabric, visual_evidence
 from .ai_router import ProviderError
 from .phase84b1_cloudflare_activation import list_account_models
 from .provider_fabric import (
+    CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
+    CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+    CLOUDFLARE_COMPOSITE_VISION_MODEL,
     CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
     PRIVACY_SYNTHETIC_TEST,
     ProviderFabric,
@@ -27,6 +30,7 @@ from .provider_fabric import (
 
 
 REPORT_SCHEMA = "phase8.4c-cloudflare-composite-live-proof-v1"
+SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA = "phase8.4c-synthetic-stage-v-v1"
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -68,6 +72,103 @@ def synthetic_composite_fixture() -> dict[str, Any]:
             "visible_numeric_tokens": ["10", "250", "1", "25", "0.04", "4", "1.2", "2", "3"],
             "spatial_cardinalities": ["2"],
         },
+    }
+
+
+def synthetic_stage_v_identity(
+    fixture: dict[str, Any], model: str = CLOUDFLARE_COMPOSITE_VISION_MODEL
+) -> dict[str, str]:
+    digest = hashlib.sha256(fixture["image"]).hexdigest()
+    return {
+        "fixture_id": str(fixture["id"]),
+        "source_digest": digest,
+        "crop_digest": digest,
+        "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+        "model": model,
+    }
+
+
+def synthetic_stage_v_cache_key(identity: dict[str, str]) -> str:
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _stage_v_artifact_path() -> Path:
+    return Path(os.environ.get(
+        "PHASE84C_STAGE_V_CHECKPOINT_PATH", "phase84c-private-synthetic-stage-v.json"
+    ))
+
+
+def persist_synthetic_stage_v_checkpoint(
+    path: Path,
+    *,
+    request: ProviderTaskRequest,
+    fixture: dict[str, Any],
+    model: str,
+    live: dict[str, Any],
+) -> dict[str, Any]:
+    if request.privacy_classification != PRIVACY_SYNTHETIC_TEST:
+        raise RuntimeError("PHASE84C_PRIVATE_CHECKPOINT_REQUIRES_SYNTHETIC_TEST")
+    transcript = live.get("transcript")
+    if not isinstance(transcript, str) or not transcript.strip():
+        raise RuntimeError("PHASE84C_PRIVATE_CHECKPOINT_TRANSCRIPT_MISSING")
+    identity = synthetic_stage_v_identity(fixture, model)
+    artifact = {
+        "artifact_schema": SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA,
+        "privacy_classification": PRIVACY_SYNTHETIC_TEST,
+        "fixture_id": identity["fixture_id"],
+        "schema_version": CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
+        "stage_v": {
+            "status": "success",
+            "provider": "cloudflare",
+            "model": identity["model"],
+            "source_digest": identity["source_digest"],
+            "crop_digest": identity["crop_digest"],
+            "prompt_version": identity["prompt_version"],
+            "transcript": transcript,
+            "transcript_digest": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+            "usage": live.get("usage") or {},
+            "quota": live.get("quota") or {},
+            "latency_ms": live.get("latency_ms"),
+            "response_path": (live.get("diagnostics") or {}).get("response_path"),
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return artifact
+
+
+def load_synthetic_stage_v_checkpoint(
+    path: Path, *, fixture: dict[str, Any], model: str
+) -> dict[str, Any]:
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    identity = synthetic_stage_v_identity(fixture, model)
+    stage = artifact.get("stage_v") if isinstance(artifact, dict) else None
+    transcript = stage.get("transcript") if isinstance(stage, dict) else None
+    valid = bool(
+        artifact.get("artifact_schema") == SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA
+        and artifact.get("privacy_classification") == PRIVACY_SYNTHETIC_TEST
+        and artifact.get("fixture_id") == identity["fixture_id"]
+        and artifact.get("schema_version") == CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION
+        and isinstance(stage, dict)
+        and stage.get("status") == "success"
+        and stage.get("model") == identity["model"]
+        and stage.get("source_digest") == identity["source_digest"]
+        and stage.get("crop_digest") == identity["crop_digest"]
+        and stage.get("prompt_version") == identity["prompt_version"]
+        and isinstance(transcript, str)
+        and stage.get("transcript_digest")
+        == hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    )
+    if not valid:
+        raise RuntimeError("PHASE84C_SYNTHETIC_STAGE_V_CHECKPOINT_IDENTITY_MISMATCH")
+    return {
+        "schema_version": artifact["schema_version"],
+        "stage_v": dict(stage),
     }
 
 
@@ -148,6 +249,27 @@ def assess_stage_v_transcript(
 
 def _safe_failure(exc: Exception) -> dict[str, Any]:
     diagnostics = getattr(exc, "diagnostics", None)
+    provider_message = getattr(exc, "provider_message", None)
+    private_checkpoint = (
+        diagnostics.get("_private_composite_checkpoint")
+        if isinstance(diagnostics, dict) else None
+    )
+    transcript = (
+        private_checkpoint.get("stage_v", {}).get("transcript")
+        if isinstance(private_checkpoint, dict) else None
+    )
+    safe_message = None
+    if isinstance(provider_message, str) and provider_message.strip():
+        candidate = " ".join(provider_message.split())[:600]
+        if not (
+            (isinstance(transcript, str) and transcript in candidate)
+            or re.search(
+                r"authorization|bearer|api[_-]?key|account[_-]?id|data:image|sb_secret_|service_role",
+                candidate,
+                re.I,
+            )
+        ):
+            safe_message = candidate
     safe_grounding = {
         key: value for key, value in (diagnostics or {}).items()
         if key.startswith("grounding_")
@@ -158,8 +280,92 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
         "category": getattr(exc, "category", None),
         "http_status": getattr(exc, "http_status", None),
         "provider_code": getattr(exc, "provider_code", None),
+        "provider_message": safe_message,
         "composite_stage": diagnostics.get("composite_stage") if isinstance(diagnostics, dict) else None,
         **safe_grounding,
+    }
+
+
+def _schema_depth(value: Any) -> int:
+    if isinstance(value, dict) and value:
+        return 1 + max(_schema_depth(item) for item in value.values())
+    if isinstance(value, list) and value:
+        return 1 + max(_schema_depth(item) for item in value)
+    return 0
+
+
+def _transport_schema_report(request: ProviderTaskRequest) -> dict[str, Any]:
+    internal = provider_fabric.cloudflare_grounded_wrapper_schema(request.response_schema)
+    transport = provider_fabric.compile_cloudflare_transport_schema(internal)
+    return {
+        "internal_schema_version": provider_fabric.CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+        "structurer_prompt_version": provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+        "internal_keyword_inventory": provider_fabric.cloudflare_schema_keyword_inventory(internal),
+        "transport_keyword_inventory": provider_fabric.cloudflare_schema_keyword_inventory(transport),
+        "transport_schema_bytes": len(json.dumps(transport, separators=(",", ":"))),
+        "transport_schema_depth": _schema_depth(transport),
+        "top_level_required_field_count": len(transport.get("required") or []),
+    }
+
+
+def identity_report() -> dict[str, Any]:
+    fixture = synthetic_composite_fixture()
+    identity = synthetic_stage_v_identity(fixture)
+    return {
+        "schema": REPORT_SCHEMA,
+        "privacy_classification": PRIVACY_SYNTHETIC_TEST,
+        "fixture_id": identity["fixture_id"],
+        "cache_key": synthetic_stage_v_cache_key(identity),
+        "identity": identity,
+        "inference_calls": 0,
+    }
+
+
+def run_stage_v() -> dict[str, Any]:
+    discovery = discover()
+    model = str(discovery.get("vision_model") or "")
+    if model != CLOUDFLARE_COMPOSITE_VISION_MODEL:
+        raise RuntimeError("PHASE84C_STAGE_V_MODEL_MISMATCH")
+    fixture = synthetic_composite_fixture()
+    request = _request(fixture)
+    if request.privacy_classification != PRIVACY_SYNTHETIC_TEST:
+        raise RuntimeError("PHASE84C_PRIVATE_CHECKPOINT_REQUIRES_SYNTHETIC_TEST")
+    path = _stage_v_artifact_path()
+    calls = 0
+    reused = False
+    if path.exists():
+        checkpoint = load_synthetic_stage_v_checkpoint(path, fixture=fixture, model=model)
+        stage = checkpoint["stage_v"]
+        reused = True
+    else:
+        calls = 1
+        live = provider_fabric.cloudflare_stage_v_call(request, model, None, 1, lambda: 0)
+        quality = assess_stage_v_transcript(live["transcript"], fixture["expected_evidence"])
+        if quality["status"] != "pass":
+            raise RuntimeError("PHASE84C_STAGE_V_CONTENT_GATE_FAILED")
+        persist_synthetic_stage_v_checkpoint(
+            path, request=request, fixture=fixture, model=model, live=live
+        )
+        checkpoint = load_synthetic_stage_v_checkpoint(path, fixture=fixture, model=model)
+        stage = checkpoint["stage_v"]
+    quality = assess_stage_v_transcript(stage["transcript"], fixture["expected_evidence"])
+    return {
+        **discovery,
+        "schema": REPORT_SCHEMA,
+        "discovery_only": False,
+        "privacy_classification": PRIVACY_SYNTHETIC_TEST,
+        "status": "passed" if quality["status"] == "pass" else "failed",
+        "fixture_id": fixture["id"],
+        "checkpoint_reused": reused,
+        "checkpoint_persisted": path.exists(),
+        "checkpoint_readback_verified": True,
+        "stage_v": {
+            "status": "success",
+            "model": stage["model"],
+            "usage": stage.get("usage") or {},
+            **quality,
+        },
+        "inference_calls": calls,
     }
 
 
@@ -225,10 +431,21 @@ def run() -> dict[str, Any]:
     os.environ["MEMO_VISUAL_PROVIDER_RATE_RETRIES"] = "0"
     os.environ["MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES"] = "0"
     fixture = synthetic_composite_fixture()
-    request = _request(fixture)
+    checkpoint_path = _stage_v_artifact_path()
+    supplied_checkpoint = None
+    if checkpoint_path.exists():
+        supplied_checkpoint = load_synthetic_stage_v_checkpoint(
+            checkpoint_path, fixture=fixture, model=str(vision_model)
+        )
+    request = _request(fixture, supplied_checkpoint)
+    report["transport_schema"] = _transport_schema_report(request)
     spec = default_provider_registry()["cloudflare"]
     calls = {"stage_v": 0, "stage_s": 0}
     captures: dict[str, Any] = {}
+    if supplied_checkpoint:
+        captures["stage_v_quality"] = assess_stage_v_transcript(
+            supplied_checkpoint["stage_v"]["transcript"], fixture["expected_evidence"]
+        )
     original_v = provider_fabric.cloudflare_stage_v_call
     original_s = provider_fabric.cloudflare_stage_s_call
 
@@ -294,6 +511,21 @@ def run() -> dict[str, Any]:
                 **(report.get("stage_v") or {}),
                 **captures["stage_v_quality"],
             }
+        private_checkpoint = (
+            getattr(exc, "diagnostics", {}).get("_private_composite_checkpoint")
+            if isinstance(getattr(exc, "diagnostics", None), dict) else None
+        )
+        if isinstance(private_checkpoint, dict) and isinstance(
+            private_checkpoint.get("stage_v"), dict
+        ):
+            stage_v = private_checkpoint["stage_v"]
+            report["stage_v"] = {
+                **(report.get("stage_v") or {}),
+                "model": stage_v.get("model"),
+                "usage": stage_v.get("usage") or {},
+                "checkpoint_reused": bool(supplied_checkpoint),
+                "checkpoint_persisted": checkpoint_path.exists(),
+            }
         report["inference_calls"] = sum(calls.values())
         return report
     finally:
@@ -309,6 +541,8 @@ def run() -> dict[str, Any]:
         "model": stage_v["model"],
         "response_path": stage_v.get("response_path"),
         "usage": stage_v.get("usage") or {},
+        "checkpoint_reused": bool(supplied_checkpoint),
+        "checkpoint_persisted": checkpoint_path.exists(),
         **captures["stage_v_quality"],
     }
     report["stage_s"] = {
@@ -435,7 +669,7 @@ def run() -> dict[str, Any]:
     provider_fabric.cloudflare_stage_v_call = original_v
     provider_fabric.cloudflare_stage_s_call = original_s
     report["status"] = "passed" if all((
-        calls == {"stage_v": 1, "stage_s": 1},
+        calls == {"stage_v": 0 if supplied_checkpoint else 1, "stage_s": 1},
         report["content_quality"]["status"] == "pass",
         report["grounding"]["status"] == "passed",
         report["production_schema"]["status"] == "passed",
@@ -446,7 +680,15 @@ def run() -> dict[str, Any]:
 
 
 def main() -> int:
-    report = discover() if os.environ.get("PHASE84C_DISCOVERY_ONLY") == "true" else run()
+    mode = os.environ.get("PHASE84C_MODE", "").strip().lower()
+    if os.environ.get("PHASE84C_DISCOVERY_ONLY") == "true" or mode == "discover":
+        report = discover()
+    elif mode == "identity":
+        report = identity_report()
+    elif mode == "stage_v":
+        report = run_stage_v()
+    else:
+        report = run()
     path = Path(os.environ.get("PHASE84C_REPORT_PATH", "phase84c-report.json"))
     path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     summary = {
@@ -464,6 +706,8 @@ def main() -> int:
     print("PHASE84C_SAFE_SUMMARY=" + json.dumps(summary, sort_keys=True))
     if report.get("discovery_only"):
         return 0 if report.get("vision_model") and report.get("structurer_model") else 1
+    if mode == "identity":
+        return 0
     return 0 if report.get("status") == "passed" else 1
 
 

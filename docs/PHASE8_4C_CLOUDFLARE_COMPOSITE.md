@@ -243,3 +243,37 @@ suite with 708 tests, 4 skips, and 28 subtests. Hosted qualification run
 inference and is not authorization for another live attempt. Cloudflare composite
 remains inactive, Mistral remains excluded, and Stage 1B remains blocked pending
 a separately authorized bounded re-proof.
+
+## Phase 8.4C.4 conservative transport and durable synthetic checkpoint
+
+The full internal `cloudflare-grounded-wrapper-v2` schema is now distinct from
+the provider-facing Cloudflare JSON Mode schema. At the start of this increment,
+the recursively observed provider schema contained these JSON Schema keywords:
+`additionalProperties`, `description`, `enum`, `items`, `maxItems`, `maximum`,
+`minItems`, `minLength`, `minimum`, `properties`, `required`, and `type`. Its
+compact serialized size for the deterministic activation fixture was 2,318
+bytes.
+
+`compile_cloudflare_transport_schema` now recursively retains only `type`,
+`properties`, `required`, and `items`. Descriptions and all semantic, range,
+length, vocabulary, uniqueness, and closed-object constraints remain in the
+full internal schema or deterministic validation rather than being delegated to
+Cloudflare. The Stage-S prompt states the allowed evidence kinds, source,
+mark-change levels, confirmation flag, confidence range, bounding-box form,
+closed-field rule, exact leaf-path requirement, and exact-quote rule.
+
+After generation, the full internal wrapper is validated before grounding.
+Malformed JSON Pointer syntax, duplicates and conflicting duplicates, invalid
+closed vocabulary values, unsupported fields, incorrect types, omitted required
+fields, missing or unknown grounding, unsupported numbers, labels or
+relationships, and question-to-answer promotion all remain fail-closed.
+
+The activation workflow now separates Stage V into its own successful job. A
+passing transcript is written only when `privacy_classification` is exactly
+`synthetic_test`, read back with its digest verified, stored as a bounded
+14-day private workflow artifact, and cached by a digest of the complete fixture
+identity. Cross-run reuse still validates fixture ID, source digest, crop digest,
+Stage-V prompt version, Stage-V model, transcript presence, and transcript digest.
+A mismatch fails rather than silently reusing or reconstructing content. The
+Stage-S job downloads that exact same-run artifact, so it cannot erase the
+successful synthetic Stage-V evidence if Stage S fails.

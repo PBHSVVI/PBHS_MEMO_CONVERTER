@@ -14,13 +14,17 @@ from engine.src.memo_engine.ai_router import ProviderError
 from engine.src.memo_engine.provider_fabric import (
     CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
     CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+    CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS,
     cloudflare_composite_visual_adapter,
     cloudflare_grounded_wrapper_schema,
+    cloudflare_schema_keyword_inventory,
     cloudflare_stage_s_prompt,
+    compile_cloudflare_transport_schema,
     default_provider_registry,
     enumerate_cloudflare_content_paths,
     enumerate_cloudflare_exempt_paths,
     validate_cloudflare_grounding,
+    validate_cloudflare_internal_wrapper,
 )
 from engine.tests.test_phase84c_cloudflare_composite import (
     TRANSCRIPT,
@@ -142,10 +146,13 @@ def test_grounding_metadata_path_is_rejected():
     ]
 
 
-def test_identical_duplicate_grounding_is_deduplicated_deterministically():
+def test_identical_duplicate_grounding_is_rejected_deterministically():
     wrapper = _wrapper()
     wrapper["grounding"].append(copy.deepcopy(wrapper["grounding"][1]))
-    assert validate_cloudflare_grounding(wrapper, TRANSCRIPT) == _payload()
+    with pytest.raises(ProviderError) as caught:
+        validate_cloudflare_grounding(wrapper, TRANSCRIPT)
+    assert caught.value.code == "AI_PROVIDER_GROUNDING_DUPLICATE"
+    assert caught.value.diagnostics["grounding_duplicate_path_count"] == 1
 
 
 def test_conflicting_duplicate_grounding_is_rejected_without_quote_content():
@@ -243,14 +250,56 @@ def test_grounded_wrapper_schema_and_prompt_require_complete_leaf_mappings():
     assert schema["properties"]["grounding_schema_version"]["enum"] == [
         CLOUDFLARE_GROUNDING_SCHEMA_VERSION
     ]
-    # Cloudflare JSON Mode receives a conservative transport schema. The
-    # deterministic validator owns path syntax and duplicate enforcement.
-    assert "uniqueItems" not in schema["properties"]["grounding"]
-    assert "pattern" not in schema["properties"]["grounding"]["items"]["properties"]["path"]
-    prompt = cloudflare_stage_s_prompt(TRANSCRIPT)
+    prompt = cloudflare_stage_s_prompt(TRANSCRIPT, visual_evidence._vision_schema(1))
     assert "EVERY populated CONTENT-BEARING payload leaf" in prompt
     assert "Do not use a parent/container path" in prompt
     assert "/payload/evidence/*/confidence" in prompt
+    assert "answer_working" in prompt
+    assert "visual_overlay" in prompt
+
+
+def test_cloudflare_transport_schema_recursively_uses_only_structural_allowlist():
+    internal = cloudflare_grounded_wrapper_schema(visual_evidence._vision_schema(1))
+    transport = compile_cloudflare_transport_schema(internal)
+    assert set(cloudflare_schema_keyword_inventory(transport)) == set(
+        CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS
+    )
+    assert not set(cloudflare_schema_keyword_inventory(transport)) & {
+        "enum", "const", "pattern", "uniqueItems", "additionalProperties",
+        "minItems", "maxItems", "minLength", "maxLength", "minimum",
+        "maximum", "oneOf", "anyOf", "allOf", "format", "$defs",
+        "definitions", "description",
+    }
+
+
+def test_invalid_json_pointer_syntax_fails_after_transport_acceptance():
+    wrapper = _wrapper()
+    wrapper["grounding"][0]["path"] = "/payload/evidence/0/question_ref~2"
+    with pytest.raises(ProviderError) as caught:
+        validate_cloudflare_grounding(wrapper, TRANSCRIPT)
+    assert caught.value.code == "AI_PROVIDER_GROUNDING_PATH_SYNTAX_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "category"),
+    [
+        (lambda value: value["payload"]["evidence"][0].__setitem__("kind", "invented"), "internal_schema_enum"),
+        (lambda value: value["payload"].__setitem__("unsupported", "x"), "internal_schema_additional_property"),
+        (lambda value: value["payload"].__setitem__("page", "1"), "internal_schema_type"),
+        (lambda value: value["payload"].pop("warnings"), "internal_schema_required"),
+    ],
+)
+def test_full_internal_contract_rejects_constraints_removed_from_transport(
+    mutation, category
+):
+    wrapper = _wrapper()
+    mutation(wrapper)
+    with pytest.raises(ProviderError) as caught:
+        validate_cloudflare_internal_wrapper(
+            wrapper, visual_evidence._vision_schema(1)
+        )
+    assert caught.value.code == "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID"
+    assert caught.value.diagnostics["grounding_failure_category"] == category
 
 
 def test_old_stage_s_cache_is_invalidated_but_stage_v_is_reused(monkeypatch):

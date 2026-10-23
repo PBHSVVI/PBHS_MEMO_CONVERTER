@@ -61,7 +61,7 @@ jobs:
           path: /tmp/phase84c-discovery.json
           retention-days: 14
 
-  prove:
+  stage_v:
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,8 +76,84 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r engine/requirements.txt "pytest>=8,<9"
       - name: Verify composite mocked suite
         run: python -m pytest -q engine/tests/test_phase84c_cloudflare_composite.py engine/tests/test_phase84c_activation.py
-      - name: Run maximum two-call synthetic composite proof
+      - name: Compute synthetic Stage-V identity without inference
+        id: identity
         env:
+          PHASE84C_MODE: identity
+          PHASE84C_REPORT_PATH: /tmp/phase84c-identity.json
+        shell: bash
+        run: |
+          python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
+          echo "cache_key=$(python -c \"import json; print(json.load(open('/tmp/phase84c-identity.json'))['cache_key'])\")" >> "$GITHUB_OUTPUT"
+      - name: Restore exact synthetic Stage-V checkpoint
+        id: restore-stage-v
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/phase84c-private-synthetic-stage-v.json
+          key: phase84c-stage-v-${{ steps.identity.outputs.cache_key }}
+      - name: Run or reuse bounded synthetic Stage-V proof
+        env:
+          PHASE84C_MODE: stage_v
+          PHASE84C_STAGE_V_CHECKPOINT_PATH: /tmp/phase84c-private-synthetic-stage-v.json
+          PHASE84C_REPORT_PATH: /tmp/phase84c-stage-v-report.json
+        run: python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
+      - name: Verify private checkpoint identity and synthetic-only guard
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          value = json.load(open('/tmp/phase84c-private-synthetic-stage-v.json', encoding='utf-8'))
+          assert value['privacy_classification'] == 'synthetic_test'
+          assert value['artifact_schema'] == 'phase8.4c-synthetic-stage-v-v1'
+          assert value['stage_v']['status'] == 'success'
+          assert value['stage_v']['transcript']
+          PY
+      - name: Save exact synthetic Stage-V checkpoint cache
+        if: steps.restore-stage-v.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/phase84c-private-synthetic-stage-v.json
+          key: phase84c-stage-v-${{ steps.identity.outputs.cache_key }}
+      - name: Upload private synthetic Stage-V checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase84c-private-synthetic-stage-v
+          path: /tmp/phase84c-private-synthetic-stage-v.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Scan sanitized Stage-V report
+        shell: bash
+        run: |
+          ! grep -Eqi 'authorization|bearer|api[_-]?key|sb_secret_|service_role|signed[_-]?url|data:image|STAGE-V TRANSCRIPT' /tmp/phase84c-stage-v-report.json
+          python -m json.tool /tmp/phase84c-stage-v-report.json >/dev/null
+      - name: Upload sanitized Stage-V report
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase84c-cloudflare-stage-v-sanitized-report
+          path: /tmp/phase84c-stage-v-report.json
+          retention-days: 14
+
+  prove:
+    needs: [discover, stage_v]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install bounded proof dependencies
+        run: python -m pip install --disable-pip-version-check -r engine/requirements.txt "pytest>=8,<9"
+      - name: Download exact synthetic Stage-V checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: phase84c-private-synthetic-stage-v
+          path: /tmp/phase84c-private
+      - name: Run maximum one-call synthetic Stage-S composite proof
+        env:
+          PHASE84C_STAGE_V_CHECKPOINT_PATH: /tmp/phase84c-private/phase84c-private-synthetic-stage-v.json
           PHASE84C_REPORT_PATH: /tmp/phase84c-report.json
         run: python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
       - name: Scan sanitized report

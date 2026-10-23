@@ -25,6 +25,7 @@ CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
 CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v2"
 CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
 CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
+CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
 
 # This policy is authoritative for both Stage-S prompting and deterministic
 # validation. Paths not explicitly exempted are content-bearing by default.
@@ -724,14 +725,40 @@ claims, text, mathematics, numeric values, warnings, labels, relationships, and
 non-null bounding-box coordinates."""
 
 
-def cloudflare_stage_s_prompt(transcript: str) -> str:
+def cloudflare_payload_vocabulary_prompt(payload_schema: dict[str, Any] | None = None) -> str:
+    payload_schema = payload_schema or {}
+    properties = payload_schema.get("properties") if isinstance(payload_schema.get("properties"), dict) else {}
+    evidence = properties.get("evidence") if isinstance(properties.get("evidence"), dict) else {}
+    evidence_items = evidence.get("items") if isinstance(evidence.get("items"), dict) else {}
+    evidence_properties = evidence_items.get("properties") if isinstance(evidence_items.get("properties"), dict) else {}
+    kind_schema = evidence_properties.get("kind") if isinstance(evidence_properties.get("kind"), dict) else {}
+    kinds = kind_schema.get("enum") if isinstance(kind_schema.get("enum"), list) else []
+    kind_text = ", ".join(str(item) for item in kinds) or "the closed kinds in the requested contract"
+    version_schema = properties.get("schema_version") if isinstance(properties.get("schema_version"), dict) else {}
+    versions = version_schema.get("enum") if isinstance(version_schema.get("enum"), list) else []
+    version_text = str(versions[0]) if versions else "the requested schema version"
+    return f"""Payload contract vocabulary:
+- schema_version is exactly {version_text};
+- page is the requested integer page and visual_content_present is boolean;
+- evidence kind is one of: {kind_text};
+- evidence source is exactly visual_overlay;
+- mark-change level is one of: item, subtotal, document_total;
+- requires_confirmation is exactly true;
+- confidence is numeric from 0 through 1;
+- bounding boxes are null or exactly four numeric coordinates;
+- do not add fields outside the requested payload and grounding objects."""
+
+
+def cloudflare_stage_s_prompt(
+    transcript: str, payload_schema: dict[str, Any] | None = None
+) -> str:
     return """YOU ARE A STRUCTURER, NOT A SOLVER.
 Convert only the supplied Stage-V evidence transcript into the requested grounded
 wrapper. Do not calculate, repair arithmetic, infer missing answers, reinterpret the
 question, or introduce values, labels, or spatial relationships absent from the
 transcript. Question-only text must never become answer or solution evidence.
 
-""" + cloudflare_grounding_policy_prompt() + """
+""" + cloudflare_payload_vocabulary_prompt(payload_schema) + "\n\n" + cloudflare_grounding_policy_prompt() + """
 
 STAGE-V TRANSCRIPT:
 """ + transcript
@@ -767,6 +794,153 @@ def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[s
         "required": ["grounding_schema_version", "payload", "grounding"],
         "additionalProperties": False,
     }
+
+
+def compile_cloudflare_transport_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Compile the full internal schema to Cloudflare's conservative JSON shape.
+
+    Provider-side JSON Mode constrains structure only. The full schema and all
+    semantic grounding rules are enforced after generation.
+    """
+    result: dict[str, Any] = {}
+    for key in CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS:
+        if key not in schema:
+            continue
+        value = schema[key]
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {
+                str(name): compile_cloudflare_transport_schema(child)
+                for name, child in value.items()
+                if isinstance(child, dict)
+            }
+        elif key == "items" and isinstance(value, dict):
+            result[key] = compile_cloudflare_transport_schema(value)
+        else:
+            result[key] = value
+    return result
+
+
+def cloudflare_schema_keyword_inventory(schema: dict[str, Any]) -> list[str]:
+    keywords: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key == "properties" and isinstance(value, dict):
+                keywords.add(key)
+                for child in value.values():
+                    visit(child)
+            else:
+                keywords.add(key)
+                if key == "items":
+                    visit(value)
+
+    visit(schema)
+    return sorted(keywords)
+
+
+def _schema_type_matches(value: Any, expected: str) -> bool:
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "boolean": isinstance(value, bool),
+        "null": value is None,
+    }.get(expected, False)
+
+
+def _validate_internal_schema(value: Any, schema: dict[str, Any], path: str) -> None:
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    if expected is not None and not any(
+        isinstance(item, str) and _schema_type_matches(value, item)
+        for item in expected_types
+    ):
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+            "The grounded wrapper used an invalid JSON type.",
+            failure_category="internal_schema_type",
+            path=path,
+        )
+    if "enum" in schema and value not in schema["enum"]:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+            "The grounded wrapper used a value outside the closed vocabulary.",
+            failure_category="internal_schema_enum",
+            path=path,
+        )
+    if isinstance(value, dict):
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        missing = sorted(set(schema.get("required") or []) - set(value))
+        if missing:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper omitted required content.",
+                failure_category="internal_schema_required",
+                missing_paths=[f"{path}/{_json_pointer_escape(item)}" for item in missing],
+            )
+        if schema.get("additionalProperties") is False:
+            unknown = sorted(set(value) - set(properties))
+            if unknown:
+                _raise_grounding_error(
+                    "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                    "The grounded wrapper contained unsupported fields.",
+                    failure_category="internal_schema_additional_property",
+                    unknown_paths=[f"{path}/{_json_pointer_escape(item)}" for item in unknown],
+                )
+        for key, child in value.items():
+            if key in properties:
+                _validate_internal_schema(
+                    child, properties[key], f"{path}/{_json_pointer_escape(key)}"
+                )
+    if isinstance(value, list):
+        if isinstance(schema.get("minItems"), int) and len(value) < schema["minItems"]:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper array was too short.",
+                failure_category="internal_schema_min_items", path=path,
+            )
+        if isinstance(schema.get("maxItems"), int) and len(value) > schema["maxItems"]:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper array was too long.",
+                failure_category="internal_schema_max_items", path=path,
+            )
+        if isinstance(schema.get("items"), dict):
+            for index, child in enumerate(value):
+                _validate_internal_schema(child, schema["items"], f"{path}/{index}")
+    if isinstance(value, str):
+        if isinstance(schema.get("minLength"), int) and len(value) < schema["minLength"]:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper string was too short.",
+                failure_category="internal_schema_min_length", path=path,
+            )
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(schema.get("minimum"), (int, float)) and value < schema["minimum"]:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper number was below its minimum.",
+                failure_category="internal_schema_minimum", path=path,
+            )
+        if isinstance(schema.get("maximum"), (int, float)) and value > schema["maximum"]:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID",
+                "The grounded wrapper number exceeded its maximum.",
+                failure_category="internal_schema_maximum", path=path,
+            )
+
+
+def validate_cloudflare_internal_wrapper(
+    wrapper: Any, payload_schema: dict[str, Any]
+) -> dict[str, Any]:
+    _validate_internal_schema(
+        wrapper, cloudflare_grounded_wrapper_schema(payload_schema), "/wrapper"
+    )
+    return wrapper
 
 
 def _cloudflare_response(payload: dict[str, Any]) -> tuple[Any, dict[str, Any], dict[str, Any]]:
@@ -897,13 +1071,17 @@ def cloudflare_stage_s_call(
     payload, elapsed_ms = _cloudflare_stage_post(
         model,
         {
-            "messages": [{"role": "user", "content": cloudflare_stage_s_prompt(transcript)}],
+            "messages": [{"role": "user", "content": cloudflare_stage_s_prompt(
+                transcript, request.response_schema
+            )}],
             "temperature": 0,
             "max_tokens": 4096,
             "stream": False,
             "response_format": {
                 "type": "json_schema",
-                "json_schema": cloudflare_grounded_wrapper_schema(request.response_schema),
+                "json_schema": compile_cloudflare_transport_schema(
+                    cloudflare_grounded_wrapper_schema(request.response_schema)
+                ),
             },
         },
         deadline_monotonic=deadline_monotonic,
@@ -1123,6 +1301,13 @@ def validate_cloudflare_grounding(wrapper: Any, transcript: str) -> dict[str, An
                 "A grounding entry lacked a valid path or quotation.",
                 failure_category="grounding_entry_invalid",
             )
+        if re.fullmatch(r"^/payload(?:/(?:[^~/]|~[01])+)+$", path) is None:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDING_PATH_SYNTAX_INVALID",
+                "A grounding entry used invalid JSON Pointer syntax.",
+                failure_category="path_syntax",
+                path=path,
+            )
         if path in containers and path not in leaves:
             supplied_containers.append(path)
             continue
@@ -1172,6 +1357,13 @@ def validate_cloudflare_grounding(wrapper: Any, transcript: str) -> dict[str, An
             "AI_PROVIDER_GROUNDING_DUPLICATE_CONFLICT",
             "Conflicting grounding quotations were supplied for one content path.",
             failure_category="duplicate_conflict",
+            **common_diagnostics,
+        )
+    if duplicates:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_DUPLICATE",
+            "A grounding path was supplied more than once.",
+            failure_category="duplicate_path",
             **common_diagnostics,
         )
 
@@ -1434,6 +1626,7 @@ def cloudflare_composite_visual_adapter(
         checkpoint["stage_s"] = stage_s
 
     try:
+        validate_cloudflare_internal_wrapper(stage_s["wrapper"], request.response_schema)
         payload = validate_cloudflare_grounding(stage_s["wrapper"], transcript)
     except ProviderError as exc:
         checkpoint["stage_s"] = {

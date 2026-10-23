@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from engine.src.memo_engine import phase84c_cloudflare_composite_activation as activation
 from engine.src.memo_engine import provider_fabric
@@ -145,3 +148,65 @@ def test_sanitized_report_does_not_contain_transcript_or_image(monkeypatch):
     serialized = json.dumps(activation.run(), sort_keys=True)
     assert TRANSCRIPT not in serialized
     assert "data:image" not in serialized
+
+
+def test_private_stage_v_persistence_is_synthetic_only(tmp_path):
+    fixture = activation.synthetic_composite_fixture()
+    request = activation._request(fixture)
+    request = replace(
+        request, privacy_classification=provider_fabric.PRIVACY_SCHOOL_PRIVATE
+    )
+    with pytest.raises(RuntimeError, match="REQUIRES_SYNTHETIC_TEST"):
+        activation.persist_synthetic_stage_v_checkpoint(
+            tmp_path / "checkpoint.json",
+            request=request,
+            fixture=fixture,
+            model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
+            live=_stage_v(),
+        )
+
+
+def test_stage_v_checkpoint_survives_and_reuses_without_second_call(monkeypatch, tmp_path):
+    _configure(monkeypatch)
+    monkeypatch.setattr(activation, "discover", _discovery)
+    path = tmp_path / "private-stage-v.json"
+    monkeypatch.setenv("PHASE84C_STAGE_V_CHECKPOINT_PATH", str(path))
+    calls = []
+
+    def stage_v(*args):
+        calls.append(1)
+        return _stage_v(*args)
+
+    monkeypatch.setattr(provider_fabric, "cloudflare_stage_v_call", stage_v)
+    first = activation.run_stage_v()
+    assert first["checkpoint_persisted"] is True
+    assert first["checkpoint_readback_verified"] is True
+    assert first["checkpoint_reused"] is False
+    assert calls == [1]
+
+    monkeypatch.setattr(
+        provider_fabric,
+        "cloudflare_stage_v_call",
+        lambda *_args: pytest.fail("durable synthetic checkpoint must avoid inference"),
+    )
+    second = activation.run_stage_v()
+    assert second["checkpoint_reused"] is True
+    assert second["inference_calls"] == 0
+
+
+def test_stage_v_checkpoint_requires_all_identity_fields(monkeypatch, tmp_path):
+    _configure(monkeypatch)
+    monkeypatch.setattr(activation, "discover", _discovery)
+    path = tmp_path / "private-stage-v.json"
+    monkeypatch.setenv("PHASE84C_STAGE_V_CHECKPOINT_PATH", str(path))
+    monkeypatch.setattr(provider_fabric, "cloudflare_stage_v_call", _stage_v)
+    activation.run_stage_v()
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["fixture_id"] = "different-fixture"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="IDENTITY_MISMATCH"):
+        activation.load_synthetic_stage_v_checkpoint(
+            path,
+            fixture=activation.synthetic_composite_fixture(),
+            model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
+        )
