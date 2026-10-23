@@ -1,8 +1,11 @@
 # Phase 8.4B.5 Cloudflare Llama live proof
 
-Date: 2026-10-23  
-Starting baseline: `9c663b55ff7f089989ce808f1729e8ddad3f8919`  
-Bounded proof harness: `103ee2e5fc1b1d0ac39493671e0d7f7dd3ee03a6`  
+Date: 2026-10-23
+
+Starting baseline: `9c663b55ff7f089989ce808f1729e8ddad3f8919`
+
+Bounded proof harness: `103ee2e5fc1b1d0ac39493671e0d7f7dd3ee03a6`
+
 GitHub Actions run: `39903216429`
 
 ## Result
