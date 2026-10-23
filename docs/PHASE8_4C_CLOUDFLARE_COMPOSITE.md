@@ -201,3 +201,42 @@ grounding/composite/activation tests. Phase 8.4C.2 is offline-qualified. Another
 bounded synthetic Stage-V/Stage-S live proof is technically justified, but it
 requires separate authorization. Cloudflare composite remains inactive and
 Stage 1B remains blocked until that proof passes.
+
+## Phase 8.4C.3 final live re-proof — 2026-10-23
+
+Before inference, the activation harness was extended to report safe grounding
+path counts, validation outcomes, and the final result digest on success. Local
+qualification passed with 63 focused Phase 8.4C tests and 708 full-engine tests,
+with 4 skips and 28 subtests. Hosted qualification run `39914772607` passed on
+commit `32ada018d3951427a2dc4e782bfa06f1a598292e`.
+
+No legitimate reusable Stage-V checkpoint existed. The retained earlier
+artifacts contained sanitized digests and summaries only, not an actual provider
+transcript. Activation run `39914911963` therefore made one Stage-V call to
+`@cf/google/gemma-4-26b-a4b-it`. The observer transcript passed: all required
+equation values, labels A and B, and the overlap relationship were recovered,
+the visible two-circle cardinality was accepted, and no unsupported number was
+reported. The transcript digest was
+`601e6c78ccf74ce36f50a5a031904760cbc377bd4a3c48fbe00c9cbc6b3a3e94`.
+
+The run then made its one authorized Stage-S call to
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Cloudflare rejected the request with
+HTTP 400 and provider code `8007` before a grounded wrapper was returned. No
+grounding coverage, production-schema, final ProviderResult, cache replay, or
+cached failover result therefore exists for this run. The run used exactly two
+inference calls, made no retries, recorded zero billable spend, and left all
+activation variables unset.
+
+Offline comparison isolated a JSON Mode transport-schema compatibility
+regression. The same model had returned structured JSON for the v1 wrapper, while
+the v2 provider-facing schema added `pattern` and `uniqueItems`. Those keywords
+are no longer sent to the model. Exact JSON Pointer syntax, complete leaf
+coverage, duplicate/conflict handling, quote occurrence, numeric and label
+support, relationship support, and question-to-answer protection remain fully
+enforced by the deterministic v2 validator. This changes only the schema used to
+request JSON from Cloudflare; it does not weaken the accepted grounding contract.
+
+The transport repair must be qualified offline and in the hosted test matrix.
+It is not authorization for another live inference attempt. Cloudflare composite
+remains inactive, Mistral remains excluded, and Stage 1B remains blocked pending
+a separately authorized bounded re-proof.

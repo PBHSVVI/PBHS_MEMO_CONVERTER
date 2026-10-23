@@ -243,7 +243,10 @@ def test_grounded_wrapper_schema_and_prompt_require_complete_leaf_mappings():
     assert schema["properties"]["grounding_schema_version"]["enum"] == [
         CLOUDFLARE_GROUNDING_SCHEMA_VERSION
     ]
-    assert schema["properties"]["grounding"]["uniqueItems"] is True
+    # Cloudflare JSON Mode receives a conservative transport schema. The
+    # deterministic validator owns path syntax and duplicate enforcement.
+    assert "uniqueItems" not in schema["properties"]["grounding"]
+    assert "pattern" not in schema["properties"]["grounding"]["items"]["properties"]["path"]
     prompt = cloudflare_stage_s_prompt(TRANSCRIPT)
     assert "EVERY populated CONTENT-BEARING payload leaf" in prompt
     assert "Do not use a parent/container path" in prompt

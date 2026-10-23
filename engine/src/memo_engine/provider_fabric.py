@@ -749,15 +749,14 @@ def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[s
             "grounding": {
                 "type": "array",
                 "maxItems": 240,
-                "uniqueItems": True,
                 "description": "One exact indexed JSON Pointer mapping per populated content-bearing payload leaf.",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "path": {
-                            "type": "string",
-                            "pattern": r"^/payload(?:/(?:[^~/]|~0|~1)+)+$",
-                        },
+                        # Keep the provider-facing JSON Mode schema conservative.
+                        # Exact JSON Pointer syntax, coverage, and duplicate policy
+                        # are enforced by validate_cloudflare_grounding below.
+                        "path": {"type": "string"},
                         "evidence_quote": {"type": "string", "minLength": 1},
                     },
                     "required": ["path", "evidence_quote"],
