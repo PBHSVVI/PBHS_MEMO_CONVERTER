@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -22,8 +24,10 @@ CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instru
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
-CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v4"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v5"
 CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
+CLOUDFLARE_PROVIDER_BODY_SCHEMA_VERSION = "cloudflare-grounded-provider-body-v1"
+CLOUDFLARE_ENUM_NORMALIZATION_VERSION = "cloudflare-semantic-enum-lexical-v1"
 CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
 CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
 CLOUDFLARE_APPLICATION_METADATA_FIELDS = frozenset({
@@ -741,7 +745,28 @@ def cloudflare_payload_vocabulary_prompt(payload_schema: dict[str, Any] | None =
     version_schema = properties.get("schema_version") if isinstance(properties.get("schema_version"), dict) else {}
     versions = version_schema.get("enum") if isinstance(version_schema.get("enum"), list) else []
     version_text = str(versions[0]) if versions else "the requested schema version"
-    return f"""Payload contract vocabulary:
+    return f"""EVIDENCE KIND MUST BE EXACTLY ONE OF:
+answer
+answer_working
+marking_note
+teacher_comment
+tick
+cross
+diagram_entry
+other_visible_annotation
+
+Do not return semantic synonyms such as math, mathematics, label, diagram,
+relationship, spatial_relation, working, final, solution, text, or annotation.
+Stage-V prefixes are evidence-reading aids, NOT output evidence.kind values:
+- MATH: is usually answer_working, or answer only for a clearly standalone final answer;
+- LABEL: is diagram_entry when it is part of spatial or diagram evidence;
+- RELATION: is diagram_entry when it describes a visible spatial relationship;
+- TEXT: must use the closed kind matching its visible role;
+- QUESTION: must not become answer or answer_working merely because it is present;
+- UNCERTAIN: must not become a confident invented evidence record.
+Do not create an evidence item for every transcript line.
+
+Payload contract vocabulary:
 - schema_version is exactly {version_text};
 - page is the requested integer page and visual_content_present is boolean;
 - evidence kind is one of: {kind_text};
@@ -971,6 +996,58 @@ def _canonical_json_digest(value: Any) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _lexical_enum_token(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).strip()
+    normalized = normalized.translate(str.maketrans(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+    ))
+    normalized = re.sub(r"[\s-]+", "_", normalized)
+    return re.sub(r"_+", "_", normalized)
+
+
+def normalize_cloudflare_model_semantic_enums(
+    provider_body: Any, payload_schema: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Apply lexical-only normalization to genuine model-owned enum tokens."""
+    result = copy.deepcopy(provider_body)
+    inspected: list[str] = []
+    applied: list[dict[str, str]] = []
+    if not isinstance(result, dict) or not isinstance(result.get("payload"), dict):
+        return result, {
+            "version": CLOUDFLARE_ENUM_NORMALIZATION_VERSION,
+            "inspected_paths": inspected,
+            "applied": applied,
+        }
+    payload = result["payload"]
+    properties = payload_schema.get("properties", {})
+    targets = (
+        ("evidence", "kind"),
+        ("mark_changes", "level"),
+    )
+    for collection_name, field_name in targets:
+        collection = payload.get(collection_name)
+        collection_schema = properties.get(collection_name, {})
+        item_properties = collection_schema.get("items", {}).get("properties", {})
+        allowed = item_properties.get(field_name, {}).get("enum", [])
+        if not isinstance(collection, list) or not isinstance(allowed, list):
+            continue
+        for index, item in enumerate(collection):
+            if not isinstance(item, dict) or not isinstance(item.get(field_name), str):
+                continue
+            path = f"/provider_body/payload/{collection_name}/{index}/{field_name}"
+            inspected.append(path)
+            original = item[field_name]
+            normalized = _lexical_enum_token(original)
+            if normalized in allowed and normalized != original:
+                item[field_name] = normalized
+                applied.append({"path": path, "normalized_enum": normalized})
+    return result, {
+        "version": CLOUDFLARE_ENUM_NORMALIZATION_VERSION,
+        "inspected_paths": inspected,
+        "applied": applied,
+    }
+
+
 def assemble_cloudflare_grounded_wrapper(
     provider_output: Any, payload_schema: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1002,11 +1079,30 @@ def assemble_cloudflare_grounded_wrapper(
         for key in ("payload", "grounding")
         if key in provider_output
     }
-    _validate_internal_schema(
-        provider_body,
-        cloudflare_grounded_provider_body_schema(payload_schema),
-        "/provider_body",
+    provider_body, enum_normalization = normalize_cloudflare_model_semantic_enums(
+        provider_body, payload_schema
     )
+    try:
+        _validate_internal_schema(
+            provider_body,
+            cloudflare_grounded_provider_body_schema(payload_schema),
+            "/provider_body",
+        )
+    except ProviderError as exc:
+        exc.diagnostics.update({
+            "enum_normalization_version": enum_normalization["version"],
+            "enum_normalization_attempted": bool(
+                enum_normalization["inspected_paths"]
+            ),
+            "enum_normalization_applied_count": len(
+                enum_normalization["applied"]
+            ),
+            "enum_normalization_applied_paths": [
+                item["path"] for item in enum_normalization["applied"]
+            ],
+            "enum_normalization_results": enum_normalization["applied"],
+        })
+        raise
     wrapper = {
         "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
         **provider_body,
@@ -1016,6 +1112,8 @@ def assemble_cloudflare_grounded_wrapper(
         "application_metadata_injected": ["grounding_schema_version"],
         "unexpected_application_metadata_fields": supplied_metadata,
         "assembled_wrapper_digest": _canonical_json_digest(wrapper),
+        "enum_normalization_version": enum_normalization["version"],
+        "enum_normalization_applied": enum_normalization["applied"],
     }
 
 
@@ -1709,6 +1807,8 @@ def cloudflare_composite_visual_adapter(
             "unexpected_application_metadata_fields": assembly[
                 "unexpected_application_metadata_fields"
             ],
+            "enum_normalization_version": assembly["enum_normalization_version"],
+            "enum_normalization_applied": assembly["enum_normalization_applied"],
             "usage": live_s.get("usage") or {},
             "quota": live_s.get("quota") or {},
             "latency_ms": live_s.get("latency_ms"),
@@ -1773,6 +1873,12 @@ def cloudflare_composite_visual_adapter(
             ),
             "unexpected_application_metadata_fields": stage_s.get(
                 "unexpected_application_metadata_fields", []
+            ),
+            "enum_normalization_version": stage_s.get(
+                "enum_normalization_version"
+            ),
+            "enum_normalization_applied": stage_s.get(
+                "enum_normalization_applied", []
             ),
             "stage_v_cache_hit": stage_v_cache_hit,
             "stage_s_cache_hit": stage_s_cache_hit,

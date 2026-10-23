@@ -31,6 +31,9 @@ from .provider_fabric import (
 
 REPORT_SCHEMA = "phase8.4c-cloudflare-composite-live-proof-v1"
 SYNTHETIC_STAGE_V_ARTIFACT_SCHEMA = "phase8.4c-synthetic-stage-v-v1"
+SYNTHETIC_STAGE_S_ARTIFACT_SCHEMA = (
+    "phase8.4c-synthetic-stage-s-provider-body-v1"
+)
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -172,6 +175,53 @@ def load_synthetic_stage_v_checkpoint(
     }
 
 
+def persist_synthetic_stage_s_provider_body(
+    path: Path,
+    *,
+    request: ProviderTaskRequest,
+    fixture_id: str,
+    model: str,
+    transcript_digest: str,
+    provider_body: dict[str, Any],
+    raw_result_digest: str,
+) -> dict[str, Any]:
+    if request.privacy_classification != PRIVACY_SYNTHETIC_TEST:
+        raise RuntimeError("PHASE84C_PRIVATE_STAGE_S_REQUIRES_SYNTHETIC_TEST")
+    calculated = hashlib.sha256(json.dumps(
+        provider_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+    if calculated != raw_result_digest:
+        raise RuntimeError("PHASE84C_PRIVATE_STAGE_S_DIGEST_MISMATCH")
+    serialized_body = json.dumps(provider_body, sort_keys=True)
+    if re.search(
+        r"authorization|bearer\s|api[_-]?key|account[_-]?id|sb_secret_|"
+        r"service_role|signed[_-]?url|data:image",
+        serialized_body,
+        re.I,
+    ):
+        raise RuntimeError("PHASE84C_PRIVATE_STAGE_S_SENSITIVE_CONTENT_REFUSED")
+    artifact = {
+        "artifact_schema": SYNTHETIC_STAGE_S_ARTIFACT_SCHEMA,
+        "privacy_classification": PRIVACY_SYNTHETIC_TEST,
+        "fixture_id": fixture_id,
+        "stage_v_transcript_digest": transcript_digest,
+        "structurer_model": model,
+        "structurer_prompt_version": provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+        "provider_body_schema_version": (
+            provider_fabric.CLOUDFLARE_PROVIDER_BODY_SCHEMA_VERSION
+        ),
+        "raw_provider_body": provider_body,
+        "raw_provider_body_digest": raw_result_digest,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return artifact
+
+
 def _request(fixture: dict[str, Any], checkpoint=None) -> ProviderTaskRequest:
     digest = hashlib.sha256(fixture["image"]).hexdigest()
     return ProviderTaskRequest(
@@ -274,6 +324,16 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
         key: value for key, value in (diagnostics or {}).items()
         if key.startswith("grounding_")
     } if isinstance(diagnostics, dict) else {}
+    safe_enum = {
+        key: value for key, value in (diagnostics or {}).items()
+        if key in {
+            "enum_normalization_version",
+            "enum_normalization_attempted",
+            "enum_normalization_applied_count",
+            "enum_normalization_applied_paths",
+            "enum_normalization_results",
+        }
+    } if isinstance(diagnostics, dict) else {}
     return {
         "status": "failed",
         "error_code": getattr(exc, "code", type(exc).__name__),
@@ -283,6 +343,7 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
         "provider_message": safe_message,
         "composite_stage": diagnostics.get("composite_stage") if isinstance(diagnostics, dict) else None,
         **safe_grounding,
+        **safe_enum,
     }
 
 
@@ -468,6 +529,12 @@ def run() -> dict[str, Any]:
     spec = default_provider_registry()["cloudflare"]
     calls = {"stage_v": 0, "stage_s": 0}
     captures: dict[str, Any] = {}
+    stage_s_artifact_setting = os.environ.get(
+        "PHASE84C_STAGE_S_PROVIDER_BODY_PATH", ""
+    ).strip()
+    stage_s_artifact_path = (
+        Path(stage_s_artifact_setting) if stage_s_artifact_setting else None
+    )
     if supplied_checkpoint:
         captures["stage_v_quality"] = assess_stage_v_transcript(
             supplied_checkpoint["stage_v"]["transcript"], fixture["expected_evidence"]
@@ -500,6 +567,24 @@ def run() -> dict[str, Any]:
         calls["stage_s"] += 1
         value = original_s(*args)
         provider_body = value.get("provider_body")
+        if stage_s_artifact_path is not None and isinstance(
+            provider_body, dict
+        ) and isinstance(
+            value.get("raw_result_digest"), str
+        ):
+            persist_synthetic_stage_s_provider_body(
+                stage_s_artifact_path,
+                request=request,
+                fixture_id=str(fixture["id"]),
+                model=str(structurer_model),
+                transcript_digest=str(
+                    supplied_checkpoint["stage_v"]["transcript_digest"]
+                    if supplied_checkpoint else ""
+                ),
+                provider_body=provider_body,
+                raw_result_digest=value["raw_result_digest"],
+            )
+            captures["private_stage_s_artifact_persisted"] = True
         captures["stage_s_wrapper_type"] = type(provider_body).__name__
         if isinstance(provider_body, dict) and isinstance(provider_body.get("payload"), dict):
             requirements = provider_fabric.enumerate_cloudflare_content_paths(
@@ -529,7 +614,14 @@ def run() -> dict[str, Any]:
         report["status"] = "failed"
         failure = _safe_failure(exc)
         if calls["stage_s"]:
-            report["stage_s"] = failure
+            report["stage_s"] = {
+                **failure,
+                "private_diagnostic_artifact_persisted": bool(
+                    captures.get("private_stage_s_artifact_persisted")
+                    and stage_s_artifact_path is not None
+                    and stage_s_artifact_path.exists()
+                ),
+            }
         else:
             report["stage_v"] = failure
         if captures.get("stage_v_quality"):
@@ -586,6 +678,15 @@ def run() -> dict[str, Any]:
         ),
         "unexpected_application_metadata_fields": stage_s.get(
             "unexpected_application_metadata_fields", []
+        ),
+        "enum_normalization_version": stage_s.get("enum_normalization_version"),
+        "enum_normalization_applied": stage_s.get(
+            "enum_normalization_applied", []
+        ),
+        "private_diagnostic_artifact_persisted": bool(
+            captures.get("private_stage_s_artifact_persisted")
+            and stage_s_artifact_path is not None
+            and stage_s_artifact_path.exists()
         ),
     }
     report["grounding"] = {

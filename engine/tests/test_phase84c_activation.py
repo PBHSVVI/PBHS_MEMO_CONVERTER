@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from engine.src.memo_engine import provider_fabric
 from engine.tests.test_phase84c_cloudflare_composite import (
     TRANSCRIPT,
     _configure,
+    _provider_body,
     _stage_s,
     _stage_v,
 )
@@ -226,3 +229,89 @@ def test_authorized_cached_stage_s_proof_refuses_new_stage_v_call(monkeypatch, t
     )
     with pytest.raises(RuntimeError, match="STAGE_V_DURABLE_REUSE_FAILED"):
         activation.run_stage_v()
+
+
+def test_private_stage_s_provider_body_artifact_is_synthetic_only(tmp_path):
+    fixture = activation.synthetic_composite_fixture()
+    request = activation._request(fixture)
+    body = _provider_body()
+    digest = hashlib.sha256(json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+    path = tmp_path / "private-stage-s.json"
+    artifact = activation.persist_synthetic_stage_s_provider_body(
+        path,
+        request=request,
+        fixture_id=fixture["id"],
+        model=provider_fabric.CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
+        transcript_digest="synthetic-transcript-digest",
+        provider_body=body,
+        raw_result_digest=digest,
+    )
+    assert path.exists()
+    assert subprocess.run(
+        ["git", "check-ignore", "-q", str(path)],
+        cwd=Path.cwd(), check=False,
+    ).returncode == 0
+    assert artifact["raw_provider_body_digest"] == digest
+    assert artifact["raw_provider_body"] == body
+    assert artifact["privacy_classification"] == provider_fabric.PRIVACY_SYNTHETIC_TEST
+    serialized = json.dumps(artifact).lower()
+    assert all(marker not in serialized for marker in (
+        "authorization", "api_key", "sb_secret_", "service_role", "data:image"
+    ))
+
+
+def test_private_stage_s_provider_body_refuses_school_private(tmp_path):
+    fixture = activation.synthetic_composite_fixture()
+    request = replace(
+        activation._request(fixture),
+        privacy_classification=provider_fabric.PRIVACY_SCHOOL_PRIVATE,
+    )
+    body = _provider_body()
+    digest = hashlib.sha256(json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+    with pytest.raises(RuntimeError, match="REQUIRES_SYNTHETIC_TEST"):
+        activation.persist_synthetic_stage_s_provider_body(
+            tmp_path / "must-not-exist.json",
+            request=request,
+            fixture_id=fixture["id"],
+            model=provider_fabric.CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
+            transcript_digest="synthetic-transcript-digest",
+            provider_body=body,
+            raw_result_digest=digest,
+        )
+    assert not (tmp_path / "must-not-exist.json").exists()
+
+
+def test_synthetic_internal_failure_persists_private_body_but_sanitizes_report(
+    monkeypatch, tmp_path
+):
+    _configure(monkeypatch)
+    monkeypatch.setattr(activation, "discover", _discovery)
+    monkeypatch.setattr(provider_fabric, "cloudflare_stage_v_call", _stage_v)
+    body = _provider_body()
+    rejected_value = "semantic_synonym_never_log"
+    body["payload"]["evidence"][0]["kind"] = rejected_value
+    raw_digest = hashlib.sha256(json.dumps(
+        body, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    monkeypatch.setattr(
+        provider_fabric,
+        "cloudflare_stage_s_call",
+        lambda *_args: {
+            **_stage_s(), "provider_body": body, "raw_result_digest": raw_digest,
+        },
+    )
+    artifact_path = tmp_path / "private-stage-s.json"
+    monkeypatch.setenv("PHASE84C_STAGE_S_PROVIDER_BODY_PATH", str(artifact_path))
+    report = activation.run()
+    assert report["status"] == "failed"
+    assert report["stage_s"]["private_diagnostic_artifact_persisted"] is True
+    assert report["stage_s"]["enum_normalization_attempted"] is True
+    assert report["stage_s"]["enum_normalization_applied_count"] == 0
+    assert rejected_value not in json.dumps(report)
+    private = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert private["raw_provider_body_digest"] == raw_digest
+    assert private["raw_provider_body"]["payload"]["evidence"][0]["kind"] == rejected_value

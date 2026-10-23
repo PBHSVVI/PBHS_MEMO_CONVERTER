@@ -14,6 +14,7 @@ from engine.src.memo_engine.provider_fabric import (
     CLOUDFLARE_COMPOSITE_VISION_MODEL,
     CLOUDFLARE_DEPRECATED_MODELS,
     CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+    CLOUDFLARE_ENUM_NORMALIZATION_VERSION,
     CLOUDFLARE_JSON_MODE_DOCUMENTED_MODELS,
     CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL,
     CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
@@ -27,6 +28,7 @@ from engine.src.memo_engine.provider_fabric import (
     cloudflare_grounded_provider_body_schema,
     cloudflare_model_capabilities,
     default_provider_registry,
+    normalize_cloudflare_model_semantic_enums,
     select_cloudflare_structurer_model,
     validate_cloudflare_grounding,
 )
@@ -194,6 +196,81 @@ def test_provider_body_excludes_application_owned_wrapper_metadata():
     assert set(schema["properties"]) == {"payload", "grounding"}
     assert schema["required"] == ["payload", "grounding"]
     assert "grounding_schema_version" not in schema["properties"]
+
+
+@pytest.mark.parametrize("kind", sorted(visual_evidence.EVIDENCE_KINDS))
+def test_every_closed_production_evidence_kind_passes(kind):
+    body = _provider_body()
+    body["payload"]["evidence"][0]["kind"] = kind
+    wrapper, _ = assemble_cloudflare_grounded_wrapper(
+        body, visual_evidence._vision_schema(1)
+    )
+    assert wrapper["payload"]["evidence"][0]["kind"] == kind
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Answer Working", "answer_working"),
+    ("answer-working", "answer_working"),
+    (" DIAGRAM_ENTRY ", "diagram_entry"),
+])
+def test_semantic_enum_lexical_normalization_is_bounded(raw, expected):
+    body = _provider_body()
+    body["payload"]["evidence"][0]["kind"] = raw
+    normalized, provenance = normalize_cloudflare_model_semantic_enums(
+        body, visual_evidence._vision_schema(1)
+    )
+    assert normalized["payload"]["evidence"][0]["kind"] == expected
+    assert provenance["version"] == CLOUDFLARE_ENUM_NORMALIZATION_VERSION
+    assert provenance["applied"] == [{
+        "path": "/provider_body/payload/evidence/0/kind",
+        "normalized_enum": expected,
+    }]
+
+
+@pytest.mark.parametrize("invalid", [
+    "math", "label", "relationship", "solution", "arbitrary_kind",
+])
+def test_semantic_enum_aliases_remain_invalid(invalid):
+    body = _provider_body()
+    body["payload"]["evidence"][0]["kind"] = invalid
+    with pytest.raises(ProviderError) as caught:
+        assemble_cloudflare_grounded_wrapper(
+            body, visual_evidence._vision_schema(1)
+        )
+    assert caught.value.code == "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID"
+    assert caught.value.diagnostics["grounding_failure_category"] == "internal_schema_enum"
+    assert caught.value.diagnostics["enum_normalization_applied_count"] == 0
+
+
+def test_mark_change_level_uses_same_lexical_only_normalizer():
+    body = _provider_body()
+    body["payload"]["mark_changes"] = [{
+        "question_ref": "1.2", "level": "Document-Total", "printed_value": 4,
+        "visual_value": 5, "confidence": 0.9, "requires_confirmation": True,
+        "bbox": None,
+    }]
+    normalized, provenance = normalize_cloudflare_model_semantic_enums(
+        body, visual_evidence._vision_schema(1)
+    )
+    assert normalized["payload"]["mark_changes"][0]["level"] == "document_total"
+    assert provenance["applied"][0]["path"].endswith("/level")
+
+
+def test_prompt_v5_locks_closed_kinds_and_prefix_mapping():
+    prompt = provider_fabric.cloudflare_stage_s_prompt(
+        TRANSCRIPT, visual_evidence._vision_schema(1)
+    )
+    assert provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION.endswith("-v5")
+    for kind in visual_evidence.EVIDENCE_KINDS:
+        assert kind in prompt
+    assert "Stage-V prefixes are evidence-reading aids, NOT output evidence.kind values" in prompt
+    assert "LABEL: is diagram_entry" in prompt
+    assert "RELATION: is diagram_entry" in prompt
+    assert "QUESTION: must not become answer or answer_working" in prompt
+    assert visual_evidence.EVIDENCE_KINDS == {
+        "answer", "answer_working", "marking_note", "teacher_comment",
+        "tick", "cross", "diagram_entry", "other_visible_annotation",
+    }
 
 
 def test_wrapper_assembly_injects_canonical_version_and_separate_digest():

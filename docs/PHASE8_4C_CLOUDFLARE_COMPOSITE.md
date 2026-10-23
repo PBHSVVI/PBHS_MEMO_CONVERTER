@@ -332,3 +332,31 @@ only `type`, `properties`, `required`, and `items`. The activation workflow also
 requires the existing exact Stage-V synthetic cache and accepted transcript
 digest; a cache miss fails as `STAGE_V_DURABLE_REUSE_FAILED` without authorizing
 a replacement vision inference.
+
+## Phase 8.4C.6 semantic enums and private synthetic diagnostics
+
+Stage-S semantic enums remain model-owned. `evidence[*].kind` retains the exact
+production vocabulary: `answer`, `answer_working`, `marking_note`,
+`teacher_comment`, `tick`, `cross`, `diagram_entry`, and
+`other_visible_annotation`. `mark_changes[*].level` likewise remains a closed
+model-semantic enum. Confidence, question association, and interpreted content
+also remain model-owned. Request-known constants such as payload schema/page,
+visual source, and confirmation policy were audited but left unchanged in this
+bounded increment.
+
+The v5 structurer prompt distinguishes Stage-V reading prefixes from output
+kinds and explains their bounded semantic use. A pre-validation canonicalizer
+performs only Unicode NFKC, trim, ASCII lowercase, whitespace/hyphen-to-
+underscore conversion, and repeated-underscore collapse. It accepts the result
+only when it exactly matches the existing closed enum; semantic aliases remain
+invalid. Applied normalization provenance records only the JSON Pointer and the
+safe canonical enum.
+
+Synthetic activation can now persist the parsed raw Stage-S provider body before
+internal validation. The private artifact includes fixture identity, Stage-V
+transcript digest, structurer model/prompt version, provider-body schema version,
+raw provider-body digest, and the synthetic body. Persistence refuses every
+privacy classification except `synthetic_test`, scans for credential markers,
+uses a private temporary workflow path, and retains the artifact for 14 days.
+Sanitized reports expose failure paths, categories, normalization metadata, and
+artifact presence without exposing rejected values or evidence content.

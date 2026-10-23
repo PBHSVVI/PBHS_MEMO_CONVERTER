@@ -165,10 +165,34 @@ jobs:
       - name: Run maximum one-call synthetic Stage-S composite proof
         env:
           PHASE84C_STAGE_V_CHECKPOINT_PATH: /tmp/phase84c-private/phase84c-private-synthetic-stage-v.json
+          PHASE84C_STAGE_S_PROVIDER_BODY_PATH: /tmp/phase84c-private-synthetic-stage-s-provider-body.json
           PHASE84C_REPORT_PATH: /tmp/phase84c-report.json
           PHASE84C_REQUIRE_STAGE_V_REUSE: "true"
           PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST: b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387
         run: python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
+      - name: Verify private synthetic Stage-S diagnostic artifact
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, pathlib, re
+          path = pathlib.Path('/tmp/phase84c-private-synthetic-stage-s-provider-body.json')
+          assert path.exists()
+          artifact = json.loads(path.read_text(encoding='utf-8'))
+          assert artifact['artifact_schema'] == 'phase8.4c-synthetic-stage-s-provider-body-v1'
+          assert artifact['privacy_classification'] == 'synthetic_test'
+          assert artifact['raw_provider_body_digest']
+          serialized = json.dumps(artifact, sort_keys=True)
+          assert not re.search(r'authorization|bearer\s|api[_-]?key|account[_-]?id|sb_secret_|service_role|signed[_-]?url|data:image', serialized, re.I)
+          PY
+      - name: Upload private synthetic Stage-S diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase84c-private-synthetic-stage-s-provider-body
+          path: /tmp/phase84c-private-synthetic-stage-s-provider-body.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Scan sanitized report
         if: always()
         shell: bash
