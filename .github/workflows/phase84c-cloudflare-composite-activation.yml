@@ -15,8 +15,6 @@ env:
   MEMO_VISUAL_PROVIDER_RATE_RETRIES: "0"
   MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES: "0"
   MEMO_VISION_REQUEST_TIMEOUT_SECONDS: "75"
-  PHASE84C_REQUIRE_STAGE_V_REUSE: "true"
-  PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST: b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387
 
 jobs:
   discover:
@@ -103,6 +101,8 @@ jobs:
           PHASE84C_MODE: stage_v
           PHASE84C_STAGE_V_CHECKPOINT_PATH: /tmp/phase84c-private-synthetic-stage-v.json
           PHASE84C_REPORT_PATH: /tmp/phase84c-stage-v-report.json
+          PHASE84C_REQUIRE_STAGE_V_REUSE: "true"
+          PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST: b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387
         run: python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
       - name: Verify private checkpoint identity and synthetic-only guard
         shell: bash
@@ -166,6 +166,8 @@ jobs:
         env:
           PHASE84C_STAGE_V_CHECKPOINT_PATH: /tmp/phase84c-private/phase84c-private-synthetic-stage-v.json
           PHASE84C_REPORT_PATH: /tmp/phase84c-report.json
+          PHASE84C_REQUIRE_STAGE_V_REUSE: "true"
+          PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST: b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387
         run: python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
       - name: Scan sanitized report
         if: always()
