@@ -112,6 +112,22 @@ def test_mocked_live_success_proves_both_stage_cache_and_failover(monkeypatch):
     assert report["cache_replay"]["passed"] is True
     assert report["failover"]["passed"] is True
     assert report["inference_calls"] == 2
+    assert report["grounding"] == {
+        "status": "passed",
+        "expected_content_path_count": 6,
+        "supplied_grounding_path_count": 6,
+        "valid_grounding_path_count": 6,
+        "missing_paths": [],
+        "unknown_paths": [],
+        "duplicate_paths": [],
+        "conflicting_duplicate_paths": [],
+        "quote_validation": "passed",
+        "numeric_grounding": "passed",
+        "label_grounding": "passed",
+        "relationship_grounding": "passed",
+        "question_solution_protection": "passed",
+    }
+    assert report["provider_result"]["result_digest"]
 
 
 def test_activation_source_has_no_agreement_request():
