@@ -296,7 +296,10 @@ def _schema_depth(value: Any) -> int:
 
 def _transport_schema_report(request: ProviderTaskRequest) -> dict[str, Any]:
     internal = provider_fabric.cloudflare_grounded_wrapper_schema(request.response_schema)
-    transport = provider_fabric.compile_cloudflare_transport_schema(internal)
+    provider_body = provider_fabric.cloudflare_grounded_provider_body_schema(
+        request.response_schema
+    )
+    transport = provider_fabric.compile_cloudflare_transport_schema(provider_body)
     return {
         "internal_schema_version": provider_fabric.CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
         "structurer_prompt_version": provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
@@ -331,6 +334,10 @@ def run_stage_v() -> dict[str, Any]:
     if request.privacy_classification != PRIVACY_SYNTHETIC_TEST:
         raise RuntimeError("PHASE84C_PRIVATE_CHECKPOINT_REQUIRES_SYNTHETIC_TEST")
     path = _stage_v_artifact_path()
+    require_reuse = os.environ.get("PHASE84C_REQUIRE_STAGE_V_REUSE") == "true"
+    expected_digest = os.environ.get(
+        "PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST", ""
+    ).strip()
     calls = 0
     reused = False
     if path.exists():
@@ -338,6 +345,8 @@ def run_stage_v() -> dict[str, Any]:
         stage = checkpoint["stage_v"]
         reused = True
     else:
+        if require_reuse:
+            raise RuntimeError("STAGE_V_DURABLE_REUSE_FAILED")
         calls = 1
         live = provider_fabric.cloudflare_stage_v_call(request, model, None, 1, lambda: 0)
         quality = assess_stage_v_transcript(live["transcript"], fixture["expected_evidence"])
@@ -348,6 +357,8 @@ def run_stage_v() -> dict[str, Any]:
         )
         checkpoint = load_synthetic_stage_v_checkpoint(path, fixture=fixture, model=model)
         stage = checkpoint["stage_v"]
+    if expected_digest and stage.get("transcript_digest") != expected_digest:
+        raise RuntimeError("STAGE_V_DURABLE_REUSE_FAILED")
     quality = assess_stage_v_transcript(stage["transcript"], fixture["expected_evidence"])
     return {
         **discovery,
@@ -437,6 +448,21 @@ def run() -> dict[str, Any]:
         supplied_checkpoint = load_synthetic_stage_v_checkpoint(
             checkpoint_path, fixture=fixture, model=str(vision_model)
         )
+    if (
+        os.environ.get("PHASE84C_REQUIRE_STAGE_V_REUSE") == "true"
+        and supplied_checkpoint is None
+    ):
+        raise RuntimeError("STAGE_V_DURABLE_REUSE_FAILED")
+    expected_stage_v_digest = os.environ.get(
+        "PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST", ""
+    ).strip()
+    if (
+        expected_stage_v_digest
+        and supplied_checkpoint
+        and supplied_checkpoint["stage_v"].get("transcript_digest")
+        != expected_stage_v_digest
+    ):
+        raise RuntimeError("STAGE_V_DURABLE_REUSE_FAILED")
     request = _request(fixture, supplied_checkpoint)
     report["transport_schema"] = _transport_schema_report(request)
     spec = default_provider_registry()["cloudflare"]
@@ -473,13 +499,13 @@ def run() -> dict[str, Any]:
             raise RuntimeError("PHASE84C_STAGE_S_BUDGET_EXCEEDED")
         calls["stage_s"] += 1
         value = original_s(*args)
-        wrapper = value.get("wrapper")
-        captures["stage_s_wrapper_type"] = type(wrapper).__name__
-        if isinstance(wrapper, dict) and isinstance(wrapper.get("payload"), dict):
+        provider_body = value.get("provider_body")
+        captures["stage_s_wrapper_type"] = type(provider_body).__name__
+        if isinstance(provider_body, dict) and isinstance(provider_body.get("payload"), dict):
             requirements = provider_fabric.enumerate_cloudflare_content_paths(
-                wrapper["payload"]
+                provider_body["payload"]
             )
-            entries = wrapper.get("grounding")
+            entries = provider_body.get("grounding")
             supplied_paths = [
                 entry.get("path")
                 for entry in entries
@@ -551,7 +577,16 @@ def run() -> dict[str, Any]:
         "response_path": stage_s.get("response_path"),
         "json_result": captures.get("stage_s_wrapper_type"),
         "usage": stage_s.get("usage") or {},
-        "wrapper_digest_present": bool(stage_s.get("wrapper_digest")),
+        "raw_result_digest_present": bool(stage_s.get("raw_result_digest")),
+        "assembled_wrapper_digest_present": bool(
+            stage_s.get("assembled_wrapper_digest")
+        ),
+        "application_metadata_injected": stage_s.get(
+            "application_metadata_injected", []
+        ),
+        "unexpected_application_metadata_fields": stage_s.get(
+            "unexpected_application_metadata_fields", []
+        ),
     }
     report["grounding"] = {
         "status": result.diagnostics.get("grounding_status"),
@@ -588,7 +623,14 @@ def run() -> dict[str, Any]:
         "structurer_model": result.diagnostics.get("structurer_model"),
         "both_stage_digests_present": bool(
             result.diagnostics.get("vision_transcript_digest")
-            and result.diagnostics.get("structurer_result_digest")
+            and result.diagnostics.get("structurer_raw_result_digest")
+            and result.diagnostics.get("assembled_wrapper_digest")
+        ),
+        "structurer_raw_result_digest_present": bool(
+            result.diagnostics.get("structurer_raw_result_digest")
+        ),
+        "assembled_wrapper_digest_present": bool(
+            result.diagnostics.get("assembled_wrapper_digest")
         ),
     }
     evidence_text = " ".join(
@@ -608,7 +650,12 @@ def run() -> dict[str, Any]:
     report["checkpoint"] = {
         "persisted": bool(checkpoint and checkpoint.get("final", {}).get("result_digest")),
         "vision_transcript_digest_present": bool(stage_v.get("transcript_digest")),
-        "structurer_result_digest_present": bool(stage_s.get("wrapper_digest")),
+        "structurer_raw_result_digest_present": bool(
+            stage_s.get("raw_result_digest")
+        ),
+        "assembled_wrapper_digest_present": bool(
+            stage_s.get("assembled_wrapper_digest")
+        ),
     }
 
     def prohibit_v(*_args: Any) -> Any:

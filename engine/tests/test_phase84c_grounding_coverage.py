@@ -256,10 +256,8 @@ def test_grounded_wrapper_schema_and_prompt_require_complete_leaf_mappings():
     assert "/payload/evidence/*/confidence" in prompt
     assert "answer_working" in prompt
     assert "visual_overlay" in prompt
-    assert (
-        "grounding_schema_version is exactly cloudflare-grounded-wrapper-v2"
-        in prompt
-    )
+    assert "Return ONLY the top-level fields payload and grounding" in prompt
+    assert "Do NOT return\ngrounding_schema_version" in prompt
 
 
 def test_cloudflare_transport_schema_recursively_uses_only_structural_allowlist():
@@ -344,7 +342,13 @@ def test_grounding_failure_is_content_contract_and_does_not_open_circuit(monkeyp
     incomplete = _without(_wrapper(), "/payload/evidence/1/transcription")
     monkeypatch.setattr(
         provider_fabric, "cloudflare_stage_s_call",
-        lambda *_args: {**_stage_s(), "wrapper": incomplete},
+        lambda *_args: {
+            **_stage_s(),
+            "provider_body": {
+                "payload": incomplete["payload"],
+                "grounding": incomplete["grounding"],
+            },
+        },
     )
     spec = default_provider_registry()["cloudflare"]
     fabric = provider_fabric.ProviderFabric(

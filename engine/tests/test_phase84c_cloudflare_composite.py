@@ -22,7 +22,9 @@ from engine.src.memo_engine.provider_fabric import (
     ProviderFabric,
     ProviderPoolExhausted,
     ProviderTaskRequest,
+    assemble_cloudflare_grounded_wrapper,
     cloudflare_composite_visual_adapter,
+    cloudflare_grounded_provider_body_schema,
     cloudflare_model_capabilities,
     default_provider_registry,
     select_cloudflare_structurer_model,
@@ -82,6 +84,11 @@ def _wrapper(payload: dict | None = None) -> dict:
     }
 
 
+def _provider_body(payload: dict | None = None) -> dict:
+    wrapper = _wrapper(payload)
+    return {"payload": wrapper["payload"], "grounding": wrapper["grounding"]}
+
+
 def _request(checkpoint=None) -> ProviderTaskRequest:
     crop = b"synthetic-composite-crop"
     return ProviderTaskRequest(
@@ -125,8 +132,12 @@ def _stage_v(*_args):
 
 
 def _stage_s(*_args):
+    provider_body = _provider_body()
     return {
-        "wrapper": _wrapper(),
+        "provider_body": provider_body,
+        "raw_result_digest": hashlib.sha256(json.dumps(
+            provider_body, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest(),
         "usage": {"total_tokens": 30},
         "quota": {"remaining_requests": 7},
         "latency_ms": 6,
@@ -158,7 +169,7 @@ def test_stage_v_receives_image_and_stage_s_receives_only_transcript(monkeypatch
         bodies.append(body)
         if len(bodies) == 1:
             return {"success": True, "result": {"response": TRANSCRIPT}}, 2
-        return {"success": True, "result": {"response": _wrapper()}}, 3
+        return {"success": True, "result": {"response": _provider_body()}}, 3
 
     monkeypatch.setattr(provider_fabric, "_post_json", post)
     provider_fabric.cloudflare_stage_v_call(_request(), CLOUDFLARE_COMPOSITE_VISION_MODEL, None, 1, lambda: 0)
@@ -172,6 +183,66 @@ def test_stage_v_receives_image_and_stage_s_receives_only_transcript(monkeypatch
     assert set(provider_fabric.cloudflare_schema_keyword_inventory(transport)) == set(
         provider_fabric.CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS
     )
+    assert set(transport["properties"]) == {"payload", "grounding"}
+    assert transport["required"] == ["payload", "grounding"]
+
+
+def test_provider_body_excludes_application_owned_wrapper_metadata():
+    schema = cloudflare_grounded_provider_body_schema(
+        visual_evidence._vision_schema(1)
+    )
+    assert set(schema["properties"]) == {"payload", "grounding"}
+    assert schema["required"] == ["payload", "grounding"]
+    assert "grounding_schema_version" not in schema["properties"]
+
+
+def test_wrapper_assembly_injects_canonical_version_and_separate_digest():
+    body = _provider_body()
+    raw_digest = hashlib.sha256(json.dumps(
+        body, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    wrapper, provenance = assemble_cloudflare_grounded_wrapper(
+        body, visual_evidence._vision_schema(1)
+    )
+    assert wrapper["grounding_schema_version"] == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
+    assert provenance["application_metadata_injected"] == ["grounding_schema_version"]
+    assert provenance["assembled_wrapper_digest"] != raw_digest
+    provider_fabric.validate_cloudflare_internal_wrapper(
+        wrapper, visual_evidence._vision_schema(1)
+    )
+
+
+def test_model_generated_protocol_version_cannot_override_canonical_version():
+    body = {**_provider_body(), "grounding_schema_version": "model-invented-v99"}
+    wrapper, provenance = assemble_cloudflare_grounded_wrapper(
+        body, visual_evidence._vision_schema(1)
+    )
+    assert wrapper["grounding_schema_version"] == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
+    assert provenance["unexpected_application_metadata_fields"] == [
+        "grounding_schema_version"
+    ]
+
+
+def test_unknown_model_content_field_fails_instead_of_being_discarded():
+    with pytest.raises(ProviderError) as caught:
+        assemble_cloudflare_grounded_wrapper(
+            {**_provider_body(), "invented_answer": "unsafe"},
+            visual_evidence._vision_schema(1),
+        )
+    assert caught.value.code == "AI_PROVIDER_GROUNDED_BODY_FIELD_UNSUPPORTED"
+    assert caught.value.diagnostics["unexpected_field_names"] == ["invented_answer"]
+
+
+@pytest.mark.parametrize("missing", ["payload", "grounding"])
+def test_provider_body_missing_required_field_fails(missing):
+    body = _provider_body()
+    body.pop(missing)
+    with pytest.raises(ProviderError) as caught:
+        assemble_cloudflare_grounded_wrapper(
+            body, visual_evidence._vision_schema(1)
+        )
+    assert caught.value.code == "AI_PROVIDER_GROUNDED_WRAPPER_SCHEMA_INVALID"
+    assert caught.value.diagnostics["grounding_failure_category"] == "internal_schema_required"
 
 
 def test_two_stage_success_creates_composite_provider_result(monkeypatch):
@@ -412,6 +483,15 @@ def test_composite_provenance_contains_both_models(monkeypatch):
     assert result.diagnostics["structurer_model"] == CLOUDFLARE_PREFERRED_STRUCTURER_MODEL
     assert result.diagnostics["vision_transcript_digest"]
     assert result.diagnostics["structurer_result_digest"]
+    assert result.diagnostics["structurer_raw_result_digest"]
+    assert result.diagnostics["assembled_wrapper_digest"]
+    assert (
+        result.diagnostics["structurer_raw_result_digest"]
+        != result.diagnostics["assembled_wrapper_digest"]
+    )
+    assert result.diagnostics["application_metadata_injected"] == [
+        "grounding_schema_version"
+    ]
 
 
 def test_stage_v_cache_identity_contains_required_fields(monkeypatch):
@@ -441,6 +521,9 @@ def test_stage_s_cache_identity_contains_required_fields(monkeypatch):
     assert stage["grounding_schema_version"] == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
     assert stage["prompt_version"] == CLOUDFLARE_STRUCTURER_PROMPT_VERSION
     assert stage["model"] == CLOUDFLARE_PREFERRED_STRUCTURER_MODEL
+    assert stage["raw_result_digest"]
+    assert stage["assembled_wrapper_digest"]
+    assert stage["raw_result_digest"] != stage["assembled_wrapper_digest"]
 
 
 def test_both_stage_cache_hits_make_zero_provider_calls(monkeypatch):

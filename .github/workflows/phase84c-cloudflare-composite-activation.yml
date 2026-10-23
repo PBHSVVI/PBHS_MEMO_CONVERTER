@@ -15,6 +15,8 @@ env:
   MEMO_VISUAL_PROVIDER_RATE_RETRIES: "0"
   MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES: "0"
   MEMO_VISION_REQUEST_TIMEOUT_SECONDS: "75"
+  PHASE84C_REQUIRE_STAGE_V_REUSE: "true"
+  PHASE84C_EXPECTED_STAGE_V_TRANSCRIPT_DIGEST: b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387
 
 jobs:
   discover:
@@ -95,6 +97,7 @@ jobs:
         with:
           path: /tmp/phase84c-private-synthetic-stage-v.json
           key: phase84c-stage-v-${{ steps.identity.outputs.cache_key }}
+          fail-on-cache-miss: true
       - name: Run or reuse bounded synthetic Stage-V proof
         env:
           PHASE84C_MODE: stage_v
@@ -111,6 +114,10 @@ jobs:
           assert value['artifact_schema'] == 'phase8.4c-synthetic-stage-v-v1'
           assert value['stage_v']['status'] == 'success'
           assert value['stage_v']['transcript']
+          assert value['stage_v']['transcript_digest'] == 'b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387'
+          report = json.load(open('/tmp/phase84c-stage-v-report.json', encoding='utf-8'))
+          assert report['checkpoint_reused'] is True
+          assert report['inference_calls'] == 0
           PY
       - name: Save exact synthetic Stage-V checkpoint cache
         if: steps.restore-stage-v.outputs.cache-hit != 'true'

@@ -22,10 +22,14 @@ CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instru
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
-CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v3"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v4"
 CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
 CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
 CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
+CLOUDFLARE_APPLICATION_METADATA_FIELDS = frozenset({
+    "grounding_schema_version", "schema_version", "provider", "model",
+    "provenance", "digests",
+})
 
 # This policy is authoritative for both Stage-S prompting and deterministic
 # validation. Paths not explicitly exempted are content-bearing by default.
@@ -738,7 +742,6 @@ def cloudflare_payload_vocabulary_prompt(payload_schema: dict[str, Any] | None =
     versions = version_schema.get("enum") if isinstance(version_schema.get("enum"), list) else []
     version_text = str(versions[0]) if versions else "the requested schema version"
     return f"""Payload contract vocabulary:
-- grounding_schema_version is exactly {CLOUDFLARE_GROUNDING_SCHEMA_VERSION};
 - schema_version is exactly {version_text};
 - page is the requested integer page and visual_content_present is boolean;
 - evidence kind is one of: {kind_text};
@@ -754,8 +757,11 @@ def cloudflare_stage_s_prompt(
     transcript: str, payload_schema: dict[str, Any] | None = None
 ) -> str:
     return """YOU ARE A STRUCTURER, NOT A SOLVER.
-Convert only the supplied Stage-V evidence transcript into the requested grounded
-wrapper. Do not calculate, repair arithmetic, infer missing answers, reinterpret the
+Convert only the supplied Stage-V evidence transcript into the requested provider
+body. Return ONLY the top-level fields payload and grounding. Do NOT return
+grounding_schema_version, schema_version, provider, model, provenance, digests, or
+other runtime metadata. The application supplies protocol metadata deterministically.
+Do not calculate, repair arithmetic, infer missing answers, reinterpret the
 question, or introduce values, labels, or spatial relationships absent from the
 transcript. Question-only text must never become answer or solution evidence.
 
@@ -765,14 +771,13 @@ STAGE-V TRANSCRIPT:
 """ + transcript
 
 
-def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[str, Any]:
+def cloudflare_grounded_provider_body_schema(
+    payload_schema: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "type": "object",
-        "description": "Grounded visual evidence wrapper; every content leaf requires an explicit mapping.",
+        "description": "Model-owned grounded provider body.",
         "properties": {
-            "grounding_schema_version": {
-                "type": "string", "enum": [CLOUDFLARE_GROUNDING_SCHEMA_VERSION]
-            },
             "payload": payload_schema,
             "grounding": {
                 "type": "array",
@@ -792,7 +797,23 @@ def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[s
                 },
             },
         },
-        "required": ["grounding_schema_version", "payload", "grounding"],
+        "required": ["payload", "grounding"],
+        "additionalProperties": False,
+    }
+
+
+def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[str, Any]:
+    provider_body = cloudflare_grounded_provider_body_schema(payload_schema)
+    return {
+        "type": "object",
+        "description": "Authoritative grounded wrapper assembled by the application.",
+        "properties": {
+            "grounding_schema_version": {
+                "type": "string", "enum": [CLOUDFLARE_GROUNDING_SCHEMA_VERSION]
+            },
+            **provider_body["properties"],
+        },
+        "required": ["grounding_schema_version", *provider_body["required"]],
         "additionalProperties": False,
     }
 
@@ -944,6 +965,60 @@ def validate_cloudflare_internal_wrapper(
     return wrapper
 
 
+def _canonical_json_digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+
+
+def assemble_cloudflare_grounded_wrapper(
+    provider_output: Any, payload_schema: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Add application-owned protocol metadata to a model-owned provider body."""
+    if not isinstance(provider_output, dict):
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare structurer response was not an object.",
+            category="permanent_schema",
+        )
+    supplied_metadata = sorted(
+        set(provider_output) & CLOUDFLARE_APPLICATION_METADATA_FIELDS
+    )
+    unknown = sorted(
+        set(provider_output)
+        - {"payload", "grounding"}
+        - CLOUDFLARE_APPLICATION_METADATA_FIELDS
+    )
+    if unknown:
+        raise ProviderError(
+            "AI_PROVIDER_GROUNDED_BODY_FIELD_UNSUPPORTED",
+            "The provider body contained unsupported content fields.",
+            retryable=False,
+            category="content_request",
+            diagnostics={"unexpected_field_names": unknown},
+        )
+    provider_body = {
+        key: provider_output[key]
+        for key in ("payload", "grounding")
+        if key in provider_output
+    }
+    _validate_internal_schema(
+        provider_body,
+        cloudflare_grounded_provider_body_schema(payload_schema),
+        "/provider_body",
+    )
+    wrapper = {
+        "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+        **provider_body,
+    }
+    validate_cloudflare_internal_wrapper(wrapper, payload_schema)
+    return wrapper, {
+        "application_metadata_injected": ["grounding_schema_version"],
+        "unexpected_application_metadata_fields": supplied_metadata,
+        "assembled_wrapper_digest": _canonical_json_digest(wrapper),
+    }
+
+
 def _cloudflare_response(payload: dict[str, Any]) -> tuple[Any, dict[str, Any], dict[str, Any]]:
     result = payload.get("result")
     if payload.get("success") is False:
@@ -1081,7 +1156,7 @@ def cloudflare_stage_s_call(
             "response_format": {
                 "type": "json_schema",
                 "json_schema": compile_cloudflare_transport_schema(
-                    cloudflare_grounded_wrapper_schema(request.response_schema)
+                    cloudflare_grounded_provider_body_schema(request.response_schema)
                 ),
             },
         },
@@ -1091,7 +1166,7 @@ def cloudflare_stage_s_call(
     )
     response, usage, diagnostics = _cloudflare_response(payload)
     try:
-        wrapper = json.loads(response) if isinstance(response, str) else response
+        provider_body = json.loads(response) if isinstance(response, str) else response
     except (TypeError, ValueError) as exc:
         raise ProviderError(
             "AI_PROVIDER_INVALID_RESPONSE",
@@ -1099,7 +1174,7 @@ def cloudflare_stage_s_call(
             category="permanent_schema",
             diagnostics={"composite_stage": "json_structurer", **diagnostics},
         ) from exc
-    if not isinstance(wrapper, dict):
+    if not isinstance(provider_body, dict):
         raise ProviderError(
             "AI_PROVIDER_INVALID_RESPONSE",
             "Cloudflare structurer response was not an object.",
@@ -1107,7 +1182,8 @@ def cloudflare_stage_s_call(
             diagnostics={"composite_stage": "json_structurer", **diagnostics},
         )
     return {
-        "wrapper": wrapper,
+        "provider_body": provider_body,
+        "raw_result_digest": _canonical_json_digest(provider_body),
         "usage": usage if isinstance(usage, dict) else {},
         "quota": payload.get("_provider_rate_limits") or {},
         "latency_ms": elapsed_ms,
@@ -1483,6 +1559,8 @@ def _valid_stage_s_checkpoint(
         isinstance(stage, dict)
         and stage.get("status") == "success"
         and isinstance(stage.get("wrapper"), dict)
+        and isinstance(stage.get("raw_result_digest"), str)
+        and isinstance(stage.get("assembled_wrapper_digest"), str)
         and stage.get("transcript_digest") == transcript_digest
         and stage.get("schema_version") == schema_version
         and stage.get("grounding_schema_version") == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
@@ -1583,10 +1661,14 @@ def cloudflare_composite_visual_adapter(
     if stage_s_cache_hit:
         stage_s = dict(checkpoint["stage_s"])
     else:
+        live_s: dict[str, Any] = {}
         try:
             live_s = cloudflare_stage_s_call(
                 request, structurer_model, transcript,
                 deadline_monotonic, remaining_requests, clock,
+            )
+            wrapper, assembly = assemble_cloudflare_grounded_wrapper(
+                live_s["provider_body"], request.response_schema
             )
         except ProviderError as exc:
             checkpoint["stage_s"] = {
@@ -1600,6 +1682,10 @@ def cloudflare_composite_visual_adapter(
                 "error_code": exc.code,
                 "category": exc.category,
             }
+            if isinstance(live_s.get("raw_result_digest"), str):
+                checkpoint["stage_s"]["raw_result_digest"] = live_s[
+                    "raw_result_digest"
+                ]
             exc.diagnostics.update({
                 "composite_stage": "json_structurer",
                 "circuit_provider": "cloudflare:json_structurer",
@@ -1615,10 +1701,14 @@ def cloudflare_composite_visual_adapter(
             "schema_version": request.interpretation_schema_version,
             "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
             "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
-            "wrapper": live_s["wrapper"],
-            "wrapper_digest": hashlib.sha256(json.dumps(
-                live_s["wrapper"], sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")).hexdigest(),
+            "wrapper": wrapper,
+            "raw_result_digest": live_s["raw_result_digest"],
+            "assembled_wrapper_digest": assembly["assembled_wrapper_digest"],
+            "wrapper_digest": assembly["assembled_wrapper_digest"],
+            "application_metadata_injected": assembly["application_metadata_injected"],
+            "unexpected_application_metadata_fields": assembly[
+                "unexpected_application_metadata_fields"
+            ],
             "usage": live_s.get("usage") or {},
             "quota": live_s.get("quota") or {},
             "latency_ms": live_s.get("latency_ms"),
@@ -1675,7 +1765,15 @@ def cloudflare_composite_visual_adapter(
             "vision_transcript_digest": transcript_digest,
             "structurer_provider": "cloudflare",
             "structurer_model": structurer_model,
-            "structurer_result_digest": stage_s.get("wrapper_digest"),
+            "structurer_raw_result_digest": stage_s.get("raw_result_digest"),
+            "assembled_wrapper_digest": stage_s.get("assembled_wrapper_digest"),
+            "structurer_result_digest": stage_s.get("assembled_wrapper_digest"),
+            "application_metadata_injected": stage_s.get(
+                "application_metadata_injected", []
+            ),
+            "unexpected_application_metadata_fields": stage_s.get(
+                "unexpected_application_metadata_fields", []
+            ),
             "stage_v_cache_hit": stage_v_cache_hit,
             "stage_s_cache_hit": stage_s_cache_hit,
             "grounding_status": "passed",

@@ -306,3 +306,29 @@ still required.
 Hosted qualification run `39917945366` passed on repair commit
 `24860d72cde0b20e0bad602bdd23fd08bf4a7f3a`. The qualification used no provider
 inference and does not authorize another live activation attempt.
+
+## Phase 8.4C.5 protocol-metadata ownership
+
+The Stage-S contract now separates model-owned content from application-owned
+protocol metadata. The model owns only the `payload` and `grounding` body:
+extracted text and mathematics, labels, relationships, source-role
+interpretation, confidence claims, evidence quotations, and JSON Pointer
+mappings remain provider claims. The application owns the wrapper protocol
+version plus provider/model identity, prompt and checkpoint versions, request
+digests, result digests, usage, and provenance that are independently known at
+runtime.
+
+`grounding_schema_version` is no longer requested from the model. The adapter
+assembles it deterministically as the exact
+`cloudflare-grounded-wrapper-v2` constant, records separate raw provider-body
+and assembled-wrapper digests, and then applies the unchanged full internal-v2
+validation and grounding gates. Known application metadata unexpectedly emitted
+at the provider-body top level is discarded by field name and recorded without
+its value; any unknown content-bearing field fails closed.
+
+The Stage-S prompt and cache identity are now
+`cloudflare-grounded-structurer-v4`. The Cloudflare transport schema still uses
+only `type`, `properties`, `required`, and `items`. The activation workflow also
+requires the existing exact Stage-V synthetic cache and accepted transcript
+digest; a cache miss fails as `STAGE_V_DURABLE_REUSE_FAILED` without authorizing
+a replacement vision inference.

@@ -210,3 +210,19 @@ def test_stage_v_checkpoint_requires_all_identity_fields(monkeypatch, tmp_path):
             fixture=activation.synthetic_composite_fixture(),
             model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
         )
+
+
+def test_authorized_cached_stage_s_proof_refuses_new_stage_v_call(monkeypatch, tmp_path):
+    _configure(monkeypatch)
+    monkeypatch.setattr(activation, "discover", _discovery)
+    monkeypatch.setenv(
+        "PHASE84C_STAGE_V_CHECKPOINT_PATH", str(tmp_path / "missing.json")
+    )
+    monkeypatch.setenv("PHASE84C_REQUIRE_STAGE_V_REUSE", "true")
+    monkeypatch.setattr(
+        provider_fabric,
+        "cloudflare_stage_v_call",
+        lambda *_args: pytest.fail("Stage V inference is not authorized"),
+    )
+    with pytest.raises(RuntimeError, match="STAGE_V_DURABLE_REUSE_FAILED"):
+        activation.run_stage_v()
