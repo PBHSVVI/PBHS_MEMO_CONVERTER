@@ -189,8 +189,8 @@ Groq, or Mistral inference was called, and all activation variables remained
 unset. Hosted qualification is required before another bounded live proof can
 be recommended.
 
-Hosted Phase 8 quality qualification run `39913251755` passed on repair commit
-`fbc89e6ad2b199a280c9a7bb29e6d253fa6987bd`. Phase 8.4C.2 is therefore
-offline-qualified. Another bounded synthetic Stage-V/Stage-S live proof is
-technically justified, but it requires separate authorization. Cloudflare
-composite remains inactive and Stage 1B remains blocked until that proof passes.
+Hosted Phase 8 quality qualification run `39913251755` passed the existing
+qualification matrix on repair commit
+`fbc89e6ad2b199a280c9a7bb29e6d253fa6987bd`. The workflow was then updated to
+include the new grounding-coverage suite explicitly; the final hosted result is
+recorded below.
