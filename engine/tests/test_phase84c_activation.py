@@ -38,6 +38,13 @@ def test_stage_v_fixture_quality_requires_equation_labels_and_relation():
     assert partial["status"] == "partial"
 
 
+def test_stage_v_fixture_quality_allows_visible_two_circle_cardinality():
+    transcript = TRANSCRIPT + "\nRELATION: 2 circles overlap."
+    result = activation.assess_stage_v_transcript(transcript)
+    assert result["status"] == "pass"
+    assert result["unexpected_numbers"] == []
+
+
 def test_discovery_intersects_visibility_and_current_production_allowlists(monkeypatch):
     _configure(monkeypatch)
     monkeypatch.setattr(activation, "list_account_models", lambda _account: ([

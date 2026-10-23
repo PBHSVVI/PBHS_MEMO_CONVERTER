@@ -120,7 +120,10 @@ def assess_stage_v_transcript(transcript: str) -> dict[str, Any]:
         "label_B": re.search(r"\bB\b", compact) is not None,
         "overlap_relation": re.search(r"\b(overlap|intersection|intersect|shared)\b", compact, re.I) is not None,
     }
-    allowed = {"10", "250", "1", "25", "0.04", "4", "1.2", "3"}
+    # The deterministic fixture contains two overlapping circles.  A vision
+    # transcript may state that visible cardinality as "2" even though the
+    # numeral is not printed inside the crop.
+    allowed = {"10", "250", "1", "25", "0.04", "4", "1.2", "2", "3"}
     unexpected = sorted(_numbers(compact) - allowed)
     return {
         "status": "pass" if all(recovered.values()) and not unexpected else (

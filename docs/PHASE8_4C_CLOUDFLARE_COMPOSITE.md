@@ -1,6 +1,6 @@
 # Phase 8.4C Cloudflare composite structured vision
 
-Status: **implemented; live qualification pending**
+Status: **implemented; live qualification incomplete**
 
 ## Decision
 
@@ -65,3 +65,28 @@ schema validation, content-quality checks, full cache replay, cached failover,
 privacy gates, and zero-cost gates to pass. Repository variables are not set
 until that complete proof succeeds. Stage 1B remains blocked until the live
 qualification result is recorded here.
+
+## Hosted qualification record — 2026-10-23
+
+Hosted Phase 8 quality qualification passed on run `39905804990` at commit
+`c3e0baf86ecffd5ce24628c8f29919656775e67c`.
+
+The bounded activation run `39905909163` discovered 73 account-visible models.
+It selected `@cf/google/gemma-4-26b-a4b-it` for Stage V and
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast` for Stage S. Both were visible, and
+the structurer passed the active, production-documented, free-only selection
+gate. No agreement request was made.
+
+Stage V made one live synthetic inference call. It recovered every required
+equation value (`10`, `250`, `1/25`, `0.04`, and `4%`), labels A and B, and the
+overlap relation. The activation harness nevertheless classified the result as
+partial because its expected-number set omitted `2`, although the fixture
+visibly contains two circles. Stage S was therefore correctly not called. The
+run used one total inference call, incurred no billable spend, and did not set
+activation variables.
+
+The synthetic gate now recognizes the visible two-circle cardinality, with an
+offline regression. The live success gate remains unmet because the one-call
+budget for that activation run was not retried and Stage S, grounding,
+production-schema, cache, and failover live proofs did not execute. A separately
+authorized bounded activation run is required before Stage 1B.
