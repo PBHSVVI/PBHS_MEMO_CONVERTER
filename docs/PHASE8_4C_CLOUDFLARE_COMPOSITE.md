@@ -93,3 +93,33 @@ fixture that does not. The live success gate remains unmet because the one-call
 budget for that activation run was not retried and Stage S, grounding,
 production-schema, cache, and failover live proofs did not execute. A separately
 authorized bounded activation run is required before Stage 1B.
+
+## Phase 8.4C.1 completion attempt — 2026-10-23
+
+The fixture-aware gate repair was committed as
+`2e790208ddc14242b773200a3ae33a1c21ed3374`. Local qualification passed with 41
+focused Phase 8.4C tests and 686 full-engine tests, with 4 skips and 28
+subtests. Hosted Phase 8 qualification run `39907253411` passed on the same
+commit.
+
+The previous Stage-V transcript was not reusable: the earlier workflow retained
+only a sanitized digest and quality summary, not the actual provider transcript
+in a legitimate private checkpoint. Activation run `39907373744` therefore made
+one newly authorized Stage-V call. Gemma returned a PASS transcript containing
+all required equation values, labels A and B, and the overlap relationship, with
+no unsupported numeric values. Its transcript digest was
+`550000f41816f728c8d45d76147f4de961f228206176b1efaa0e79dddc03a4f4`.
+
+The run then made its one authorized Stage-S call to
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`. The provider returned structured JSON,
+but deterministic validation rejected it with `AI_PROVIDER_GROUNDING_MISSING`.
+The sanitized report intentionally does not contain the private wrapper, so the
+missing grounding path cannot be identified without a separately designed,
+privacy-safe diagnostic change. Production-schema validation, final
+`ProviderResult`, cache replay, and cached failover did not run.
+
+The attempt used exactly one Stage-V and one Stage-S inference call, made no
+retries or agreement requests, and recorded zero billable spend under the
+free-only gate. Activation variables remain unset. Cloudflare composite remains
+inactive, and Stage 1B remains blocked pending an offline grounding diagnostic
+and a separately authorized live qualification.
