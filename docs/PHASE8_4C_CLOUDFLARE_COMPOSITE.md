@@ -236,7 +236,10 @@ support, relationship support, and question-to-answer protection remain fully
 enforced by the deterministic v2 validator. This changes only the schema used to
 request JSON from Cloudflare; it does not weaken the accepted grounding contract.
 
-The transport repair must be qualified offline and in the hosted test matrix.
-It is not authorization for another live inference attempt. Cloudflare composite
+The transport repair passed 63 focused Phase 8.4C tests and the complete engine
+suite with 708 tests, 4 skips, and 28 subtests. Hosted qualification run
+`39915321445` then passed on repair commit
+`ee4f61b0007c84a222da397d27e4096320249375`. This qualification made no provider
+inference and is not authorization for another live attempt. Cloudflare composite
 remains inactive, Mistral remains excluded, and Stage 1B remains blocked pending
 a separately authorized bounded re-proof.
