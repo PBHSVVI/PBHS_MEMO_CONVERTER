@@ -66,4 +66,4 @@ jobs:
         run: python -m pytest -q engine/tests/test_phase84b4_cloudflare_llama_contract.py
 
       - name: Qualify Phase 8.4C Cloudflare composite contract
-        run: python -m pytest -q engine/tests/test_phase84c_grounding_coverage.py engine/tests/test_phase84c_cloudflare_composite.py engine/tests/test_phase84c_activation.py
+        run: python -m pytest -q engine/tests/test_phase84c_grounding_coverage.py engine/tests/test_phase84c_cloudflare_composite.py engine/tests/test_phase84c_activation.py engine/tests/test_phase84c7_claim_boundary.py
