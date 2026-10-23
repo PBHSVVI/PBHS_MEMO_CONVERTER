@@ -280,4 +280,3 @@ def test_offline_replay_makes_no_provider_call(monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("Stage S network call forbidden"),
     )
     assert _replay().status == "success"
-
