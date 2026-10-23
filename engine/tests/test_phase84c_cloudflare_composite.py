@@ -13,6 +13,7 @@ from engine.src.memo_engine.provider_fabric import (
     CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
     CLOUDFLARE_COMPOSITE_VISION_MODEL,
     CLOUDFLARE_DEPRECATED_MODELS,
+    CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
     CLOUDFLARE_JSON_MODE_DOCUMENTED_MODELS,
     CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL,
     CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
@@ -68,6 +69,7 @@ def _payload() -> dict:
 
 def _wrapper(payload: dict | None = None) -> dict:
     return {
+        "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
         "payload": payload or _payload(),
         "grounding": [
             {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
@@ -75,6 +77,7 @@ def _wrapper(payload: dict | None = None) -> dict:
             {"path": "/payload/evidence/0/normalized_math", "evidence_quote": "MATH: 10/250 = 1/25 = 0.04 = 4%"},
             {"path": "/payload/evidence/1/question_ref", "evidence_quote": "LABEL: Question 1.2"},
             {"path": "/payload/evidence/1/transcription", "evidence_quote": "RELATION: A overlaps B; overlap contains 3."},
+            {"path": "/payload/visual_content_present", "evidence_quote": "ROLE: visible solution evidence"},
         ],
     }
 
@@ -323,10 +326,12 @@ def test_corrected_arithmetic_not_in_transcript_fails_grounding():
         "transcription": "2 + 2 = 5",
         "normalized_math": "2 + 2 = 4",
     }]
-    wrapper = {"payload": payload, "grounding": [
+    wrapper = {"grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+               "payload": payload, "grounding": [
         {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
         {"path": "/payload/evidence/0/transcription", "evidence_quote": "MATH: 2 + 2 = 5"},
         {"path": "/payload/evidence/0/normalized_math", "evidence_quote": "MATH: 2 + 2 = 5"},
+        {"path": "/payload/visual_content_present", "evidence_quote": "MATH: 2 + 2 = 5"},
     ]}
     with pytest.raises(ProviderError) as caught:
         validate_cloudflare_grounding(wrapper, transcript)
@@ -368,9 +373,11 @@ def test_question_only_transcript_cannot_become_answer():
         "transcription": "Calculate 2 + 2",
         "normalized_math": None,
     }]
-    wrapper = {"payload": payload, "grounding": [
+    wrapper = {"grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+               "payload": payload, "grounding": [
         {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
         {"path": "/payload/evidence/0/transcription", "evidence_quote": "QUESTION: Calculate 2 + 2"},
+        {"path": "/payload/visual_content_present", "evidence_quote": "QUESTION: Calculate 2 + 2"},
     ]}
     with pytest.raises(ProviderError) as caught:
         validate_cloudflare_grounding(wrapper, transcript)
@@ -427,6 +434,7 @@ def test_stage_s_cache_identity_contains_required_fields(monkeypatch):
     stage = result.diagnostics["_private_composite_checkpoint"]["stage_s"]
     assert stage["transcript_digest"]
     assert stage["schema_version"] == "1.0"
+    assert stage["grounding_schema_version"] == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
     assert stage["prompt_version"] == CLOUDFLARE_STRUCTURER_PROMPT_VERSION
     assert stage["model"] == CLOUDFLARE_PREFERRED_STRUCTURER_MODEL
 

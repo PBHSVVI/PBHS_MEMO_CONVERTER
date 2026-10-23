@@ -22,8 +22,34 @@ CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instru
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
-CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v1"
-CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v1"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v2"
+CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
+CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
+
+# This policy is authoritative for both Stage-S prompting and deterministic
+# validation. Paths not explicitly exempted are content-bearing by default.
+# Array indexes are normalized to ``*`` for policy matching only; diagnostics
+# always retain their exact indexed JSON Pointer paths.
+CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS = frozenset({
+    "/payload/schema_version",
+    "/payload/page",
+    "/payload/evidence/*/kind",
+    "/payload/evidence/*/confidence",
+    "/payload/evidence/*/source",
+    "/payload/mark_changes/*/level",
+    "/payload/mark_changes/*/confidence",
+    "/payload/mark_changes/*/requires_confirmation",
+})
+CLOUDFLARE_GROUNDING_VALIDATION_MODES = {
+    "/payload/visual_content_present": "presence",
+    "/payload/evidence/*/question_ref": "exact",
+    "/payload/evidence/*/transcription": "exact",
+    "/payload/evidence/*/normalized_math": "math",
+    "/payload/mark_changes/*/question_ref": "exact",
+    "/payload/mark_changes/*/printed_value": "tokens",
+    "/payload/mark_changes/*/visual_value": "tokens",
+    "/payload/warnings/*": "exact",
+}
 CLOUDFLARE_TRANSCRIPT_VISION_PRIORITY = (
     CLOUDFLARE_COMPOSITE_VISION_MODEL,
     CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL,
@@ -682,15 +708,30 @@ LABEL:, RELATION:, ROLE:, and UNCERTAIN:, but exact formatting is not mandatory.
 Known question anchor: {anchor}"""
 
 
+def cloudflare_grounding_policy_prompt() -> str:
+    exempt = "\n".join(
+        f"- {path}" for path in sorted(CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS)
+    )
+    return f"""EVERY populated CONTENT-BEARING payload leaf MUST have exactly one
+grounding entry using that leaf's exact indexed JSON Pointer path. Before returning
+JSON: inspect every populated payload leaf; add its path and an exact supporting
+Stage-V quotation; omit unsupported optional content; never invent a quotation.
+Do not use a parent/container path to cover children. Do not include grounding rows
+for these deterministic or independently validated metadata paths:
+{exempt}
+All other populated payload leaves are content-bearing, including visual-presence
+claims, text, mathematics, numeric values, warnings, labels, relationships, and
+non-null bounding-box coordinates."""
+
+
 def cloudflare_stage_s_prompt(transcript: str) -> str:
     return """YOU ARE A STRUCTURER, NOT A SOLVER.
 Convert only the supplied Stage-V evidence transcript into the requested grounded
 wrapper. Do not calculate, repair arithmetic, infer missing answers, reinterpret the
 question, or introduce values, labels, or spatial relationships absent from the
-transcript. Every content-bearing payload field must have a grounding entry whose
-evidence_quote is an exact quotation from the transcript. Use JSON Pointer paths such
-as /payload/evidence/0/transcription. Question-only text must never become answer or
-solution evidence.
+transcript. Question-only text must never become answer or solution evidence.
+
+""" + cloudflare_grounding_policy_prompt() + """
 
 STAGE-V TRANSCRIPT:
 """ + transcript
@@ -699,15 +740,24 @@ STAGE-V TRANSCRIPT:
 def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "object",
+        "description": "Grounded visual evidence wrapper; every content leaf requires an explicit mapping.",
         "properties": {
+            "grounding_schema_version": {
+                "type": "string", "enum": [CLOUDFLARE_GROUNDING_SCHEMA_VERSION]
+            },
             "payload": payload_schema,
             "grounding": {
                 "type": "array",
                 "maxItems": 240,
+                "uniqueItems": True,
+                "description": "One exact indexed JSON Pointer mapping per populated content-bearing payload leaf.",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
+                        "path": {
+                            "type": "string",
+                            "pattern": r"^/payload(?:/(?:[^~/]|~0|~1)+)+$",
+                        },
                         "evidence_quote": {"type": "string", "minLength": 1},
                     },
                     "required": ["path", "evidence_quote"],
@@ -715,7 +765,7 @@ def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[s
                 },
             },
         },
-        "required": ["payload", "grounding"],
+        "required": ["grounding_schema_version", "payload", "grounding"],
         "additionalProperties": False,
     }
 
@@ -891,27 +941,129 @@ def _grounding_normalize(value: str) -> str:
     return " ".join(str(value).split())
 
 
-def _content_grounding_requirements(payload: dict[str, Any]) -> list[tuple[str, Any, str]]:
-    requirements: list[tuple[str, Any, str]] = []
-    for index, item in enumerate(payload.get("evidence") or []):
-        if not isinstance(item, dict):
-            continue
-        prefix = f"/payload/evidence/{index}"
-        if item.get("question_ref") is not None:
-            requirements.append((prefix + "/question_ref", item["question_ref"], "exact"))
-        requirements.append((prefix + "/transcription", item.get("transcription"), "exact"))
-        if item.get("normalized_math"):
-            requirements.append((prefix + "/normalized_math", item["normalized_math"], "math"))
-    for index, item in enumerate(payload.get("mark_changes") or []):
-        if not isinstance(item, dict):
-            continue
-        prefix = f"/payload/mark_changes/{index}"
-        for key in ("question_ref", "printed_value", "visual_value"):
-            if item.get(key) is not None:
-                requirements.append((prefix + f"/{key}", item[key], "tokens"))
-    for index, warning in enumerate(payload.get("warnings") or []):
-        requirements.append((f"/payload/warnings/{index}", warning, "exact"))
+def _json_pointer_escape(value: Any) -> str:
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
+def _populated_json_pointer_leaves(
+    value: Any, prefix: str = "/payload"
+) -> dict[str, Any]:
+    leaves: dict[str, Any] = {}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            leaves.update(_populated_json_pointer_leaves(
+                child, f"{prefix}/{_json_pointer_escape(key)}"
+            ))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            leaves.update(_populated_json_pointer_leaves(child, f"{prefix}/{index}"))
+    elif value is not None and value != "":
+        leaves[prefix] = value
+    return leaves
+
+
+def _json_pointer_container_paths(
+    value: Any, prefix: str = "/payload"
+) -> set[str]:
+    paths: set[str] = set()
+    if isinstance(value, dict):
+        paths.add(prefix)
+        for key, child in value.items():
+            paths.update(_json_pointer_container_paths(
+                child, f"{prefix}/{_json_pointer_escape(key)}"
+            ))
+    elif isinstance(value, list):
+        paths.add(prefix)
+        for index, child in enumerate(value):
+            paths.update(_json_pointer_container_paths(child, f"{prefix}/{index}"))
+    return paths
+
+
+def _grounding_policy_pattern(path: str) -> str:
+    return re.sub(r"/\d+(?=/|$)", "/*", path)
+
+
+def cloudflare_grounding_path_policy(path: str) -> tuple[str, str]:
+    pattern = _grounding_policy_pattern(path)
+    if pattern in CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS:
+        return "grounding_exempt_metadata", "none"
+    if "/bbox/" in pattern:
+        return "content_bearing", "tokens"
+    return "content_bearing", CLOUDFLARE_GROUNDING_VALIDATION_MODES.get(
+        pattern, "exact"
+    )
+
+
+def enumerate_cloudflare_content_paths(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    requirements: dict[str, dict[str, Any]] = {}
+    for path, value in _populated_json_pointer_leaves(payload).items():
+        classification, mode = cloudflare_grounding_path_policy(path)
+        if classification == "content_bearing":
+            requirements[path] = {
+                "classification": classification,
+                "validation_mode": mode,
+                "value": value,
+            }
     return requirements
+
+
+def enumerate_cloudflare_exempt_paths(payload: dict[str, Any]) -> set[str]:
+    return {
+        path for path in _populated_json_pointer_leaves(payload)
+        if cloudflare_grounding_path_policy(path)[0] == "grounding_exempt_metadata"
+    }
+
+
+def _grounding_diagnostics(
+    *,
+    failure_category: str,
+    path: str | None = None,
+    missing_paths: list[str] | None = None,
+    unknown_paths: list[str] | None = None,
+    exempt_paths: list[str] | None = None,
+    container_paths: list[str] | None = None,
+    duplicate_paths: list[str] | None = None,
+    conflicting_duplicate_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    missing = sorted(set(missing_paths or []))
+    unknown = sorted(set(unknown_paths or []))
+    exempt = sorted(set(exempt_paths or []))
+    containers = sorted(set(container_paths or []))
+    duplicates = sorted(set(duplicate_paths or []))
+    conflicts = sorted(set(conflicting_duplicate_paths or []))
+    result: dict[str, Any] = {
+        "grounding_failure_category": failure_category,
+        "grounding_missing_paths": missing,
+        "grounding_missing_count": len(missing),
+        "grounding_unknown_paths": unknown,
+        "grounding_unknown_count": len(unknown),
+        "grounding_exempt_paths": exempt,
+        "grounding_exempt_count": len(exempt),
+        "grounding_container_paths": containers,
+        "grounding_container_count": len(containers),
+        "grounding_duplicate_paths": duplicates,
+        "grounding_duplicate_path_count": len(duplicates),
+        "grounding_conflicting_duplicate_paths": conflicts,
+        "grounding_conflicting_duplicate_count": len(conflicts),
+    }
+    if path is not None:
+        result["grounding_path"] = path
+        result["grounding_path_classification"] = cloudflare_grounding_path_policy(path)[0]
+    return result
+
+
+def _raise_grounding_error(
+    code: str, message: str, *, failure_category: str, **diagnostic_values: Any
+) -> None:
+    raise ProviderError(
+        code,
+        message,
+        retryable=False,
+        category="content_request",
+        diagnostics=_grounding_diagnostics(
+            failure_category=failure_category, **diagnostic_values
+        ),
+    )
 
 
 def _numeric_tokens(value: Any) -> set[str]:
@@ -927,70 +1079,152 @@ def _math_label_tokens(value: Any) -> set[str]:
 
 def validate_cloudflare_grounding(wrapper: Any, transcript: str) -> dict[str, Any]:
     if not isinstance(wrapper, dict) or not isinstance(wrapper.get("payload"), dict):
-        raise ProviderError(
+        _raise_grounding_error(
             "AI_PROVIDER_GROUNDING_INVALID",
             "The composite response did not contain a payload object.",
-            retryable=False,
-            category="permanent_schema",
+            failure_category="wrapper_invalid",
+        )
+    if wrapper.get("grounding_schema_version") != CLOUDFLARE_GROUNDING_SCHEMA_VERSION:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_CONTRACT_VERSION_INVALID",
+            "The composite response used an unsupported grounding contract version.",
+            failure_category="contract_version",
         )
     entries = wrapper.get("grounding")
     if not isinstance(entries, list):
-        raise ProviderError(
+        _raise_grounding_error(
             "AI_PROVIDER_GROUNDING_INVALID",
             "The composite response did not contain grounding entries.",
-            retryable=False,
-            category="permanent_schema",
+            failure_category="grounding_array_invalid",
         )
+    payload = wrapper["payload"]
+    leaves = _populated_json_pointer_leaves(payload)
+    containers = _json_pointer_container_paths(payload)
+    requirements = enumerate_cloudflare_content_paths(payload)
+    exempt = enumerate_cloudflare_exempt_paths(payload)
     transcript_normalized = _grounding_normalize(transcript)
     grounding: dict[str, str] = {}
+    duplicates: list[str] = []
+    conflicts: list[str] = []
+    unknown: list[str] = []
+    supplied_exempt: list[str] = []
+    supplied_containers: list[str] = []
     for entry in entries:
         if not isinstance(entry, dict):
-            continue
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDING_INVALID",
+                "A grounding entry was not an object.",
+                failure_category="grounding_entry_invalid",
+            )
         path = entry.get("path")
         quote = entry.get("evidence_quote")
         if not isinstance(path, str) or not isinstance(quote, str) or not quote.strip():
-            continue
-        normalized_quote = _grounding_normalize(quote)
-        if normalized_quote not in transcript_normalized:
-            raise ProviderError(
-                "AI_PROVIDER_GROUNDING_QUOTE_MISSING",
-                "A grounding quotation was not present in the vision transcript.",
-                retryable=False,
-                category="permanent_schema",
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDING_INVALID",
+                "A grounding entry lacked a valid path or quotation.",
+                failure_category="grounding_entry_invalid",
             )
+        if path in containers and path not in leaves:
+            supplied_containers.append(path)
+            continue
+        if path not in leaves:
+            unknown.append(path)
+            continue
+        if path in exempt:
+            supplied_exempt.append(path)
+            continue
+        if path in grounding:
+            duplicates.append(path)
+            if _grounding_normalize(grounding[path]) != _grounding_normalize(quote):
+                conflicts.append(path)
+            continue
         grounding[path] = quote
 
-    payload = wrapper["payload"]
-    for path, value, mode in _content_grounding_requirements(payload):
-        quote = grounding.get(path)
-        if not quote:
-            raise ProviderError(
-                "AI_PROVIDER_GROUNDING_MISSING",
-                "A content-bearing field lacked grounding evidence.",
-                retryable=False,
-                category="permanent_schema",
+    common_diagnostics = {
+        "unknown_paths": unknown,
+        "exempt_paths": supplied_exempt,
+        "container_paths": supplied_containers,
+        "duplicate_paths": duplicates,
+        "conflicting_duplicate_paths": conflicts,
+    }
+    if unknown:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_PATH_UNKNOWN",
+            "A grounding entry referenced a path that does not exist.",
+            failure_category="unknown_path",
+            **common_diagnostics,
+        )
+    if supplied_containers:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_CONTAINER_PATH",
+            "A grounding entry referenced a container instead of a content leaf.",
+            failure_category="container_path",
+            **common_diagnostics,
+        )
+    if supplied_exempt:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_METADATA_PATH",
+            "A grounding entry referenced grounding-exempt metadata.",
+            failure_category="metadata_path",
+            **common_diagnostics,
+        )
+    if conflicts:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_DUPLICATE_CONFLICT",
+            "Conflicting grounding quotations were supplied for one content path.",
+            failure_category="duplicate_conflict",
+            **common_diagnostics,
+        )
+
+    missing = sorted(set(requirements) - set(grounding))
+    if missing:
+        _raise_grounding_error(
+            "AI_PROVIDER_GROUNDING_MISSING",
+            "One or more content-bearing fields lacked grounding evidence.",
+            failure_category="missing_coverage",
+            missing_paths=missing,
+            **common_diagnostics,
+        )
+
+    for path, quote in grounding.items():
+        normalized_quote = _grounding_normalize(quote)
+        if normalized_quote not in transcript_normalized:
+            _raise_grounding_error(
+                "AI_PROVIDER_GROUNDING_QUOTE_MISSING",
+                "A grounding quotation was not present in the vision transcript.",
+                failure_category="quote_absent",
+                path=path,
+                **common_diagnostics,
             )
+
+    for path, requirement in requirements.items():
+        value = requirement["value"]
+        mode = requirement["validation_mode"]
+        quote = grounding[path]
         normalized_quote = _grounding_normalize(quote)
         if mode == "exact" and _grounding_normalize(str(value)) not in normalized_quote:
-            raise ProviderError(
+            _raise_grounding_error(
                 "AI_PROVIDER_GROUNDING_UNSUPPORTED_CONTENT",
                 "A content-bearing field was not supported by its grounding quotation.",
-                retryable=False,
-                category="permanent_schema",
+                failure_category="content_mismatch",
+                path=path,
+                **common_diagnostics,
             )
         if not _numeric_tokens(value) <= _numeric_tokens(quote):
-            raise ProviderError(
+            _raise_grounding_error(
                 "AI_PROVIDER_GROUNDING_UNSUPPORTED_NUMBER",
                 "The structurer introduced a number absent from its evidence quotation.",
-                retryable=False,
-                category="permanent_schema",
+                failure_category="numeric_token_mismatch",
+                path=path,
+                **common_diagnostics,
             )
         if mode in {"math", "tokens"} and not _math_label_tokens(value) <= _math_label_tokens(quote):
-            raise ProviderError(
+            _raise_grounding_error(
                 "AI_PROVIDER_GROUNDING_UNSUPPORTED_LABEL",
                 "The structurer introduced a mathematical label absent from its evidence quotation.",
-                retryable=False,
-                category="permanent_schema",
+                failure_category="label_entity_mismatch",
+                path=path,
+                **common_diagnostics,
             )
 
     question_lines = [
@@ -1017,11 +1251,12 @@ def validate_cloudflare_grounding(wrapper: Any, transcript: str) -> dict[str, An
             and any(quote_content in line for line in question_lines)
             and quote_content not in nonquestion_text
         ):
-            raise ProviderError(
+            _raise_grounding_error(
                 "AI_PROVIDER_QUESTION_PROMOTED_TO_ANSWER",
                 "Question-only transcript text cannot become answer evidence.",
-                retryable=False,
-                category="content_request",
+                failure_category="question_promoted_to_answer",
+                path=path,
+                **common_diagnostics,
             )
     return payload
 
@@ -1058,6 +1293,7 @@ def _valid_stage_s_checkpoint(
         and isinstance(stage.get("wrapper"), dict)
         and stage.get("transcript_digest") == transcript_digest
         and stage.get("schema_version") == schema_version
+        and stage.get("grounding_schema_version") == CLOUDFLARE_GROUNDING_SCHEMA_VERSION
         and stage.get("prompt_version") == CLOUDFLARE_STRUCTURER_PROMPT_VERSION
         and stage.get("model") == model
     )
@@ -1167,6 +1403,7 @@ def cloudflare_composite_visual_adapter(
                 "model": structurer_model,
                 "transcript_digest": transcript_digest,
                 "schema_version": request.interpretation_schema_version,
+                "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
                 "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
                 "error_code": exc.code,
                 "category": exc.category,
@@ -1184,6 +1421,7 @@ def cloudflare_composite_visual_adapter(
             "model": structurer_model,
             "transcript_digest": transcript_digest,
             "schema_version": request.interpretation_schema_version,
+            "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
             "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
             "wrapper": live_s["wrapper"],
             "wrapper_digest": hashlib.sha256(json.dumps(

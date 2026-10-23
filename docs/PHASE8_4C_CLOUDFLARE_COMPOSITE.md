@@ -123,3 +123,68 @@ retries or agreement requests, and recorded zero billable spend under the
 free-only gate. Activation variables remain unset. Cloudflare composite remains
 inactive, and Stage 1B remains blocked pending an offline grounding diagnostic
 and a separately authorized live qualification.
+
+## Phase 8.4C.2 grounding coverage repair
+
+The exact missing path from the Phase 8.4C.1 provider response cannot be
+established because private Stage-S content was intentionally not logged. The
+offline audit nevertheless established the defect class: the v1 validator used
+a hand-maintained subset of payload fields, the wrapper schema could not require
+dynamic leaf coverage, and failure diagnostics reported only the general error
+code. This allowed structurally incomplete model grounding to reach the
+validator without identifying the uncovered leaf.
+
+The v2 contract uses one recursive JSON Pointer enumerator over the populated
+payload. Array indexes are explicit, RFC 6901 escaping is applied, null or empty
+optional values and empty containers create no requirement, and every populated
+leaf is content-bearing unless it matches an explicit exemption. Coverage is an
+exact set comparison; parent-prefix coverage is forbidden.
+
+The current production exemptions are:
+
+- payload schema version and page, which come from the request contract;
+- evidence kind, confidence, and fixed source enum, which remain bounded and
+  independently checked by production validation and role-integrity gates;
+- mark-change level, confidence, and the fixed confirmation flag, which remain
+  bounded and independently validated.
+
+All other populated leaves require grounding. This includes visual-presence
+claims, question references, transcriptions, normalized mathematics, visible
+mark values, warning text, and every coordinate of a non-null model-supplied
+bounding box. Unknown future fields therefore fail closed as content-bearing
+rather than becoming implicitly exempt.
+
+Supplied mappings are checked against exact leaf paths. Unknown paths, container
+paths, and metadata paths are rejected. Identical duplicates are deterministically
+deduplicated; conflicting duplicates fail. Every remaining content path requires
+an exact Stage-V quotation after bounded whitespace normalization. Numeric tokens
+and mathematical labels must occur in the path's quote. Exact transcription
+matching ensures a spatial relationship quote contains its reported entities and
+relationship instead of mentioning only one label.
+
+Failure diagnostics contain only JSON Pointer paths, counts, classifications,
+and mismatch categories. They never include transcript text, quotations, payload
+values, image bytes, or credentials. Grounding failures are classified as
+`content_request`, so they fail closed without opening a provider-capacity
+circuit or creating teacher infrastructure-review noise.
+
+The Stage-S prompt now derives its field policy from the same exemption constants
+used by validation and explicitly requires one indexed mapping per populated
+content leaf. The wrapper schema requires
+`cloudflare-grounded-wrapper-v2`, strengthens path syntax and duplicate guidance,
+and the Stage-S prompt version is `cloudflare-grounded-structurer-v2`. Old Stage-S
+cache entries are invalidated while unchanged Stage-V cache identity remains
+reusable.
+
+Grounding proves provenance only. Existing question-versus-solution integrity,
+source-backed spatial preservation, and deterministic mathematical-consistency
+checks remain subsequent independent gates. The deterministic layer detects
+missing grounding and never manufactures a quotation from payload content.
+
+Offline qualification completed with 22 grounding-coverage tests, 41 remaining
+Phase 8.4C composite/activation tests, 16 Phase 8.4A tests, 24 Phase 8.4B.4 tests,
+and Slice 1–4 results of 15, 7 with 1 local skip, 23, and 29 tests. The complete
+engine suite passed with 708 tests, 4 skips, and 28 subtests. No Cloudflare,
+Groq, or Mistral inference was called, and all activation variables remained
+unset. Hosted qualification is required before another bounded live proof can
+be recommended.

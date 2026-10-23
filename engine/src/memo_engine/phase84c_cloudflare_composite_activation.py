@@ -148,6 +148,10 @@ def assess_stage_v_transcript(
 
 def _safe_failure(exc: Exception) -> dict[str, Any]:
     diagnostics = getattr(exc, "diagnostics", None)
+    safe_grounding = {
+        key: value for key, value in (diagnostics or {}).items()
+        if key.startswith("grounding_")
+    } if isinstance(diagnostics, dict) else {}
     return {
         "status": "failed",
         "error_code": getattr(exc, "code", type(exc).__name__),
@@ -155,6 +159,7 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
         "http_status": getattr(exc, "http_status", None),
         "provider_code": getattr(exc, "provider_code", None),
         "composite_stage": diagnostics.get("composite_stage") if isinstance(diagnostics, dict) else None,
+        **safe_grounding,
     }
 
 
