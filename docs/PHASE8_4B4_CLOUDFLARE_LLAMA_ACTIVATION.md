@@ -1,5 +1,12 @@
 # Phase 8.4B.4 Cloudflare Llama structured-vision activation
 
+> **Later qualification result (2026-10-23):** Phase 8.4B.5's single authorized
+> live structured-vision inference received HTTP 400 before a model envelope was
+> returned. Llama 3.2 11B Vision is therefore no longer classified as
+> `structured_json` or `structured_visual`. See
+> `PHASE8_4B5_CLOUDFLARE_LLAMA_LIVE_PROOF.md`. The historical implementation and
+> offline qualification notes below are retained as the Phase 8.4B.4 record.
+
 Date: 2026-10-22
 
 Status: **HOSTED QUALIFIED; LIVE ACTIVATION STOPPED AFTER TERMS RESPONSE PARSING

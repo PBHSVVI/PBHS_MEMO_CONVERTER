@@ -28,7 +28,7 @@ CLOUDFLARE_MODEL_CAPABILITIES = {
     "@cf/qwen/qwen3.8-27b": frozenset({"vision", "free_only", "school_private"}),
     "@cf/google/gemma-4-26b-a4b-it": frozenset({"vision", "free_only", "school_private"}),
     CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL: frozenset({
-        "vision", "structured_json", "structured_visual", "free_only", "school_private"
+        "vision", "free_only", "school_private"
     }),
 }
 CLOUDFLARE_STRUCTURED_VISUAL_MODELS = frozenset({

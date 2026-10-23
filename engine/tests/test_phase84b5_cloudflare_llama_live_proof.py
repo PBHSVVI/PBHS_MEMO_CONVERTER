@@ -46,6 +46,13 @@ def _success(request, spec, *_args):
 
 def test_proof_has_no_agreement_path_and_reuses_one_live_result(monkeypatch):
     _configure(monkeypatch)
+    monkeypatch.setattr(
+        proof,
+        "cloudflare_model_capabilities",
+        lambda _model: frozenset({
+            "vision", "structured_json", "structured_visual", "free_only", "school_private"
+        }),
+    )
     calls = []
 
     def counted(*args):
@@ -69,6 +76,13 @@ def test_proof_has_no_agreement_path_and_reuses_one_live_result(monkeypatch):
 
 def test_failure_stops_after_single_inference(monkeypatch):
     _configure(monkeypatch)
+    monkeypatch.setattr(
+        proof,
+        "cloudflare_model_capabilities",
+        lambda _model: frozenset({
+            "vision", "structured_json", "structured_visual", "free_only", "school_private"
+        }),
+    )
     calls = []
 
     def fail(*_args):
@@ -89,3 +103,19 @@ def test_source_contains_no_agreement_request():
     forbidden = '"prompt"' + ': "agree"'
     assert forbidden not in source
     assert "accept_meta_terms" not in source
+
+
+def test_live_disqualification_prevents_another_inference(monkeypatch):
+    _configure(monkeypatch)
+    calls = []
+    monkeypatch.setattr(proof, "cloudflare_visual_adapter", lambda *_args: calls.append(1))
+    report = proof.run()
+    assert report["capabilities"] == {
+        "vision": True,
+        "structured_json": False,
+        "structured_visual": False,
+        "free_only": True,
+        "school_private": True,
+    }
+    assert report["inference_calls"] == 0
+    assert calls == []

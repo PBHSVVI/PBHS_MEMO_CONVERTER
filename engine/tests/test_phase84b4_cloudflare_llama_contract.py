@@ -56,23 +56,24 @@ def _run(monkeypatch, response):
     return result, calls
 
 
-def test_model_capabilities_distinguish_structured_visual_from_plain_vision():
+def test_cloudflare_vision_models_are_not_structured_visual_after_live_proof():
     llama = cloudflare_model_capabilities(CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL)
     gemma = cloudflare_model_capabilities("@cf/google/gemma-4-26b-a4b-it")
     qwen = cloudflare_model_capabilities("@cf/qwen/qwen3.8-27b")
-    assert {"vision", "structured_json", "structured_visual", "free_only", "school_private"} <= llama
+    assert {"vision", "free_only", "school_private"} <= llama
+    assert "structured_json" not in llama and "structured_visual" not in llama
     assert "vision" in gemma and "structured_visual" not in gemma
     assert "vision" in qwen and "structured_visual" not in qwen
 
 
-def test_only_llama_is_eligible_for_cloudflare_structured_visual():
+def test_no_cloudflare_model_is_eligible_for_structured_visual_after_live_proof():
     llama = _llama_spec()
     assert eligible_providers(
         {"cloudflare": llama},
         task_type=TASK_VISUAL_INTERPRETATION,
         privacy_classification=PRIVACY_SCHOOL_PRIVATE,
         env=_env(),
-    ) == [llama]
+    ) == []
     for model in ("@cf/google/gemma-4-26b-a4b-it", "@cf/qwen/qwen3.8-27b"):
         spec = replace(llama, model_id=model, capabilities=cloudflare_model_capabilities(model))
         assert eligible_providers(
@@ -221,6 +222,15 @@ def test_activation_success_persists_cache_and_proves_failover_without_second_ca
     monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
     monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")
     monkeypatch.setenv("MISTRAL_SCHOOL_PRIVATE_APPROVED", "false")
+    # Preserve the historical Phase 8.4B.4 harness contract independently of
+    # the later Phase 8.4B.5 live disqualification in the production registry.
+    monkeypatch.setattr(
+        activation,
+        "cloudflare_model_capabilities",
+        lambda _model: frozenset({
+            "vision", "structured_json", "structured_visual", "free_only", "school_private"
+        }),
+    )
     monkeypatch.setattr(
         activation,
         "list_account_models",

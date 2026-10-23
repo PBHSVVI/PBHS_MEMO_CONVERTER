@@ -7,7 +7,7 @@ from engine.src.memo_engine.provider_fabric import (
 )
 
 
-def test_model_selection_uses_only_visible_approved_free_vision_models():
+def test_model_selection_requires_visible_structured_visual_capability():
     selected, eligible = activation.select_free_vision_model([
         {"id": "@cf/meta/llama-3.2-11b-vision-instruct", "vision_declared": True},
         {"id": "@cf/qwen/qwen3.8-27b", "vision_declared": True},
@@ -15,8 +15,8 @@ def test_model_selection_uses_only_visible_approved_free_vision_models():
         {"id": "@cf/paid/example", "vision_declared": True},
         {"id": "@cf/text/example", "vision_declared": False},
     ])
-    assert selected == "@cf/meta/llama-3.2-11b-vision-instruct"
-    assert eligible == ["@cf/meta/llama-3.2-11b-vision-instruct"]
+    assert selected is None
+    assert eligible == []
     assert set(eligible) <= CLOUDFLARE_FREE_VISION_MODELS
 
 
@@ -27,10 +27,10 @@ def test_unlisted_or_nonvision_models_are_never_selected():
     ]) == (None, [])
 
 
-def test_allowlisted_vision_model_does_not_depend_on_incomplete_catalogue_badge():
+def test_disqualified_llama_is_not_selected_even_with_incomplete_catalogue_badge():
     assert activation.select_free_vision_model([
         {"id": "@cf/meta/llama-3.2-11b-vision-instruct", "vision_declared": False},
-    ])[0] == "@cf/meta/llama-3.2-11b-vision-instruct"
+    ])[0] is None
 
 
 def test_model_card_parser_accepts_current_name_and_nested_property_shapes():
@@ -71,7 +71,7 @@ def test_malformed_account_id_stops_before_account_scoped_request(monkeypatch):
     assert report["live_inference_calls"] == 0
 
 
-def test_failed_preflight_never_enters_cache_reuse_or_second_call(monkeypatch):
+def test_live_disqualified_model_stops_before_preflight_call(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "a" * 32)
     monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
     monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")
@@ -94,9 +94,8 @@ def test_failed_preflight_never_enters_cache_reuse_or_second_call(monkeypatch):
 
     monkeypatch.setattr(activation, "cloudflare_visual_adapter", fail)
     report = activation.run()
-    assert len(calls) == 1
-    assert report["preflight"]["status"] == "failed"
-    assert report["preflight"]["error_code"] == "AI_PROVIDER_NETWORK_ERROR"
-    assert report["cache_reuse"]["skipped"] == "preflight_unsuccessful"
-    assert report["cache_reuse"]["second_inference_calls"] == 0
-    assert report["live_inference_calls"] == 1
+    assert calls == []
+    assert report["selected_model"] is None
+    assert report["preflight"] is None
+    assert report["cache_reuse"] is None
+    assert report["live_inference_calls"] == 0
