@@ -256,6 +256,10 @@ def test_grounded_wrapper_schema_and_prompt_require_complete_leaf_mappings():
     assert "/payload/evidence/*/confidence" in prompt
     assert "answer_working" in prompt
     assert "visual_overlay" in prompt
+    assert (
+        "grounding_schema_version is exactly cloudflare-grounded-wrapper-v2"
+        in prompt
+    )
 
 
 def test_cloudflare_transport_schema_recursively_uses_only_structural_allowlist():

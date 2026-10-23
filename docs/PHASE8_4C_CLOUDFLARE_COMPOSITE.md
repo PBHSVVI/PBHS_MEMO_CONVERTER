@@ -277,3 +277,28 @@ Stage-V prompt version, Stage-V model, transcript presence, and transcript diges
 A mismatch fails rather than silently reusing or reconstructing content. The
 Stage-S job downloads that exact same-run artifact, so it cannot erase the
 successful synthetic Stage-V evidence if Stage S fails.
+
+Live activation run `39917440395` used commit
+`46e8384ba7d6364dc25080dfc27d5bea02815a9e`. Discovery again found 73 visible
+models and selected the accepted Gemma/Llama pair. No compatible historical
+synthetic cache existed, so Stage V made one call. The transcript passed every
+content gate, was read back with digest
+`b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387`,
+and was persisted both as the exact-identity Actions cache and as the bounded
+private synthetic artifact before Stage S began.
+
+Stage S made one call using the persisted transcript and the four-key transport
+schema. Cloudflare accepted the request and returned JSON; HTTP 400/code 8007
+did not recur. The full internal validator then rejected the wrapper at
+`/wrapper/grounding_schema_version` with failure category
+`internal_schema_enum`. No private enum value was logged. Grounding coverage,
+production-schema validation, ProviderResult creation, replay, failover, and
+activation therefore remained blocked.
+
+This is a prompt-contract omission rather than a transport or deterministic
+validation failure. The Stage-S prompt now explicitly requires
+`grounding_schema_version` to equal `cloudflare-grounded-wrapper-v2`, and its
+version is bumped to `cloudflare-grounded-structurer-v3`. This repair is offline
+only in Phase 8.4C.4. The durable Stage-V cache means a future separately
+authorized proof requires no new image inference, but one new Stage-S call is
+still required.

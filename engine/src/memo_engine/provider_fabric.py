@@ -22,7 +22,7 @@ CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instru
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
-CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v2"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v3"
 CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
 CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
 CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
@@ -738,6 +738,7 @@ def cloudflare_payload_vocabulary_prompt(payload_schema: dict[str, Any] | None =
     versions = version_schema.get("enum") if isinstance(version_schema.get("enum"), list) else []
     version_text = str(versions[0]) if versions else "the requested schema version"
     return f"""Payload contract vocabulary:
+- grounding_schema_version is exactly {CLOUDFLARE_GROUNDING_SCHEMA_VERSION};
 - schema_version is exactly {version_text};
 - page is the requested integer page and visual_content_present is boolean;
 - evidence kind is one of: {kind_text};
