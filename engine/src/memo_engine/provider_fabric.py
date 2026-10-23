@@ -19,6 +19,44 @@ PRIVACY_SYNTHETIC_TEST = "synthetic_test"
 FREE_ONLY_PLAN_MODE = "free_only"
 DEFAULT_VISUAL_PROVIDER_ORDER = ("groq", "cloudflare", "mistral")
 CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v1"
+CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v1"
+CLOUDFLARE_TRANSCRIPT_VISION_PRIORITY = (
+    CLOUDFLARE_COMPOSITE_VISION_MODEL,
+    CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL,
+    "@cf/qwen/qwen3.8-27b",
+)
+CLOUDFLARE_JSON_MODE_DOCUMENTED_MODELS = frozenset({
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "@cf/meta/llama-3-8b-instruct",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@hf/nousresearch/hermes-2-pro-mistral-7b",
+    "@hf/thebloke/deepseek-coder-6.7b-instruct-awq",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+})
+CLOUDFLARE_DEPRECATED_MODELS = frozenset({
+    "@cf/meta/llama-3-8b-instruct",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@hf/nousresearch/hermes-2-pro-mistral-7b",
+})
+CLOUDFLARE_PAID_ONLY_MODELS = frozenset({
+    "@cf/moonshotai/kimi-k2.6",
+    "@cf/moonshotai/kimi-k2.7-code",
+    "@cf/zai-org/glm-5.2",
+    "@cf/zai-org/glm-5.3",
+    "@cf/zai-org/glm-5.3-flash",
+    "@cf/deepseek-ai/deepseek-v4-flash-0731",
+    "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    "@cf/deepseek-ai/deepseek-v4-pro-0813",
+})
+CLOUDFLARE_ACTIVE_FREE_JSON_MODE_MODELS = frozenset(
+    CLOUDFLARE_JSON_MODE_DOCUMENTED_MODELS
+    - CLOUDFLARE_DEPRECATED_MODELS
+    - CLOUDFLARE_PAID_ONLY_MODELS
+)
 CLOUDFLARE_FREE_VISION_MODELS = frozenset({
     "@cf/qwen/qwen3.8-27b",
     "@cf/google/gemma-4-26b-a4b-it",
@@ -44,6 +82,43 @@ def _truthy(value: Any) -> bool:
 
 def cloudflare_model_capabilities(model_id: str) -> frozenset[str]:
     return CLOUDFLARE_MODEL_CAPABILITIES.get(model_id, frozenset())
+
+
+def select_cloudflare_structurer_model(visible_model_ids: set[str]) -> str | None:
+    eligible = visible_model_ids & CLOUDFLARE_ACTIVE_FREE_JSON_MODE_MODELS
+    if CLOUDFLARE_PREFERRED_STRUCTURER_MODEL in eligible:
+        return CLOUDFLARE_PREFERRED_STRUCTURER_MODEL
+    return sorted(eligible)[0] if eligible else None
+
+
+def select_cloudflare_transcript_model(visible_model_ids: set[str]) -> str | None:
+    for model in CLOUDFLARE_TRANSCRIPT_VISION_PRIORITY:
+        if (
+            model in visible_model_ids
+            and model in CLOUDFLARE_FREE_VISION_MODELS
+            and "vision" in cloudflare_model_capabilities(model)
+        ):
+            return model
+    return None
+
+
+def _cloudflare_composite_model_id(vision_model: str, structurer_model: str) -> str:
+    return f"composite:{vision_model}|{structurer_model}"
+
+
+def _cloudflare_composite_config(values: Any) -> tuple[str, str, str, bool]:
+    vision_model = str(values.get(
+        "MEMO_CLOUDFLARE_VISION_MODEL", CLOUDFLARE_COMPOSITE_VISION_MODEL
+    ) or "").strip()
+    structurer_model = str(values.get("MEMO_CLOUDFLARE_STRUCTURER_MODEL", "") or "").strip()
+    model_id = _cloudflare_composite_model_id(vision_model, structurer_model)
+    enabled = bool(
+        _truthy(values.get("MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED"))
+        and vision_model in CLOUDFLARE_FREE_VISION_MODELS
+        and "vision" in cloudflare_model_capabilities(vision_model)
+        and structurer_model in CLOUDFLARE_ACTIVE_FREE_JSON_MODE_MODELS
+    )
+    return vision_model, structurer_model, model_id, enabled
 
 
 @dataclass(frozen=True)
@@ -81,6 +156,7 @@ class ProviderTaskRequest:
     privacy_classification: str
     prompt: str
     response_schema: dict[str, Any]
+    provider_checkpoint: dict[str, Any] | None = None
 
 
 @dataclass
@@ -191,9 +267,9 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
     order = _provider_order()
     priority = {provider: index for index, provider in enumerate(order)}
     approved = _approved_providers()
-    cloudflare_model = os.environ.get(
-        "MEMO_CLOUDFLARE_VISION_MODEL", "@cf/qwen/qwen3.8-27b"
-    ).strip() or "@cf/qwen/qwen3.8-27b"
+    _, _, cloudflare_model, cloudflare_composite_enabled = _cloudflare_composite_config(
+        os.environ
+    )
     return {
         "groq": ProviderSpec(
             provider_id="groq",
@@ -213,16 +289,22 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
         "cloudflare": ProviderSpec(
             provider_id="cloudflare",
             model_id=cloudflare_model,
-            capabilities=cloudflare_model_capabilities(cloudflare_model),
+            capabilities=(
+                frozenset({
+                    "vision", "structured_json", "structured_visual",
+                    "composite_visual", "free_only", "school_private",
+                })
+                if cloudflare_composite_enabled else frozenset()
+            ),
             credential_names=("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_AI_API_TOKEN"),
             priority=priority.get("cloudflare", 100),
             school_private_allowed=True,
-            free_model_ids=CLOUDFLARE_FREE_VISION_MODELS,
+            free_model_ids=(frozenset({cloudflare_model}) if cloudflare_composite_enabled else frozenset()),
             zero_cost_confirmation_env="CLOUDFLARE_ZERO_COST_CONFIRMED",
             plan_mode=os.environ.get(
                 "CLOUDFLARE_WORKERS_AI_PLAN_MODE", FREE_ONLY_PLAN_MODE
             ).strip().lower(),
-            enabled="cloudflare" in approved,
+            enabled="cloudflare" in approved and cloudflare_composite_enabled,
         ),
         "mistral": ProviderSpec(
             provider_id="mistral",
@@ -587,6 +669,590 @@ def cloudflare_visual_adapter(
     )
 
 
+def cloudflare_stage_v_prompt(request: ProviderTaskRequest) -> str:
+    anchor = request.current_question_owner or request.source_question or "unknown"
+    return f"""You are an OBSERVER transcribing visible evidence from a mathematics memo crop.
+Report only what is visibly present. Do not solve, calculate, correct arithmetic, infer
+missing working, or invent labels. Preserve visible numbers, mathematical symbols,
+labels, answer order, and spatial relationships. Distinguish question wording from
+solution or answer evidence. Use explicit UNCERTAIN lines for unreadable content.
+
+Plain text is required, not JSON. Helpful line prefixes are QUESTION:, TEXT:, MATH:,
+LABEL:, RELATION:, ROLE:, and UNCERTAIN:, but exact formatting is not mandatory.
+Known question anchor: {anchor}"""
+
+
+def cloudflare_stage_s_prompt(transcript: str) -> str:
+    return """YOU ARE A STRUCTURER, NOT A SOLVER.
+Convert only the supplied Stage-V evidence transcript into the requested grounded
+wrapper. Do not calculate, repair arithmetic, infer missing answers, reinterpret the
+question, or introduce values, labels, or spatial relationships absent from the
+transcript. Every content-bearing payload field must have a grounding entry whose
+evidence_quote is an exact quotation from the transcript. Use JSON Pointer paths such
+as /payload/evidence/0/transcription. Question-only text must never become answer or
+solution evidence.
+
+STAGE-V TRANSCRIPT:
+""" + transcript
+
+
+def cloudflare_grounded_wrapper_schema(payload_schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "payload": payload_schema,
+            "grounding": {
+                "type": "array",
+                "maxItems": 240,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "evidence_quote": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["path", "evidence_quote"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["payload", "grounding"],
+        "additionalProperties": False,
+    }
+
+
+def _cloudflare_response(payload: dict[str, Any]) -> tuple[Any, dict[str, Any], dict[str, Any]]:
+    result = payload.get("result")
+    if payload.get("success") is False:
+        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+        first = errors[0] if errors and isinstance(errors[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), str) else None
+        raise ProviderError(
+            "AI_PROVIDER_CLOUDFLARE_ERROR",
+            "Cloudflare reported that the Workers AI request was unsuccessful.",
+            retryable=False,
+            category="content_request",
+            provider_code=first.get("code"),
+            provider_message=message,
+        )
+    if not isinstance(result, dict):
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare returned an unreadable response envelope.",
+            category="permanent_schema",
+        )
+    response: Any = None
+    path = None
+    if "response" in result:
+        response = result.get("response")
+        path = "result.response"
+    elif isinstance(result.get("choices"), list):
+        try:
+            response = result["choices"][0]["message"]["content"]
+            if isinstance(response, list):
+                response = "".join(
+                    str(item.get("text") or "") for item in response if isinstance(item, dict)
+                )
+            path = "result.choices[0].message.content"
+        except (KeyError, IndexError, TypeError):
+            response = None
+    if path is None:
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare returned no usable model response.",
+            category="permanent_schema",
+        )
+    return response, result.get("usage") or {}, {
+        "provider_success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
+        "response_path": path,
+        "response_type": type(response).__name__,
+    }
+
+
+def _cloudflare_stage_post(
+    model: str,
+    body: dict[str, Any],
+    *,
+    deadline_monotonic: float | None,
+    remaining_requests: int,
+    clock: Callable[[], float],
+) -> tuple[dict[str, Any], int]:
+    account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    return _post_json(
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
+        {"Authorization": f"Bearer {os.environ.get('CLOUDFLARE_AI_API_TOKEN', '').strip()}"},
+        body,
+        timeout_seconds=max(5.0, min(75.0, float(os.environ.get(
+            "MEMO_VISION_REQUEST_TIMEOUT_SECONDS", "45"
+        )))),
+        deadline_monotonic=deadline_monotonic,
+        remaining_requests=remaining_requests,
+        clock=clock,
+        max_rate_retries=max(
+            0, min(3, int(os.environ.get("MEMO_VISUAL_PROVIDER_RATE_RETRIES", "1")))
+        ),
+        max_transient_retries=max(
+            0, min(3, int(os.environ.get("MEMO_VISUAL_PROVIDER_TRANSIENT_RETRIES", "2")))
+        ),
+    )
+
+
+def cloudflare_stage_v_call(
+    request: ProviderTaskRequest,
+    model: str,
+    deadline_monotonic: float | None,
+    remaining_requests: int,
+    clock: Callable[[], float],
+) -> dict[str, Any]:
+    payload, elapsed_ms = _cloudflare_stage_post(
+        model,
+        {
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": cloudflare_stage_v_prompt(request)},
+                {"type": "image_url", "image_url": {"url": _image_data_url(request)}},
+            ]}],
+            "temperature": 0,
+            "max_tokens": 4096,
+            "stream": False,
+        },
+        deadline_monotonic=deadline_monotonic,
+        remaining_requests=remaining_requests,
+        clock=clock,
+    )
+    response, usage, diagnostics = _cloudflare_response(payload)
+    transcript = response.strip() if isinstance(response, str) else ""
+    if not transcript:
+        raise ProviderError(
+            "AI_PROVIDER_EMPTY_TRANSCRIPT",
+            "Cloudflare vision returned no usable evidence transcript.",
+            retryable=False,
+            category="content_request",
+            diagnostics={"composite_stage": "visual_evidence"},
+        )
+    return {
+        "transcript": transcript[:24_000],
+        "usage": usage if isinstance(usage, dict) else {},
+        "quota": payload.get("_provider_rate_limits") or {},
+        "latency_ms": elapsed_ms,
+        "diagnostics": diagnostics,
+    }
+
+
+def cloudflare_stage_s_call(
+    request: ProviderTaskRequest,
+    model: str,
+    transcript: str,
+    deadline_monotonic: float | None,
+    remaining_requests: int,
+    clock: Callable[[], float],
+) -> dict[str, Any]:
+    payload, elapsed_ms = _cloudflare_stage_post(
+        model,
+        {
+            "messages": [{"role": "user", "content": cloudflare_stage_s_prompt(transcript)}],
+            "temperature": 0,
+            "max_tokens": 4096,
+            "stream": False,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": cloudflare_grounded_wrapper_schema(request.response_schema),
+            },
+        },
+        deadline_monotonic=deadline_monotonic,
+        remaining_requests=remaining_requests,
+        clock=clock,
+    )
+    response, usage, diagnostics = _cloudflare_response(payload)
+    try:
+        wrapper = json.loads(response) if isinstance(response, str) else response
+    except (TypeError, ValueError) as exc:
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare structurer returned invalid JSON.",
+            category="permanent_schema",
+            diagnostics={"composite_stage": "json_structurer", **diagnostics},
+        ) from exc
+    if not isinstance(wrapper, dict):
+        raise ProviderError(
+            "AI_PROVIDER_INVALID_RESPONSE",
+            "Cloudflare structurer response was not an object.",
+            category="permanent_schema",
+            diagnostics={"composite_stage": "json_structurer", **diagnostics},
+        )
+    return {
+        "wrapper": wrapper,
+        "usage": usage if isinstance(usage, dict) else {},
+        "quota": payload.get("_provider_rate_limits") or {},
+        "latency_ms": elapsed_ms,
+        "diagnostics": diagnostics,
+    }
+
+
+def _grounding_normalize(value: str) -> str:
+    return " ".join(str(value).split())
+
+
+def _content_grounding_requirements(payload: dict[str, Any]) -> list[tuple[str, Any, str]]:
+    requirements: list[tuple[str, Any, str]] = []
+    for index, item in enumerate(payload.get("evidence") or []):
+        if not isinstance(item, dict):
+            continue
+        prefix = f"/payload/evidence/{index}"
+        if item.get("question_ref") is not None:
+            requirements.append((prefix + "/question_ref", item["question_ref"], "exact"))
+        requirements.append((prefix + "/transcription", item.get("transcription"), "exact"))
+        if item.get("normalized_math"):
+            requirements.append((prefix + "/normalized_math", item["normalized_math"], "math"))
+    for index, item in enumerate(payload.get("mark_changes") or []):
+        if not isinstance(item, dict):
+            continue
+        prefix = f"/payload/mark_changes/{index}"
+        for key in ("question_ref", "printed_value", "visual_value"):
+            if item.get(key) is not None:
+                requirements.append((prefix + f"/{key}", item[key], "tokens"))
+    for index, warning in enumerate(payload.get("warnings") or []):
+        requirements.append((f"/payload/warnings/{index}", warning, "exact"))
+    return requirements
+
+
+def _numeric_tokens(value: Any) -> set[str]:
+    return set(re.findall(r"(?<![A-Za-z])\d+(?:[.,]\d+)?", str(value)))
+
+
+def _math_label_tokens(value: Any) -> set[str]:
+    text = str(value)
+    labels = set(re.findall(r"(?<![A-Za-z])([A-Za-z])(?=\s*(?:[=+\-*/^(),]|$))", text))
+    labels.update(re.findall(r"(?<=[=+\-*/^(,])\s*([A-Za-z])(?![A-Za-z])", text))
+    return labels
+
+
+def validate_cloudflare_grounding(wrapper: Any, transcript: str) -> dict[str, Any]:
+    if not isinstance(wrapper, dict) or not isinstance(wrapper.get("payload"), dict):
+        raise ProviderError(
+            "AI_PROVIDER_GROUNDING_INVALID",
+            "The composite response did not contain a payload object.",
+            retryable=False,
+            category="permanent_schema",
+        )
+    entries = wrapper.get("grounding")
+    if not isinstance(entries, list):
+        raise ProviderError(
+            "AI_PROVIDER_GROUNDING_INVALID",
+            "The composite response did not contain grounding entries.",
+            retryable=False,
+            category="permanent_schema",
+        )
+    transcript_normalized = _grounding_normalize(transcript)
+    grounding: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        quote = entry.get("evidence_quote")
+        if not isinstance(path, str) or not isinstance(quote, str) or not quote.strip():
+            continue
+        normalized_quote = _grounding_normalize(quote)
+        if normalized_quote not in transcript_normalized:
+            raise ProviderError(
+                "AI_PROVIDER_GROUNDING_QUOTE_MISSING",
+                "A grounding quotation was not present in the vision transcript.",
+                retryable=False,
+                category="permanent_schema",
+            )
+        grounding[path] = quote
+
+    payload = wrapper["payload"]
+    for path, value, mode in _content_grounding_requirements(payload):
+        quote = grounding.get(path)
+        if not quote:
+            raise ProviderError(
+                "AI_PROVIDER_GROUNDING_MISSING",
+                "A content-bearing field lacked grounding evidence.",
+                retryable=False,
+                category="permanent_schema",
+            )
+        normalized_quote = _grounding_normalize(quote)
+        if mode == "exact" and _grounding_normalize(str(value)) not in normalized_quote:
+            raise ProviderError(
+                "AI_PROVIDER_GROUNDING_UNSUPPORTED_CONTENT",
+                "A content-bearing field was not supported by its grounding quotation.",
+                retryable=False,
+                category="permanent_schema",
+            )
+        if not _numeric_tokens(value) <= _numeric_tokens(quote):
+            raise ProviderError(
+                "AI_PROVIDER_GROUNDING_UNSUPPORTED_NUMBER",
+                "The structurer introduced a number absent from its evidence quotation.",
+                retryable=False,
+                category="permanent_schema",
+            )
+        if mode in {"math", "tokens"} and not _math_label_tokens(value) <= _math_label_tokens(quote):
+            raise ProviderError(
+                "AI_PROVIDER_GROUNDING_UNSUPPORTED_LABEL",
+                "The structurer introduced a mathematical label absent from its evidence quotation.",
+                retryable=False,
+                category="permanent_schema",
+            )
+
+    question_lines = [
+        _grounding_normalize(line.partition(":")[2])
+        for line in transcript.splitlines()
+        if line.strip().upper().startswith("QUESTION:")
+    ]
+    nonquestion_text = " ".join(
+        _grounding_normalize(line.partition(":")[2] if ":" in line else line)
+        for line in transcript.splitlines()
+        if not line.strip().upper().startswith("QUESTION:")
+    )
+    for index, item in enumerate(payload.get("evidence") or []):
+        if not isinstance(item, dict) or item.get("kind") not in {"answer", "answer_working"}:
+            continue
+        path = f"/payload/evidence/{index}/transcription"
+        quote = _grounding_normalize(grounding.get(path, ""))
+        quote_content = _grounding_normalize(
+            quote.partition(":")[2]
+            if quote.upper().startswith("QUESTION:") else quote
+        )
+        if (
+            quote_content
+            and any(quote_content in line for line in question_lines)
+            and quote_content not in nonquestion_text
+        ):
+            raise ProviderError(
+                "AI_PROVIDER_QUESTION_PROMOTED_TO_ANSWER",
+                "Question-only transcript text cannot become answer evidence.",
+                retryable=False,
+                category="content_request",
+            )
+    return payload
+
+
+def _valid_stage_v_checkpoint(
+    checkpoint: Any, request: ProviderTaskRequest, model: str
+) -> bool:
+    if not isinstance(checkpoint, dict):
+        return False
+    stage = checkpoint.get("stage_v")
+    if not isinstance(stage, dict) or stage.get("status") != "success":
+        return False
+    transcript = stage.get("transcript")
+    return bool(
+        isinstance(transcript, str)
+        and stage.get("source_digest") == request.source_digest
+        and stage.get("crop_digest") == request.crop_digest
+        and stage.get("prompt_version") == CLOUDFLARE_COMPOSITE_PROMPT_VERSION
+        and stage.get("model") == model
+        and stage.get("transcript_digest")
+        == hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    )
+
+
+def _valid_stage_s_checkpoint(
+    checkpoint: Any, transcript_digest: str, model: str, schema_version: str
+) -> bool:
+    if not isinstance(checkpoint, dict):
+        return False
+    stage = checkpoint.get("stage_s")
+    return bool(
+        isinstance(stage, dict)
+        and stage.get("status") == "success"
+        and isinstance(stage.get("wrapper"), dict)
+        and stage.get("transcript_digest") == transcript_digest
+        and stage.get("schema_version") == schema_version
+        and stage.get("prompt_version") == CLOUDFLARE_STRUCTURER_PROMPT_VERSION
+        and stage.get("model") == model
+    )
+
+
+def _combined_usage(stage_v: dict[str, Any], stage_s: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    total = 0
+    for prefix, stage in (("visual", stage_v), ("structurer", stage_s)):
+        usage = stage.get("usage") if isinstance(stage, dict) else {}
+        if not isinstance(usage, dict):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, (int, float)):
+                result[f"{prefix}_{key}"] = value
+                if key == "total_tokens":
+                    total += value
+    if total:
+        result["total_tokens"] = total
+    return result
+
+
+def cloudflare_composite_visual_adapter(
+    request: ProviderTaskRequest,
+    spec: ProviderSpec,
+    deadline_monotonic: float | None,
+    remaining_requests: int,
+    clock: Callable[[], float],
+) -> ProviderResult:
+    vision_model, structurer_model, expected_model_id, configured = (
+        _cloudflare_composite_config(os.environ)
+    )
+    if not configured or spec.model_id != expected_model_id:
+        raise ProviderError(
+            "AI_PROVIDER_COMPOSITE_CONFIGURATION_INVALID",
+            "The Cloudflare composite route is not fully qualified and enabled.",
+            retryable=False,
+            category="auth_configuration",
+        )
+    checkpoint = (
+        dict(request.provider_checkpoint)
+        if isinstance(request.provider_checkpoint, dict) else {}
+    )
+    checkpoint.setdefault("schema_version", CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION)
+
+    stage_v_cache_hit = _valid_stage_v_checkpoint(checkpoint, request, vision_model)
+    if stage_v_cache_hit:
+        stage_v = dict(checkpoint["stage_v"])
+    else:
+        try:
+            live_v = cloudflare_stage_v_call(
+                request, vision_model, deadline_monotonic, remaining_requests, clock
+            )
+        except ProviderError as exc:
+            checkpoint["stage_v"] = {
+                "status": "failed",
+                "provider": "cloudflare",
+                "model": vision_model,
+                "source_digest": request.source_digest,
+                "crop_digest": request.crop_digest,
+                "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+                "error_code": exc.code,
+                "category": exc.category,
+            }
+            exc.diagnostics.update({
+                "composite_stage": "visual_evidence",
+                "circuit_provider": "cloudflare:visual_evidence",
+                "stage_v_cache_hit": False,
+                "_private_composite_checkpoint": checkpoint,
+            })
+            raise
+        transcript = live_v["transcript"]
+        stage_v = {
+            "status": "success",
+            "provider": "cloudflare",
+            "model": vision_model,
+            "source_digest": request.source_digest,
+            "crop_digest": request.crop_digest,
+            "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+            "transcript_digest": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+            "transcript": transcript,
+            "usage": live_v.get("usage") or {},
+            "quota": live_v.get("quota") or {},
+            "latency_ms": live_v.get("latency_ms"),
+            "response_path": (live_v.get("diagnostics") or {}).get("response_path"),
+        }
+        checkpoint["stage_v"] = stage_v
+
+    transcript = stage_v["transcript"]
+    transcript_digest = stage_v["transcript_digest"]
+    stage_s_cache_hit = _valid_stage_s_checkpoint(
+        checkpoint, transcript_digest, structurer_model,
+        request.interpretation_schema_version,
+    )
+    if stage_s_cache_hit:
+        stage_s = dict(checkpoint["stage_s"])
+    else:
+        try:
+            live_s = cloudflare_stage_s_call(
+                request, structurer_model, transcript,
+                deadline_monotonic, remaining_requests, clock,
+            )
+        except ProviderError as exc:
+            checkpoint["stage_s"] = {
+                "status": "failed",
+                "provider": "cloudflare",
+                "model": structurer_model,
+                "transcript_digest": transcript_digest,
+                "schema_version": request.interpretation_schema_version,
+                "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+                "error_code": exc.code,
+                "category": exc.category,
+            }
+            exc.diagnostics.update({
+                "composite_stage": "json_structurer",
+                "circuit_provider": "cloudflare:json_structurer",
+                "stage_v_cache_hit": stage_v_cache_hit,
+                "_private_composite_checkpoint": checkpoint,
+            })
+            raise
+        stage_s = {
+            "status": "success",
+            "provider": "cloudflare",
+            "model": structurer_model,
+            "transcript_digest": transcript_digest,
+            "schema_version": request.interpretation_schema_version,
+            "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+            "wrapper": live_s["wrapper"],
+            "wrapper_digest": hashlib.sha256(json.dumps(
+                live_s["wrapper"], sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")).hexdigest(),
+            "usage": live_s.get("usage") or {},
+            "quota": live_s.get("quota") or {},
+            "latency_ms": live_s.get("latency_ms"),
+            "response_path": (live_s.get("diagnostics") or {}).get("response_path"),
+        }
+        checkpoint["stage_s"] = stage_s
+
+    try:
+        payload = validate_cloudflare_grounding(stage_s["wrapper"], transcript)
+    except ProviderError as exc:
+        checkpoint["stage_s"] = {
+            **stage_s,
+            "status": "failed",
+            "error_code": exc.code,
+            "category": exc.category,
+        }
+        exc.diagnostics.update({
+            "composite_stage": "deterministic_grounding",
+            "circuit_provider": "cloudflare:json_structurer",
+            "stage_v_cache_hit": stage_v_cache_hit,
+            "_private_composite_checkpoint": checkpoint,
+        })
+        raise
+    result_digest = hashlib.sha256(json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    checkpoint["final"] = {
+        "status": "success",
+        "result_digest": result_digest,
+        "vision_model": vision_model,
+        "structurer_model": structurer_model,
+    }
+    quota = dict(stage_s.get("quota") or stage_v.get("quota") or {})
+    return ProviderResult(
+        provider_id="cloudflare",
+        model_id=expected_model_id,
+        task_type=request.task_type,
+        status="success",
+        normalized_result=payload,
+        request_attempt=1,
+        latency_ms=sum(
+            int(value or 0) for value in (
+                stage_v.get("latency_ms"), stage_s.get("latency_ms")
+            )
+        ),
+        usage=_combined_usage(stage_v, stage_s),
+        quota=quota,
+        result_digest=result_digest,
+        diagnostics={
+            "composite": True,
+            "vision_provider": "cloudflare",
+            "vision_model": vision_model,
+            "vision_transcript_digest": transcript_digest,
+            "structurer_provider": "cloudflare",
+            "structurer_model": structurer_model,
+            "structurer_result_digest": stage_s.get("wrapper_digest"),
+            "stage_v_cache_hit": stage_v_cache_hit,
+            "stage_s_cache_hit": stage_s_cache_hit,
+            "grounding_status": "passed",
+            "_private_composite_checkpoint": checkpoint,
+        },
+    )
+
+
 def mistral_visual_adapter(
     request: ProviderTaskRequest,
     spec: ProviderSpec,
@@ -621,7 +1287,7 @@ def mistral_visual_adapter(
 
 DEFAULT_ADAPTERS: dict[str, Adapter] = {
     "groq": groq_visual_adapter,
-    "cloudflare": cloudflare_visual_adapter,
+    "cloudflare": cloudflare_composite_visual_adapter,
     "mistral": mistral_visual_adapter,
 }
 
@@ -732,6 +1398,8 @@ class ProviderFabric:
                     request, spec, deadline_monotonic, remaining_requests, self.clock
                 )
             except ProviderError as exc:
+                diagnostics = dict(getattr(exc, "diagnostics", None) or {})
+                private_checkpoint = diagnostics.pop("_private_composite_checkpoint", None)
                 attempt = {
                     "provider": spec.provider_id,
                     "model": spec.model_id,
@@ -748,8 +1416,10 @@ class ProviderFabric:
                     "provider_error_message": _safe_provider_message(
                         getattr(exc, "provider_message", None)
                     ),
-                    **dict(getattr(exc, "diagnostics", None) or {}),
+                    **diagnostics,
                 }
+                if private_checkpoint is not None:
+                    attempt["_private_composite_checkpoint"] = private_checkpoint
                 attempts.append(attempt)
                 if exc.category == "content_request":
                     exc.route_attempts = attempts
@@ -781,15 +1451,20 @@ class ProviderFabric:
                     retry_at_monotonic=(now + retry_after if retry_after is not None else None),
                     retry_after_seconds=retry_after,
                 )
-            attempts.append({
+            diagnostics = dict(result.diagnostics)
+            private_checkpoint = diagnostics.pop("_private_composite_checkpoint", None)
+            success_attempt = {
                 "provider": spec.provider_id,
                 "model": spec.model_id,
                 "status": "success",
                 "decision": "accepted",
                 "latency_ms": result.latency_ms,
                 "quota": result.quota,
-                **result.diagnostics,
-            })
+                **diagnostics,
+            }
+            if private_checkpoint is not None:
+                success_attempt["_private_composite_checkpoint"] = private_checkpoint
+            attempts.append(success_attempt)
             result.route_attempts = attempts
             return result
 

@@ -1012,6 +1012,7 @@ def extract_visual_evidence(
         "warnings": [],
         "runs": [],
         "provider_attempts": [],
+        "composite_checkpoints": [],
         "retry_history": [],
         "provider_state": {
             "status": "ready",
@@ -1050,6 +1051,10 @@ def extract_visual_evidence(
             if isinstance(item, dict) and item.get("success") is not True
         ]
         record["provider_attempts"] = list(checkpoint_record.get("provider_attempts") or [])
+        record["composite_checkpoints"] = [
+            dict(item) for item in checkpoint_record.get("composite_checkpoints") or []
+            if isinstance(item, dict)
+        ]
         record["evidence"] = list(checkpoint_record.get("evidence") or [])
         record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
         record["assets"] = list(checkpoint_record.get("assets") or [])
@@ -1110,6 +1115,19 @@ def extract_visual_evidence(
         record["summary"]["image_count"] += 1
 
     total_regions = len(unique_regions)
+    composite_by_crop = {
+        str(item.get("crop_digest")): item
+        for item in record.get("composite_checkpoints") or []
+        if isinstance(item, dict) and item.get("crop_digest")
+    }
+
+    def retain_composite_checkpoint(value: Any, crop_digest: str) -> None:
+        if not isinstance(value, dict):
+            return
+        stored = {**value, "crop_digest": crop_digest}
+        composite_by_crop[crop_digest] = stored
+        record["composite_checkpoints"] = list(composite_by_crop.values())
+
     completed_runs = {
         item["rendered_asset_ref"]: item
         for item in record["runs"]
@@ -1327,6 +1345,7 @@ def extract_visual_evidence(
                         privacy_classification=privacy_classification,
                         prompt=prompt,
                         response_schema=_vision_schema(int(region["page"])),
+                        provider_checkpoint=composite_by_crop.get(artifact["sha256"]),
                     ),
                     deadline_monotonic=phase_started + phase_timeout_seconds,
                     remaining_requests=total_regions - index + 1,
@@ -1340,11 +1359,20 @@ def extract_visual_evidence(
                     "rate_limits": provider_result.quota,
                 })
                 for attempt in provider_result.route_attempts:
+                    safe_attempt = dict(attempt)
+                    private_checkpoint = safe_attempt.pop(
+                        "_private_composite_checkpoint", None
+                    )
+                    retain_composite_checkpoint(private_checkpoint, artifact["sha256"])
                     record["provider_attempts"].append({
-                        **attempt,
+                        **safe_attempt,
                         "region_id": region["asset_path"],
                         "crop_digest": artifact["sha256"],
                     })
+                retain_composite_checkpoint(
+                    provider_result.diagnostics.get("_private_composite_checkpoint"),
+                    artifact["sha256"],
+                )
                 record["provider_state"] = {
                     "status": "ready",
                     "circuits": fabric.circuit_audit(),
@@ -1368,11 +1396,22 @@ def extract_visual_evidence(
             code = getattr(exc, "code", "VISUAL_PROVIDER_FAILED")
             route_attempts = list(getattr(exc, "attempts", None) or getattr(exc, "route_attempts", None) or [])
             for attempt in route_attempts:
+                safe_attempt = dict(attempt)
+                private_checkpoint = safe_attempt.pop(
+                    "_private_composite_checkpoint", None
+                )
+                retain_composite_checkpoint(private_checkpoint, artifact["sha256"])
                 record["provider_attempts"].append({
-                    **attempt,
+                    **safe_attempt,
                     "region_id": region["asset_path"],
                     "crop_digest": artifact["sha256"],
                 })
+            retain_composite_checkpoint(
+                (getattr(exc, "diagnostics", None) or {}).get(
+                    "_private_composite_checkpoint"
+                ),
+                artifact["sha256"],
+            )
             if runner is None:
                 record["summary"]["vision_calls"] += sum(
                     item.get("status") in {"success", "failed"} for item in route_attempts
