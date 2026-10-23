@@ -302,3 +302,7 @@ version is bumped to `cloudflare-grounded-structurer-v3`. This repair is offline
 only in Phase 8.4C.4. The durable Stage-V cache means a future separately
 authorized proof requires no new image inference, but one new Stage-S call is
 still required.
+
+Hosted qualification run `39917945366` passed on repair commit
+`24860d72cde0b20e0bad602bdd23fd08bf4a7f3a`. The qualification used no provider
+inference and does not authorize another live activation attempt.
