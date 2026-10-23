@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import subprocess
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -231,35 +232,38 @@ def test_authorized_cached_stage_s_proof_refuses_new_stage_v_call(monkeypatch, t
         activation.run_stage_v()
 
 
-def test_private_stage_s_provider_body_artifact_is_synthetic_only(tmp_path):
+def test_private_stage_s_provider_body_artifact_is_synthetic_only():
     fixture = activation.synthetic_composite_fixture()
     request = activation._request(fixture)
     body = _provider_body()
     digest = hashlib.sha256(json.dumps(
         body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")).hexdigest()
-    path = tmp_path / "private-stage-s.json"
-    artifact = activation.persist_synthetic_stage_s_provider_body(
-        path,
-        request=request,
-        fixture_id=fixture["id"],
-        model=provider_fabric.CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
-        transcript_digest="synthetic-transcript-digest",
-        provider_body=body,
-        raw_result_digest=digest,
-    )
-    assert path.exists()
-    assert subprocess.run(
-        ["git", "check-ignore", "-q", str(path)],
-        cwd=Path.cwd(), check=False,
-    ).returncode == 0
-    assert artifact["raw_provider_body_digest"] == digest
-    assert artifact["raw_provider_body"] == body
-    assert artifact["privacy_classification"] == provider_fabric.PRIVACY_SYNTHETIC_TEST
-    serialized = json.dumps(artifact).lower()
-    assert all(marker not in serialized for marker in (
-        "authorization", "api_key", "sb_secret_", "service_role", "data:image"
-    ))
+    private_root = Path.cwd() / "provisioning-private"
+    private_root.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=private_root) as directory:
+        path = Path(directory) / "private-stage-s.json"
+        artifact = activation.persist_synthetic_stage_s_provider_body(
+            path,
+            request=request,
+            fixture_id=fixture["id"],
+            model=provider_fabric.CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
+            transcript_digest="synthetic-transcript-digest",
+            provider_body=body,
+            raw_result_digest=digest,
+        )
+        assert path.exists()
+        assert subprocess.run(
+            ["git", "check-ignore", "-q", str(path)],
+            cwd=Path.cwd(), check=False,
+        ).returncode == 0
+        assert artifact["raw_provider_body_digest"] == digest
+        assert artifact["raw_provider_body"] == body
+        assert artifact["privacy_classification"] == provider_fabric.PRIVACY_SYNTHETIC_TEST
+        serialized = json.dumps(artifact).lower()
+        assert all(marker not in serialized for marker in (
+            "authorization", "api_key", "sb_secret_", "service_role", "data:image"
+        ))
 
 
 def test_private_stage_s_provider_body_refuses_school_private(tmp_path):
