@@ -31,18 +31,32 @@ def _discovery() -> dict:
 
 
 def test_stage_v_fixture_quality_requires_equation_labels_and_relation():
-    passed = activation.assess_stage_v_transcript(TRANSCRIPT)
-    partial = activation.assess_stage_v_transcript("MATH: 10/250 = 1/25")
+    expected = activation.synthetic_composite_fixture()["expected_evidence"]
+    passed = activation.assess_stage_v_transcript(TRANSCRIPT, expected)
+    partial = activation.assess_stage_v_transcript("MATH: 10/250 = 1/25", expected)
     assert passed["status"] == "pass"
     assert passed["unexpected_numbers"] == []
     assert partial["status"] == "partial"
 
 
 def test_stage_v_fixture_quality_allows_visible_two_circle_cardinality():
+    expected = activation.synthetic_composite_fixture()["expected_evidence"]
     transcript = TRANSCRIPT + "\nRELATION: 2 circles overlap."
-    result = activation.assess_stage_v_transcript(transcript)
+    result = activation.assess_stage_v_transcript(transcript, expected)
     assert result["status"] == "pass"
     assert result["unexpected_numbers"] == []
+
+
+def test_stage_v_cardinality_is_not_globally_allowed():
+    expected = {
+        **activation.synthetic_composite_fixture()["expected_evidence"],
+        "visible_numeric_tokens": ["10", "250", "1", "25", "0.04", "4", "1.2", "3"],
+        "spatial_cardinalities": [],
+    }
+    transcript = TRANSCRIPT + "\nRELATION: 2 circles overlap."
+    result = activation.assess_stage_v_transcript(transcript, expected)
+    assert result["status"] == "partial"
+    assert result["unexpected_numbers"] == ["2"]
 
 
 def test_discovery_intersects_visibility_and_current_production_allowlists(monkeypatch):

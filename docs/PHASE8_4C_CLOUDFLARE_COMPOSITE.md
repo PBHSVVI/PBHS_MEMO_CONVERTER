@@ -85,8 +85,11 @@ visibly contains two circles. Stage S was therefore correctly not called. The
 run used one total inference call, incurred no billable spend, and did not set
 activation variables.
 
-The synthetic gate now recognizes the visible two-circle cardinality, with an
-offline regression. The live success gate remains unmet because the one-call
+The synthetic gate now reads expected equation fragments, labels, relationship
+terms, numeric tokens, and spatial cardinalities from the deterministic fixture
+manifest. The visible two-circle cardinality is accepted only for a fixture
+that declares it; a separate regression proves it remains unsupported for a
+fixture that does not. The live success gate remains unmet because the one-call
 budget for that activation run was not retried and Stage S, grounding,
 production-schema, cache, and failover live proofs did not execute. A separately
 authorized bounded activation run is required before Stage 1B.

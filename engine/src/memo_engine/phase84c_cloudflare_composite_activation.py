@@ -61,6 +61,13 @@ def synthetic_composite_fixture() -> dict[str, Any]:
         "image": stream.getvalue(),
         "width": image.width,
         "height": image.height,
+        "expected_evidence": {
+            "required_equation_fragments": ["10", "250", "1/25", "0.04", "4%"],
+            "required_labels": ["A", "B"],
+            "relationship_terms": ["overlap", "intersection", "intersect", "shared"],
+            "visible_numeric_tokens": ["10", "250", "1", "25", "0.04", "4", "1.2", "2", "3"],
+            "spatial_cardinalities": ["2"],
+        },
     }
 
 
@@ -107,23 +114,26 @@ def _numbers(value: str) -> set[str]:
     return set(re.findall(r"(?<![A-Za-z])\d+(?:[.,]\d+)?", value))
 
 
-def assess_stage_v_transcript(transcript: str) -> dict[str, Any]:
+def assess_stage_v_transcript(
+    transcript: str, expected_evidence: dict[str, Any]
+) -> dict[str, Any]:
     compact = " ".join(transcript.split())
     math_compact = re.sub(r"\s+", "", compact).replace(",", ".")
+    equation_fragments = [str(value) for value in expected_evidence["required_equation_fragments"]]
+    labels = [str(value) for value in expected_evidence["required_labels"]]
+    relationship_terms = [str(value) for value in expected_evidence["relationship_terms"]]
     recovered = {
-        "10": "10" in math_compact,
-        "250": "250" in math_compact,
-        "1/25": "1/25" in math_compact,
-        "0.04": "0.04" in math_compact,
-        "4%": "4%" in math_compact,
-        "label_A": re.search(r"\bA\b", compact) is not None,
-        "label_B": re.search(r"\bB\b", compact) is not None,
-        "overlap_relation": re.search(r"\b(overlap|intersection|intersect|shared)\b", compact, re.I) is not None,
+        **{value: value in math_compact for value in equation_fragments},
+        **{
+            f"label_{label}": re.search(rf"\b{re.escape(label)}\b", compact) is not None
+            for label in labels
+        },
+        "overlap_relation": any(
+            re.search(rf"\b{re.escape(term)}\b", compact, re.I) is not None
+            for term in relationship_terms
+        ),
     }
-    # The deterministic fixture contains two overlapping circles.  A vision
-    # transcript may state that visible cardinality as "2" even though the
-    # numeral is not printed inside the crop.
-    allowed = {"10", "250", "1", "25", "0.04", "4", "1.2", "2", "3"}
+    allowed = {str(value) for value in expected_evidence["visible_numeric_tokens"]}
     unexpected = sorted(_numbers(compact) - allowed)
     return {
         "status": "pass" if all(recovered.values()) and not unexpected else (
@@ -222,7 +232,9 @@ def run() -> dict[str, Any]:
             raise RuntimeError("PHASE84C_STAGE_V_BUDGET_EXCEEDED")
         calls["stage_v"] += 1
         value = original_v(*args)
-        quality = assess_stage_v_transcript(value["transcript"])
+        quality = assess_stage_v_transcript(
+            value["transcript"], fixture["expected_evidence"]
+        )
         captures["stage_v_quality"] = quality
         if quality["status"] != "pass":
             raise ProviderError(
@@ -315,7 +327,9 @@ def run() -> dict[str, Any]:
         f"{item.get('transcription') or ''} {item.get('normalized_math') or ''}"
         for item in validated["evidence"]
     )
-    final_quality = assess_stage_v_transcript(evidence_text)
+    final_quality = assess_stage_v_transcript(
+        evidence_text, fixture["expected_evidence"]
+    )
     diagram_present = any(item.get("kind") == "diagram_entry" for item in validated["evidence"])
     final_quality["diagram_entry_present"] = diagram_present
     final_quality["status"] = (
