@@ -84,7 +84,11 @@ jobs:
         shell: bash
         run: |
           python -m engine.src.memo_engine.phase84c_cloudflare_composite_activation
-          echo "cache_key=$(python -c \"import json; print(json.load(open('/tmp/phase84c-identity.json'))['cache_key'])\")" >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open('/tmp/phase84c-identity.json', encoding='utf-8') as source:
+              print('cache_key=' + json.load(source)['cache_key'])
+          PY
       - name: Restore exact synthetic Stage-V checkpoint
         id: restore-stage-v
         uses: actions/cache/restore@v4
