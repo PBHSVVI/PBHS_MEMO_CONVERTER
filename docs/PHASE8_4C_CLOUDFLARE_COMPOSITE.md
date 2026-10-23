@@ -360,3 +360,53 @@ privacy classification except `synthetic_test`, scans for credential markers,
 uses a private temporary workflow path, and retains the artifact for 14 days.
 Sanitized reports expose failure paths, categories, normalization metadata, and
 artifact presence without exposing rejected values or evidence content.
+
+## Phase 8.4C.7 composite claim boundary and offline forensic replay
+
+The Phase 8.4C.6 private artifact is preserved as a credential-free regression
+fixture with provenance `captured synthetic activation shape`. Its digests match
+the captured provider body and durable Stage-V transcript. Under the historical
+policy it contains 60 populated leaves, 40 content-bearing leaves, and seven
+grounding rows. The first failure is the unknown `prinited_value` leaf. Ignoring
+that row exposes 34 missing paths; uniquely repairing it exposes 33. Those
+missing paths include 24 image-space coordinates, six question references,
+normalized-math duplicates, and a structural visual-presence boolean. The body
+also contains a zero-delta mark-change claim.
+
+`cloudflare-composite-claim-boundary-v1` now preprocesses only Cloudflare's
+text-only Stage-S output before grounding. Schema version, page, evidence source,
+and mark-confirmation policy are application constants. Visual presence and crop
+ownership are application-derived. Bounding boxes and independently asserted
+normalized mathematics are unavailable to the current text-only Stage S and are
+set to null. Evidence kind, mark-change level, and confidence remain model
+semantic metadata. Transcription, warnings, and genuinely different mark values
+remain model content.
+
+The application derives `visual_content_present` from surviving evidence or
+mark-change records and sets model question references to null so the existing
+region association assigns the single deterministic crop owner. It discards
+non-null model bounding boxes, independently emitted normalized mathematics, and
+equal printed/visual mark changes with explicit audit counts. Source-backed
+transcription and diagram evidence remain unchanged; spatial rendering continues
+to preserve the source crop.
+
+Grounding requirements are generated from the sanitized payload under
+`cloudflare-grounding-policy-v3`. Unknown future fields remain content-bearing.
+`cloudflare-grounding-pointer-normalizer-v1` may repair only one unique,
+one-edit final leaf under the exact same parent and array index. It cannot change
+parents, indexes, containers, exempt fields, ambiguous names, or semantic terms.
+Grounding rows for nulled, removed, or application-derived fields are removed and
+cannot resurrect discarded model content.
+
+The captured body reduces deterministically to 23 populated leaves, five actual
+content-bearing transcription claims, five supplied and accepted grounding rows,
+and zero missing or unknown rows. The offline replay uses the same assembly,
+internal-wrapper, grounding, and production visual-response validators as the
+provider adapter and creates a normal successful `ProviderResult` without any
+network call.
+
+The Stage-S prompt is `cloudflare-grounded-structurer-v6`; it requires null
+bounding boxes, application-owned crop association, null normalized mathematics,
+spatial `diagram_entry` guidance, explicit evidence for real mark changes, and no
+diagram-number or zero-delta mark changes. Composite checkpoints are version 3.
+The Stage-V prompt and durable transcript identity remain unchanged.

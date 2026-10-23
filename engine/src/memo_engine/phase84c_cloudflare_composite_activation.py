@@ -334,6 +334,10 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
             "enum_normalization_results",
         }
     } if isinstance(diagnostics, dict) else {}
+    safe_claim_boundary = {
+        key: value for key, value in (diagnostics or {}).items()
+        if key.startswith("claim_boundary_")
+    } if isinstance(diagnostics, dict) else {}
     return {
         "status": "failed",
         "error_code": getattr(exc, "code", type(exc).__name__),
@@ -344,6 +348,7 @@ def _safe_failure(exc: Exception) -> dict[str, Any]:
         "composite_stage": diagnostics.get("composite_stage") if isinstance(diagnostics, dict) else None,
         **safe_grounding,
         **safe_enum,
+        **safe_claim_boundary,
     }
 
 

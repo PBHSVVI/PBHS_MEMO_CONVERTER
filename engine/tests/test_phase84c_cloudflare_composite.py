@@ -81,7 +81,6 @@ def _wrapper(payload: dict | None = None) -> dict:
             {"path": "/payload/evidence/0/normalized_math", "evidence_quote": "MATH: 10/250 = 1/25 = 0.04 = 4%"},
             {"path": "/payload/evidence/1/question_ref", "evidence_quote": "LABEL: Question 1.2"},
             {"path": "/payload/evidence/1/transcription", "evidence_quote": "RELATION: A overlaps B; overlap contains 3."},
-            {"path": "/payload/visual_content_present", "evidence_quote": "ROLE: visible solution evidence"},
         ],
     }
 
@@ -256,17 +255,23 @@ def test_mark_change_level_uses_same_lexical_only_normalizer():
     assert provenance["applied"][0]["path"].endswith("/level")
 
 
-def test_prompt_v5_locks_closed_kinds_and_prefix_mapping():
+def test_prompt_v6_locks_closed_kinds_and_prefix_mapping():
     prompt = provider_fabric.cloudflare_stage_s_prompt(
         TRANSCRIPT, visual_evidence._vision_schema(1)
     )
-    assert provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION.endswith("-v5")
+    assert provider_fabric.CLOUDFLARE_STRUCTURER_PROMPT_VERSION.endswith("-v6")
     for kind in visual_evidence.EVIDENCE_KINDS:
         assert kind in prompt
     assert "Stage-V prefixes are evidence-reading aids, NOT output evidence.kind values" in prompt
     assert "LABEL: is diagram_entry" in prompt
     assert "RELATION: is diagram_entry" in prompt
     assert "QUESTION: must not become answer or answer_working" in prompt
+    assert "bbox MUST be null" in prompt
+    assert "question_ref MUST be null" in prompt
+    assert "normalized_math MUST be null" in prompt
+    assert "ordinary diagram values" in prompt
+    assert "equal printed/visual values are invalid no-op changes" in prompt
+    assert "grounding paths refer only to model-owned content fields" in prompt
     assert visual_evidence.EVIDENCE_KINDS == {
         "answer", "answer_working", "marking_note", "teacher_comment",
         "tick", "cross", "diagram_entry", "other_visible_annotation",
@@ -329,7 +334,10 @@ def test_two_stage_success_creates_composite_provider_result(monkeypatch):
     spec = default_provider_registry()["cloudflare"]
     result = cloudflare_composite_visual_adapter(_request(), spec, None, 1, lambda: 0)
     assert result.status == "success" and result.provider_id == "cloudflare"
-    assert result.normalized_result == _payload()
+    expected, _audit = provider_fabric.prepare_cloudflare_composite_provider_body(
+        _provider_body(), _request()
+    )
+    assert result.normalized_result == expected["payload"]
     assert result.diagnostics["vision_model"] == CLOUDFLARE_COMPOSITE_VISION_MODEL
     assert result.diagnostics["structurer_model"] == CLOUDFLARE_PREFERRED_STRUCTURER_MODEL
     assert result.diagnostics["grounding_status"] == "passed"
@@ -483,7 +491,6 @@ def test_corrected_arithmetic_not_in_transcript_fails_grounding():
         {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
         {"path": "/payload/evidence/0/transcription", "evidence_quote": "MATH: 2 + 2 = 5"},
         {"path": "/payload/evidence/0/normalized_math", "evidence_quote": "MATH: 2 + 2 = 5"},
-        {"path": "/payload/visual_content_present", "evidence_quote": "MATH: 2 + 2 = 5"},
     ]}
     with pytest.raises(ProviderError) as caught:
         validate_cloudflare_grounding(wrapper, transcript)
@@ -529,7 +536,6 @@ def test_question_only_transcript_cannot_become_answer():
                "payload": payload, "grounding": [
         {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
         {"path": "/payload/evidence/0/transcription", "evidence_quote": "QUESTION: Calculate 2 + 2"},
-        {"path": "/payload/visual_content_present", "evidence_quote": "QUESTION: Calculate 2 + 2"},
     ]}
     with pytest.raises(ProviderError) as caught:
         validate_cloudflare_grounding(wrapper, transcript)

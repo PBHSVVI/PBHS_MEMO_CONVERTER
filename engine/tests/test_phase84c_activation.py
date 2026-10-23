@@ -121,9 +121,9 @@ def test_mocked_live_success_proves_both_stage_cache_and_failover(monkeypatch):
     assert report["inference_calls"] == 2
     assert report["grounding"] == {
         "status": "passed",
-        "expected_content_path_count": 6,
-        "supplied_grounding_path_count": 6,
-        "valid_grounding_path_count": 6,
+        "expected_content_path_count": 5,
+        "supplied_grounding_path_count": 5,
+        "valid_grounding_path_count": 5,
         "missing_paths": [],
         "unknown_paths": [],
         "duplicate_paths": [],

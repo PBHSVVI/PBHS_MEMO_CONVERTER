@@ -82,7 +82,6 @@ def test_each_visible_label_requires_its_own_content_leaf_grounding(item_index, 
         "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
         "payload": payload,
         "grounding": [
-            {"path": "/payload/visual_content_present", "evidence_quote": "ROLE: visible solution evidence"},
             {"path": "/payload/evidence/0/question_ref", "evidence_quote": "LABEL: Question 1.2"},
             {"path": "/payload/evidence/0/transcription", "evidence_quote": "LABEL: A"},
             {"path": "/payload/evidence/1/question_ref", "evidence_quote": "LABEL: Question 1.2"},
@@ -220,7 +219,6 @@ def test_optional_absent_and_empty_containers_need_no_grounding():
 
 def test_current_production_payload_content_path_policy_is_complete_and_explicit():
     assert set(enumerate_cloudflare_content_paths(_payload())) == {
-        "/payload/visual_content_present",
         "/payload/evidence/0/question_ref",
         "/payload/evidence/0/transcription",
         "/payload/evidence/0/normalized_math",

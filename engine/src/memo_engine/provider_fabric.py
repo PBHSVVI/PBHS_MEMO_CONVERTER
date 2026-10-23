@@ -24,22 +24,49 @@ CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instru
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_PREFERRED_STRUCTURER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CLOUDFLARE_COMPOSITE_PROMPT_VERSION = "cloudflare-composite-vision-v1"
-CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v5"
+CLOUDFLARE_STRUCTURER_PROMPT_VERSION = "cloudflare-grounded-structurer-v6"
 CLOUDFLARE_GROUNDING_SCHEMA_VERSION = "cloudflare-grounded-wrapper-v2"
 CLOUDFLARE_PROVIDER_BODY_SCHEMA_VERSION = "cloudflare-grounded-provider-body-v1"
 CLOUDFLARE_ENUM_NORMALIZATION_VERSION = "cloudflare-semantic-enum-lexical-v1"
-CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v2"
+CLOUDFLARE_GROUNDING_POINTER_NORMALIZATION_VERSION = (
+    "cloudflare-grounding-pointer-normalizer-v1"
+)
+CLOUDFLARE_GROUNDING_POLICY_VERSION = "cloudflare-grounding-policy-v3"
+CLOUDFLARE_COMPOSITE_CLAIM_BOUNDARY_VERSION = (
+    "cloudflare-composite-claim-boundary-v1"
+)
+CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v3"
 CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
 CLOUDFLARE_APPLICATION_METADATA_FIELDS = frozenset({
     "grounding_schema_version", "schema_version", "provider", "model",
     "provenance", "digests",
 })
+CLOUDFLARE_COMPOSITE_PAYLOAD_OWNERSHIP = {
+    "/payload/schema_version": "APPLICATION_CONSTANT",
+    "/payload/page": "APPLICATION_CONSTANT",
+    "/payload/visual_content_present": "APPLICATION_DERIVED",
+    "/payload/evidence/*/question_ref": "APPLICATION_DERIVED",
+    "/payload/evidence/*/kind": "MODEL_SEMANTIC_METADATA",
+    "/payload/evidence/*/transcription": "MODEL_CONTENT",
+    "/payload/evidence/*/normalized_math": "UNAVAILABLE_TO_STAGE_S",
+    "/payload/evidence/*/confidence": "MODEL_SEMANTIC_METADATA",
+    "/payload/evidence/*/source": "APPLICATION_CONSTANT",
+    "/payload/evidence/*/bbox": "UNAVAILABLE_TO_STAGE_S",
+    "/payload/mark_changes/*/question_ref": "APPLICATION_DERIVED",
+    "/payload/mark_changes/*/level": "MODEL_SEMANTIC_METADATA",
+    "/payload/mark_changes/*/printed_value": "MODEL_CONTENT",
+    "/payload/mark_changes/*/visual_value": "MODEL_CONTENT",
+    "/payload/mark_changes/*/confidence": "MODEL_SEMANTIC_METADATA",
+    "/payload/mark_changes/*/requires_confirmation": "APPLICATION_CONSTANT",
+    "/payload/mark_changes/*/bbox": "UNAVAILABLE_TO_STAGE_S",
+    "/payload/warnings/*": "MODEL_CONTENT",
+}
 
 # This policy is authoritative for both Stage-S prompting and deterministic
 # validation. Paths not explicitly exempted are content-bearing by default.
 # Array indexes are normalized to ``*`` for policy matching only; diagnostics
 # always retain their exact indexed JSON Pointer paths.
-CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS = frozenset({
+CLOUDFLARE_GROUNDING_POLICY_V2_EXEMPT_PATH_PATTERNS = frozenset({
     "/payload/schema_version",
     "/payload/page",
     "/payload/evidence/*/kind",
@@ -48,6 +75,10 @@ CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS = frozenset({
     "/payload/mark_changes/*/level",
     "/payload/mark_changes/*/confidence",
     "/payload/mark_changes/*/requires_confirmation",
+})
+CLOUDFLARE_GROUNDING_EXEMPT_PATH_PATTERNS = frozenset({
+    *CLOUDFLARE_GROUNDING_POLICY_V2_EXEMPT_PATH_PATTERNS,
+    "/payload/visual_content_present",
 })
 CLOUDFLARE_GROUNDING_VALIDATION_MODES = {
     "/payload/visual_content_present": "presence",
@@ -765,16 +796,27 @@ Stage-V prefixes are evidence-reading aids, NOT output evidence.kind values:
 - QUESTION: must not become answer or answer_working merely because it is present;
 - UNCERTAIN: must not become a confident invented evidence record.
 Do not create an evidence item for every transcript line.
+When a value, label, or relation is explicitly located in a diagram region,
+intersection, branch, node, circle, or other spatial structure, use diagram_entry,
+not answer_working, unless it is mathematical working outside the diagram.
 
 Payload contract vocabulary:
 - schema_version is exactly {version_text};
 - page is the requested integer page and visual_content_present is boolean;
 - evidence kind is one of: {kind_text};
 - evidence source is exactly visual_overlay;
+- bbox MUST be null because Stage S receives no image-space coordinates;
+- question_ref MUST be null; deterministic crop ownership is assigned by the application;
+- normalized_math MUST be null; transcription is the grounded visible source claim;
 - mark-change level is one of: item, subtotal, document_total;
 - requires_confirmation is exactly true;
+- create mark_changes only when the transcript explicitly states that a printed
+  mark allocation changed to a different visual value;
+- ordinary diagram values, mathematical answers, and spatial cardinalities are
+  not mark changes, and equal printed/visual values are invalid no-op changes;
 - confidence is numeric from 0 through 1;
-- bounding boxes are null or exactly four numeric coordinates;
+- bounding boxes are null;
+- grounding paths refer only to model-owned content fields;
 - do not add fields outside the requested payload and grounding objects."""
 
 
@@ -1045,6 +1087,204 @@ def normalize_cloudflare_model_semantic_enums(
         "version": CLOUDFLARE_ENUM_NORMALIZATION_VERSION,
         "inspected_paths": inspected,
         "applied": applied,
+    }
+
+
+def _bounded_leaf_edit_distance(left: str, right: str) -> int:
+    """Return a small Damerau-Levenshtein distance, capped above one."""
+    if left == right:
+        return 0
+    if abs(len(left) - len(right)) > 1:
+        return 2
+    if len(left) == len(right):
+        differences = [index for index, pair in enumerate(zip(left, right)) if pair[0] != pair[1]]
+        if len(differences) == 1:
+            return 1
+        if len(differences) == 2:
+            first, second = differences
+            if (
+                second == first + 1
+                and left[first] == right[second]
+                and left[second] == right[first]
+            ):
+                return 1
+        return 2
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    for index in range(len(longer)):
+        if longer[:index] + longer[index + 1:] == shorter:
+            return 1
+    return 2
+
+
+def normalize_cloudflare_grounding_pointers(
+    provider_body: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Repair only unique one-edit final-leaf grounding pointer typos."""
+    result = copy.deepcopy(provider_body)
+    payload = result.get("payload")
+    entries = result.get("grounding")
+    applied: list[dict[str, str]] = []
+    if not isinstance(payload, dict) or not isinstance(entries, list):
+        return result, {
+            "version": CLOUDFLARE_GROUNDING_POINTER_NORMALIZATION_VERSION,
+            "applied": applied,
+        }
+    requirements = enumerate_cloudflare_content_paths(payload)
+    known_paths = set(_populated_json_pointer_leaves(payload))
+    syntax = re.compile(r"^/payload(?:/(?:[^~/]|~[01])+)+$")
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            continue
+        original = entry["path"]
+        if original in known_paths or syntax.fullmatch(original) is None:
+            continue
+        parent, separator, leaf = original.rpartition("/")
+        if not separator or not parent or not leaf:
+            continue
+        candidates = [
+            path for path in requirements
+            if path.rpartition("/")[0] == parent
+            and _bounded_leaf_edit_distance(leaf, path.rpartition("/")[2]) <= 1
+        ]
+        if len(candidates) != 1:
+            continue
+        canonical = candidates[0]
+        entry["path"] = canonical
+        applied.append({
+            "original_schema_path": original,
+            "canonical_schema_path": canonical,
+        })
+    return result, {
+        "version": CLOUDFLARE_GROUNDING_POINTER_NORMALIZATION_VERSION,
+        "applied": applied,
+    }
+
+
+def _composite_application_controlled_path(path: str) -> bool:
+    pattern = _grounding_policy_pattern(path)
+    if "/bbox/" in pattern:
+        pattern = pattern.rsplit("/", 1)[0]
+    ownership = CLOUDFLARE_COMPOSITE_PAYLOAD_OWNERSHIP.get(pattern)
+    return ownership in {
+        "APPLICATION_CONSTANT", "APPLICATION_DERIVED", "UNAVAILABLE_TO_STAGE_S"
+    }
+
+
+def prepare_cloudflare_composite_provider_body(
+    provider_output: Any,
+    request: ProviderTaskRequest,
+) -> tuple[Any, dict[str, Any]]:
+    """Apply audited deterministic claim boundaries before grounding validation."""
+    result = copy.deepcopy(provider_output)
+    if not isinstance(result, dict) or not isinstance(result.get("payload"), dict):
+        return result, {
+            "version": CLOUDFLARE_COMPOSITE_CLAIM_BOUNDARY_VERSION,
+            "grounding_policy_version": CLOUDFLARE_GROUNDING_POLICY_VERSION,
+        }
+    payload = result["payload"]
+    raw_populated = len(_populated_json_pointer_leaves(payload))
+    raw_content = len(enumerate_cloudflare_v2_content_paths(payload))
+    raw_grounding_count = len(result.get("grounding") or []) if isinstance(
+        result.get("grounding"), list
+    ) else 0
+    bbox_discarded = 0
+    question_refs_discarded = 0
+    normalized_math_discarded = 0
+    evidence = payload.get("evidence")
+    if isinstance(evidence, list):
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            bbox_discarded += int(item.get("bbox") is not None)
+            question_refs_discarded += int(item.get("question_ref") is not None)
+            normalized_math_discarded += int(item.get("normalized_math") is not None)
+            item["bbox"] = None
+            item["question_ref"] = None
+            item["normalized_math"] = None
+            item["source"] = "visual_overlay"
+
+    original_changes = payload.get("mark_changes")
+    kept_changes: list[Any] = []
+    mark_index_map: dict[int, int] = {}
+    no_op_discarded = 0
+    if isinstance(original_changes, list):
+        for old_index, item in enumerate(original_changes):
+            if isinstance(item, dict):
+                bbox_discarded += int(item.get("bbox") is not None)
+                question_refs_discarded += int(item.get("question_ref") is not None)
+            if (
+                isinstance(item, dict)
+                and item.get("printed_value") is not None
+                and item.get("visual_value") is not None
+                and item.get("printed_value") == item.get("visual_value")
+            ):
+                no_op_discarded += 1
+                continue
+            new_index = len(kept_changes)
+            mark_index_map[old_index] = new_index
+            if isinstance(item, dict):
+                item["bbox"] = None
+                item["question_ref"] = None
+                item["requires_confirmation"] = True
+            kept_changes.append(item)
+        payload["mark_changes"] = kept_changes
+
+    payload["schema_version"] = request.interpretation_schema_version
+    payload["page"] = request.source_page
+    payload["visual_content_present"] = bool(
+        (payload.get("evidence") if isinstance(payload.get("evidence"), list) else [])
+        or (payload.get("mark_changes") if isinstance(payload.get("mark_changes"), list) else [])
+    )
+
+    filtered_grounding: list[Any] = []
+    removed_grounding = 0
+    for entry in result.get("grounding") or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            filtered_grounding.append(entry)
+            continue
+        path = entry["path"]
+        mark_match = re.fullmatch(r"/payload/mark_changes/(\d+)(/.*)", path)
+        if mark_match:
+            old_index = int(mark_match.group(1))
+            if old_index not in mark_index_map:
+                removed_grounding += 1
+                continue
+            path = (
+                f"/payload/mark_changes/{mark_index_map[old_index]}"
+                f"{mark_match.group(2)}"
+            )
+        if _composite_application_controlled_path(path):
+            removed_grounding += 1
+            continue
+        filtered_grounding.append({**entry, "path": path})
+    result["grounding"] = filtered_grounding
+    result, pointer_audit = normalize_cloudflare_grounding_pointers(result)
+    sanitized_populated = len(_populated_json_pointer_leaves(payload))
+    sanitized_requirements = enumerate_cloudflare_content_paths(payload)
+    supplied_paths = [
+        item.get("path") for item in result.get("grounding") or []
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+    accepted_paths = set(supplied_paths) & set(sanitized_requirements)
+    return result, {
+        "version": CLOUDFLARE_COMPOSITE_CLAIM_BOUNDARY_VERSION,
+        "grounding_policy_version": CLOUDFLARE_GROUNDING_POLICY_VERSION,
+        "pointer_normalization_version": pointer_audit["version"],
+        "pointer_normalization_applied": pointer_audit["applied"],
+        "unsupported_model_bbox_discarded_count": bbox_discarded,
+        "model_question_ref_discarded_count": question_refs_discarded,
+        "model_normalized_math_discarded_count": normalized_math_discarded,
+        "no_op_mark_changes_discarded_count": no_op_discarded,
+        "raw_populated_leaf_count": raw_populated,
+        "raw_content_bearing_count": raw_content,
+        "raw_supplied_grounding_count": raw_grounding_count,
+        "sanitized_populated_leaf_count": sanitized_populated,
+        "sanitized_content_bearing_count": len(sanitized_requirements),
+        "sanitized_supplied_grounding_count": len(supplied_paths),
+        "accepted_grounding_count": len(accepted_paths),
+        "removed_or_application_derived_grounding_count": removed_grounding,
+        "missing_grounding_count": len(set(sanitized_requirements) - accepted_paths),
+        "unknown_grounding_count": len(set(supplied_paths) - set(_populated_json_pointer_leaves(payload))),
     }
 
 
@@ -1357,6 +1597,79 @@ def enumerate_cloudflare_content_paths(payload: dict[str, Any]) -> dict[str, dic
                 "value": value,
             }
     return requirements
+
+
+def enumerate_cloudflare_v2_content_paths(
+    payload: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Enumerate the pre-8.4C.7 policy for captured-artifact forensics only."""
+    requirements: dict[str, dict[str, Any]] = {}
+    for path, value in _populated_json_pointer_leaves(payload).items():
+        pattern = _grounding_policy_pattern(path)
+        if pattern in CLOUDFLARE_GROUNDING_POLICY_V2_EXEMPT_PATH_PATTERNS:
+            continue
+        requirements[path] = {
+            "classification": "content_bearing",
+            "validation_mode": (
+                "tokens" if "/bbox/" in pattern else
+                CLOUDFLARE_GROUNDING_VALIDATION_MODES.get(pattern, "exact")
+            ),
+            "value": value,
+        }
+    return requirements
+
+
+def cloudflare_captured_body_failure_ladder(
+    provider_body: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe the old captured-body failures without exposing content values."""
+    payload = provider_body.get("payload") if isinstance(provider_body, dict) else None
+    entries = provider_body.get("grounding") if isinstance(provider_body, dict) else None
+    if not isinstance(payload, dict) or not isinstance(entries, list):
+        raise ValueError("CAPTURED_PROVIDER_BODY_INVALID")
+    leaves = _populated_json_pointer_leaves(payload)
+    requirements = enumerate_cloudflare_v2_content_paths(payload)
+    supplied = [
+        item.get("path") for item in entries
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+    unknown = sorted(set(supplied) - set(leaves))
+    valid_supplied = set(supplied) & set(requirements)
+    ignored_typo_missing = sorted(set(requirements) - valid_supplied)
+    corrected = copy.deepcopy(provider_body)
+    corrected, pointer_audit = normalize_cloudflare_grounding_pointers(corrected)
+    corrected_supplied = {
+        item.get("path") for item in corrected.get("grounding") or []
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    corrected_missing = sorted(set(requirements) - corrected_supplied)
+    question_ref_paths = sorted(
+        path for path, value in leaves.items()
+        if path.endswith("/question_ref")
+        and isinstance(value, str)
+        and re.fullmatch(r"Q\d+(?:\.\d+)*", value) is not None
+    )
+    no_op_change_count = sum(
+        1 for item in payload.get("mark_changes") or []
+        if isinstance(item, dict)
+        and item.get("printed_value") is not None
+        and item.get("visual_value") is not None
+        and item.get("printed_value") == item.get("visual_value")
+    )
+    return {
+        "raw_populated_leaf_count": len(leaves),
+        "raw_content_bearing_count": len(requirements),
+        "raw_supplied_grounding_count": len(supplied),
+        "unknown_paths": unknown,
+        "missing_after_unknown_path_ignored": ignored_typo_missing,
+        "missing_after_unique_pointer_repair": corrected_missing,
+        "pointer_normalization": pointer_audit,
+        "unavailable_bbox_paths": sorted(
+            path for path in requirements if "/bbox/" in path
+        ),
+        "model_question_ref_paths_with_q_prefix": question_ref_paths,
+        "no_op_mark_change_count": no_op_change_count,
+    }
 
 
 def enumerate_cloudflare_exempt_paths(payload: dict[str, Any]) -> set[str]:
@@ -1705,7 +2018,7 @@ def cloudflare_composite_visual_adapter(
         dict(request.provider_checkpoint)
         if isinstance(request.provider_checkpoint, dict) else {}
     )
-    checkpoint.setdefault("schema_version", CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION)
+    checkpoint["schema_version"] = CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION
 
     stage_v_cache_hit = _valid_stage_v_checkpoint(checkpoint, request, vision_model)
     if stage_v_cache_hit:
@@ -1760,13 +2073,17 @@ def cloudflare_composite_visual_adapter(
         stage_s = dict(checkpoint["stage_s"])
     else:
         live_s: dict[str, Any] = {}
+        claim_boundary: dict[str, Any] = {}
         try:
             live_s = cloudflare_stage_s_call(
                 request, structurer_model, transcript,
                 deadline_monotonic, remaining_requests, clock,
             )
+            prepared_body, claim_boundary = prepare_cloudflare_composite_provider_body(
+                live_s["provider_body"], request
+            )
             wrapper, assembly = assemble_cloudflare_grounded_wrapper(
-                live_s["provider_body"], request.response_schema
+                prepared_body, request.response_schema
             )
         except ProviderError as exc:
             checkpoint["stage_s"] = {
@@ -1789,6 +2106,10 @@ def cloudflare_composite_visual_adapter(
                 "circuit_provider": "cloudflare:json_structurer",
                 "stage_v_cache_hit": stage_v_cache_hit,
                 "_private_composite_checkpoint": checkpoint,
+                **{
+                    f"claim_boundary_{key}": value
+                    for key, value in claim_boundary.items()
+                },
             })
             raise
         stage_s = {
@@ -1809,6 +2130,7 @@ def cloudflare_composite_visual_adapter(
             ],
             "enum_normalization_version": assembly["enum_normalization_version"],
             "enum_normalization_applied": assembly["enum_normalization_applied"],
+            "claim_boundary": claim_boundary,
             "usage": live_s.get("usage") or {},
             "quota": live_s.get("quota") or {},
             "latency_ms": live_s.get("latency_ms"),
@@ -1831,6 +2153,10 @@ def cloudflare_composite_visual_adapter(
             "circuit_provider": "cloudflare:json_structurer",
             "stage_v_cache_hit": stage_v_cache_hit,
             "_private_composite_checkpoint": checkpoint,
+            **{
+                f"claim_boundary_{key}": value
+                for key, value in (stage_s.get("claim_boundary") or {}).items()
+            },
         })
         raise
     result_digest = hashlib.sha256(json.dumps(
@@ -1880,8 +2206,90 @@ def cloudflare_composite_visual_adapter(
             "enum_normalization_applied": stage_s.get(
                 "enum_normalization_applied", []
             ),
+            "claim_boundary": stage_s.get("claim_boundary", {}),
             "stage_v_cache_hit": stage_v_cache_hit,
             "stage_s_cache_hit": stage_s_cache_hit,
+            "grounding_status": "passed",
+            "_private_composite_checkpoint": checkpoint,
+        },
+    )
+
+
+def replay_cloudflare_composite_provider_body(
+    request: ProviderTaskRequest,
+    provider_body: dict[str, Any],
+    transcript: str,
+    *,
+    raw_result_digest: str | None = None,
+    vision_model: str = CLOUDFLARE_COMPOSITE_VISION_MODEL,
+    structurer_model: str = CLOUDFLARE_PREFERRED_STRUCTURER_MODEL,
+) -> ProviderResult:
+    """Replay a captured synthetic Stage-S body through production validation."""
+    prepared_body, claim_boundary = prepare_cloudflare_composite_provider_body(
+        provider_body, request
+    )
+    wrapper, assembly = assemble_cloudflare_grounded_wrapper(
+        prepared_body, request.response_schema
+    )
+    validate_cloudflare_internal_wrapper(wrapper, request.response_schema)
+    payload = validate_cloudflare_grounding(wrapper, transcript)
+    result_digest = _canonical_json_digest(payload)
+    raw_digest = raw_result_digest or _canonical_json_digest(provider_body)
+    transcript_digest = hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    checkpoint = {
+        "schema_version": CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
+        "stage_v": {
+            "status": "success",
+            "provider": "cloudflare",
+            "model": vision_model,
+            "source_digest": request.source_digest,
+            "crop_digest": request.crop_digest,
+            "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+            "transcript_digest": transcript_digest,
+            "transcript": transcript,
+        },
+        "stage_s": {
+            "status": "success",
+            "provider": "cloudflare",
+            "model": structurer_model,
+            "transcript_digest": transcript_digest,
+            "schema_version": request.interpretation_schema_version,
+            "grounding_schema_version": CLOUDFLARE_GROUNDING_SCHEMA_VERSION,
+            "prompt_version": CLOUDFLARE_STRUCTURER_PROMPT_VERSION,
+            "wrapper": wrapper,
+            "raw_result_digest": raw_digest,
+            "assembled_wrapper_digest": assembly["assembled_wrapper_digest"],
+            "claim_boundary": claim_boundary,
+        },
+        "final": {
+            "status": "success",
+            "result_digest": result_digest,
+            "vision_model": vision_model,
+            "structurer_model": structurer_model,
+        },
+    }
+    return ProviderResult(
+        provider_id="cloudflare",
+        model_id=_cloudflare_composite_model_id(vision_model, structurer_model),
+        task_type=request.task_type,
+        status="success",
+        normalized_result=payload,
+        request_attempt=1,
+        latency_ms=0,
+        usage={},
+        quota={},
+        result_digest=result_digest,
+        diagnostics={
+            "composite": True,
+            "offline_replay": True,
+            "vision_model": vision_model,
+            "vision_transcript_digest": transcript_digest,
+            "structurer_model": structurer_model,
+            "structurer_raw_result_digest": raw_digest,
+            "assembled_wrapper_digest": assembly["assembled_wrapper_digest"],
+            "enum_normalization_version": assembly["enum_normalization_version"],
+            "enum_normalization_applied": assembly["enum_normalization_applied"],
+            "claim_boundary": claim_boundary,
             "grounding_status": "passed",
             "_private_composite_checkpoint": checkpoint,
         },
