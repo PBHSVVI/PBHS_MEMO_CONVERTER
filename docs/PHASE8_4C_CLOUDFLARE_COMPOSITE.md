@@ -420,3 +420,42 @@ reusable only when fixture, source, crop, model, prompt and transcript digest al
 match; the returned composite checkpoint is normalized to the current v3
 version. No replacement Stage-V call is permitted or required. Phase 8.4C.8
 remains pending a separately authorized live proof.
+
+## Phase 8.4C.9 explicit Stage-V relation preservation
+
+The successful synthetic response from activation run `40097974169` isolated a
+lossy deterministic assembly boundary. Stage V explicitly emitted
+`RELATION: Venn diagram with two overlapping circles`; Stage S retained those
+words as a generic diagram entry but did not preserve an explicit relationship
+claim. The provider transport, JSON body, grounding, production schema, cache,
+and routing were otherwise valid.
+
+Policy `cloudflare-stage-v-relation-preservation-v1` preserves only non-empty
+lines beginning with the exact controlled `RELATION:` prefix from the accepted
+Stage-V transcript. The transcript, source, crop, prompt, model, and transcript
+digest must all match the request identity. The text is retained verbatim apart
+from whitespace normalization and prefix removal. Other Stage-V line types are
+not copied. A deterministic overlap-versus-disjoint conflict with Stage-S
+content fails closed.
+
+Preserved relationships live in a private composite provenance sidecar. They do
+not become fabricated production evidence rows, do not receive a confidence,
+bounding box, normalized mathematical expression, or geometry, and are not
+attributed to Stage S. The sidecar participates in the synthetic completeness
+gate and records the Stage-V model, transcript digest, source/crop identity,
+origin-line digest, and policy version. Production spatial rendering continues
+to preserve the source crop.
+
+The final composite checkpoint advances to `cloudflare-composite-v4`. Stage V
+artifact identity and Stage-S raw-body cache identity remain independent, so the
+accepted Stage-V transcript and Stage-S body remain reusable. The Stage-S prompt
+remains `cloudflare-grounded-structurer-v6`; its provider-body schema is
+unchanged. An old partial v3 final checkpoint cannot bypass v4 assembly.
+
+The exact captured synthetic fixture verifies Stage-V digest
+`b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387`
+and Stage-S raw-body digest
+`346d03614a263d46975534851afa851f7884ab3da674367a678d0f0f6b0e5074`.
+Final zero-call replay, hosted qualification, repository-variable activation,
+and the completion milestone are recorded only after all Phase 8.4C.9 gates
+pass.

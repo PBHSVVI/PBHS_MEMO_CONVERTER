@@ -306,6 +306,29 @@ def assess_stage_v_transcript(
     }
 
 
+def assess_preserved_composite_content(
+    evidence_text: str,
+    relation_preservation: dict[str, Any],
+    expected_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Assess Stage-S content plus independently preserved Stage-V relations."""
+    quality = assess_stage_v_transcript(evidence_text, expected_evidence)
+    relations = relation_preservation.get("relations", [])
+    has_overlap_relation = any(
+        isinstance(item, dict)
+        and provider_fabric._stage_v_relation_state(str(item.get("text") or ""))
+        == "overlapping"
+        for item in relations
+    )
+    quality["recovered"]["overlap_relation"] = has_overlap_relation
+    quality["status"] = (
+        "pass"
+        if all(quality["recovered"].values()) and not quality["unexpected_numbers"]
+        else "partial" if any(quality["recovered"].values()) else "fail"
+    )
+    return quality
+
+
 def _safe_failure(exc: Exception) -> dict[str, Any]:
     diagnostics = getattr(exc, "diagnostics", None)
     provider_message = getattr(exc, "provider_message", None)
@@ -752,8 +775,11 @@ def run() -> dict[str, Any]:
         f"{item.get('transcription') or ''} {item.get('normalized_math') or ''}"
         for item in validated["evidence"]
     )
-    final_quality = assess_stage_v_transcript(
-        evidence_text, fixture["expected_evidence"]
+    relation_preservation = checkpoint.get("stage_v_relation_preservation") or {}
+    final_quality = assess_preserved_composite_content(
+        evidence_text,
+        relation_preservation,
+        fixture["expected_evidence"],
     )
     diagram_present = any(item.get("kind") == "diagram_entry" for item in validated["evidence"])
     final_quality["diagram_entry_present"] = diagram_present
@@ -762,6 +788,23 @@ def run() -> dict[str, Any]:
         else "partial" if validated["evidence"] else "fail"
     )
     report["content_quality"] = final_quality
+    report["relation_preservation"] = {
+        "version": relation_preservation.get("version"),
+        "source_stage": relation_preservation.get("source_stage"),
+        "model": relation_preservation.get("model"),
+        "transcript_digest": relation_preservation.get("transcript_digest"),
+        "relation_count": relation_preservation.get("relation_count", 0),
+        "preserved_count": relation_preservation.get("preserved_count", 0),
+        "represented_by_stage_s_count": relation_preservation.get(
+            "represented_by_stage_s_count", 0
+        ),
+        "empty_relation_count": relation_preservation.get(
+            "empty_relation_count", 0
+        ),
+        "digest": relation_preservation.get("digest"),
+        "confidence_invented": False,
+        "geometry_invented": False,
+    }
     report["checkpoint"] = {
         "persisted": bool(checkpoint and checkpoint.get("final", {}).get("result_digest")),
         "vision_transcript_digest_present": bool(stage_v.get("transcript_digest")),

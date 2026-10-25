@@ -1,0 +1,100 @@
+{
+  "schema": "phase8.4c.9-captured-synthetic-live-response-v1",
+  "provenance": "captured synthetic activation response",
+  "privacy_classification": "synthetic_test",
+  "fixture_id": "equation_and_overlap",
+  "stage_v_transcript_digest": "b0779e3015ffedd734170e5ab56c6c137486fffe473f95394bd0e984bc104387",
+  "stage_s_raw_provider_body_digest": "346d03614a263d46975534851afa851f7884ab3da674367a678d0f0f6b0e5074",
+  "stage_v_transcript": "QUESTION: Q1.2\nMATH: 10/250 = 1/25 = 0.04 = 4%\nTEXT: Visible solution evidence\nRELATION: Venn diagram with two overlapping circles\nLABEL: A\nLABEL: B\nMATH: 3 (in intersection)",
+  "stage_s_provider_body": {
+    "grounding": [
+      {
+        "evidence_quote": "Venn diagram with two overlapping circles",
+        "path": "/payload/evidence/0/transcription"
+      },
+      {
+        "evidence_quote": "A",
+        "path": "/payload/evidence/1/transcription"
+      },
+      {
+        "evidence_quote": "B",
+        "path": "/payload/evidence/2/transcription"
+      },
+      {
+        "evidence_quote": "10/250 = 1/25 = 0.04 = 4%",
+        "path": "/payload/evidence/3/transcription"
+      },
+      {
+        "evidence_quote": "3",
+        "path": "/payload/evidence/4/transcription"
+      },
+      {
+        "evidence_quote": "Visible solution evidence",
+        "path": "/payload/evidence/5/transcription"
+      }
+    ],
+    "payload": {
+      "evidence": [
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "diagram_entry",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "Venn diagram with two overlapping circles"
+        },
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "diagram_entry",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "A"
+        },
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "diagram_entry",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "B"
+        },
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "answer_working",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "10/250 = 1/25 = 0.04 = 4%"
+        },
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "answer_working",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "3"
+        },
+        {
+          "bbox": null,
+          "confidence": 1,
+          "kind": "other_visible_annotation",
+          "normalized_math": null,
+          "question_ref": null,
+          "source": "visual_overlay",
+          "transcription": "Visible solution evidence"
+        }
+      ],
+      "mark_changes": [],
+      "page": 1,
+      "schema_version": "1.0",
+      "visual_content_present": true,
+      "warnings": []
+    }
+  }
+}

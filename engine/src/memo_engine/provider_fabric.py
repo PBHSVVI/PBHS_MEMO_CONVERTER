@@ -35,7 +35,10 @@ CLOUDFLARE_GROUNDING_POLICY_VERSION = "cloudflare-grounding-policy-v3"
 CLOUDFLARE_COMPOSITE_CLAIM_BOUNDARY_VERSION = (
     "cloudflare-composite-claim-boundary-v1"
 )
-CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v3"
+CLOUDFLARE_STAGE_V_RELATION_PRESERVATION_VERSION = (
+    "cloudflare-stage-v-relation-preservation-v1"
+)
+CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION = "cloudflare-composite-v4"
 CLOUDFLARE_TRANSPORT_SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items"})
 CLOUDFLARE_APPLICATION_METADATA_FIELDS = frozenset({
     "grounding_schema_version", "schema_version", "provider", "model",
@@ -1960,6 +1963,153 @@ def _valid_stage_v_checkpoint(
     )
 
 
+def _stage_v_relation_state(value: str) -> str | None:
+    """Classify only the bounded overlap/disjoint relation vocabulary."""
+    normalized = _grounding_normalize(value).casefold()
+    disjoint = (
+        r"\bdisjoint\b",
+        r"\bnon[- ]overlapping\b",
+        r"\bdo not overlap\b",
+        r"\bno overlap\b",
+        r"\bno intersection\b",
+        r"\bseparate circles\b",
+    )
+    overlapping = (
+        r"\boverlap(?:ping|ped|s)?\b",
+        r"\bintersection\b",
+        r"\bintersect(?:ing|ed|s)?\b",
+        r"\bshared region\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in disjoint):
+        return "disjoint"
+    if any(re.search(pattern, normalized) for pattern in overlapping):
+        return "overlapping"
+    return None
+
+
+def preserve_cloudflare_stage_v_relations(
+    stage_v: dict[str, Any],
+    stage_s_wrapper: dict[str, Any],
+    payload: dict[str, Any],
+    request: ProviderTaskRequest,
+    vision_model: str,
+) -> dict[str, Any]:
+    """Preserve exact controlled Stage-V RELATION lines as a private sidecar."""
+    transcript = stage_v.get("transcript")
+    transcript_digest = stage_v.get("transcript_digest")
+    identity_valid = bool(
+        stage_v.get("status") == "success"
+        and stage_v.get("model") == vision_model
+        and stage_v.get("source_digest") == request.source_digest
+        and stage_v.get("crop_digest") == request.crop_digest
+        and stage_v.get("prompt_version") == CLOUDFLARE_COMPOSITE_PROMPT_VERSION
+        and isinstance(transcript, str)
+        and transcript_digest
+        == hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    )
+    if not identity_valid:
+        raise ProviderError(
+            "AI_PROVIDER_STAGE_V_RELATION_IDENTITY_INVALID",
+            "Stage-V relationship evidence did not match the deterministic crop identity.",
+            retryable=False,
+            category="content_request",
+            diagnostics={
+                "relation_preservation_version": (
+                    CLOUDFLARE_STAGE_V_RELATION_PRESERVATION_VERSION
+                ),
+                "relation_identity_valid": False,
+            },
+        )
+
+    leaves = _populated_json_pointer_leaves(payload)
+    grounding = stage_s_wrapper.get("grounding")
+    grounded_values: list[tuple[str, str]] = []
+    if isinstance(grounding, list):
+        for entry in grounding:
+            if not isinstance(entry, dict):
+                continue
+            path = entry.get("path")
+            quote = entry.get("evidence_quote")
+            value = leaves.get(path) if isinstance(path, str) else None
+            if isinstance(value, str) and isinstance(quote, str):
+                grounded_values.append((
+                    _grounding_normalize(value),
+                    _grounding_normalize(quote),
+                ))
+
+    relations: list[dict[str, Any]] = []
+    empty_relation_count = 0
+    for line_index, line in enumerate(transcript.splitlines()):
+        if not line.startswith("RELATION:"):
+            continue
+        relation = _grounding_normalize(line[len("RELATION:"):])
+        if not relation:
+            empty_relation_count += 1
+            continue
+        full_line = f"RELATION: {relation}"
+        represented = any(
+            value == full_line and quote == full_line
+            for value, quote in grounded_values
+        )
+        source_state = _stage_v_relation_state(relation)
+        conflicts = [
+            value for value, _quote in grounded_values
+            if source_state is not None
+            and _stage_v_relation_state(value) is not None
+            and _stage_v_relation_state(value) != source_state
+        ]
+        if conflicts:
+            raise ProviderError(
+                "AI_PROVIDER_STAGE_V_RELATION_CONFLICT",
+                "Stage-S relationship evidence conflicts with the accepted Stage-V observation.",
+                retryable=False,
+                category="content_request",
+                diagnostics={
+                    "relation_preservation_version": (
+                        CLOUDFLARE_STAGE_V_RELATION_PRESERVATION_VERSION
+                    ),
+                    "relation_conflict_count": len(conflicts),
+                },
+            )
+        relations.append({
+            "text": relation,
+            "source_stage": "stage_v",
+            "model": vision_model,
+            "transcript_digest": transcript_digest,
+            "policy_version": CLOUDFLARE_STAGE_V_RELATION_PRESERVATION_VERSION,
+            "source_digest": request.source_digest,
+            "crop_digest": request.crop_digest,
+            "source_question": request.source_question,
+            "source_page": request.source_page,
+            "line_index": line_index,
+            "origin_line_digest": hashlib.sha256(line.encode("utf-8")).hexdigest(),
+            "represented_by_stage_s": represented,
+            "representation": (
+                "stage_s_grounded" if represented else "preserved_stage_v_sidecar"
+            ),
+        })
+
+    sidecar = {
+        "version": CLOUDFLARE_STAGE_V_RELATION_PRESERVATION_VERSION,
+        "source_stage": "stage_v",
+        "model": vision_model,
+        "transcript_digest": transcript_digest,
+        "source_digest": request.source_digest,
+        "crop_digest": request.crop_digest,
+        "relation_count": len(relations),
+        "preserved_count": sum(
+            not item["represented_by_stage_s"] for item in relations
+        ),
+        "represented_by_stage_s_count": sum(
+            item["represented_by_stage_s"] for item in relations
+        ),
+        "empty_relation_count": empty_relation_count,
+        "relations": relations,
+    }
+    sidecar["digest"] = _canonical_json_digest(sidecar)
+    return sidecar
+
+
 def _valid_stage_s_checkpoint(
     checkpoint: Any, transcript_digest: str, model: str, schema_version: str
 ) -> bool:
@@ -2138,9 +2288,13 @@ def cloudflare_composite_visual_adapter(
         }
         checkpoint["stage_s"] = stage_s
 
+    relation_preservation: dict[str, Any] = {}
     try:
         validate_cloudflare_internal_wrapper(stage_s["wrapper"], request.response_schema)
         payload = validate_cloudflare_grounding(stage_s["wrapper"], transcript)
+        relation_preservation = preserve_cloudflare_stage_v_relations(
+            stage_v, stage_s["wrapper"], payload, request, vision_model
+        )
     except ProviderError as exc:
         checkpoint["stage_s"] = {
             **stage_s,
@@ -2159,14 +2313,17 @@ def cloudflare_composite_visual_adapter(
             },
         })
         raise
-    result_digest = hashlib.sha256(json.dumps(
-        payload, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")).hexdigest()
+    result_digest = _canonical_json_digest({
+        "payload": payload,
+        "stage_v_relation_preservation": relation_preservation,
+    })
+    checkpoint["stage_v_relation_preservation"] = relation_preservation
     checkpoint["final"] = {
         "status": "success",
         "result_digest": result_digest,
         "vision_model": vision_model,
         "structurer_model": structurer_model,
+        "relation_preservation_digest": relation_preservation["digest"],
     }
     quota = dict(stage_s.get("quota") or stage_v.get("quota") or {})
     return ProviderResult(
@@ -2207,6 +2364,14 @@ def cloudflare_composite_visual_adapter(
                 "enum_normalization_applied", []
             ),
             "claim_boundary": stage_s.get("claim_boundary", {}),
+            "relation_preservation_version": relation_preservation["version"],
+            "preserved_stage_v_relation_count": relation_preservation[
+                "preserved_count"
+            ],
+            "stage_s_represented_relation_count": relation_preservation[
+                "represented_by_stage_s_count"
+            ],
+            "relation_preservation_digest": relation_preservation["digest"],
             "stage_v_cache_hit": stage_v_cache_hit,
             "stage_s_cache_hit": stage_s_cache_hit,
             "grounding_status": "passed",
@@ -2233,21 +2398,28 @@ def replay_cloudflare_composite_provider_body(
     )
     validate_cloudflare_internal_wrapper(wrapper, request.response_schema)
     payload = validate_cloudflare_grounding(wrapper, transcript)
-    result_digest = _canonical_json_digest(payload)
     raw_digest = raw_result_digest or _canonical_json_digest(provider_body)
     transcript_digest = hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+    stage_v = {
+        "status": "success",
+        "provider": "cloudflare",
+        "model": vision_model,
+        "source_digest": request.source_digest,
+        "crop_digest": request.crop_digest,
+        "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
+        "transcript_digest": transcript_digest,
+        "transcript": transcript,
+    }
+    relation_preservation = preserve_cloudflare_stage_v_relations(
+        stage_v, wrapper, payload, request, vision_model
+    )
+    result_digest = _canonical_json_digest({
+        "payload": payload,
+        "stage_v_relation_preservation": relation_preservation,
+    })
     checkpoint = {
         "schema_version": CLOUDFLARE_COMPOSITE_CHECKPOINT_VERSION,
-        "stage_v": {
-            "status": "success",
-            "provider": "cloudflare",
-            "model": vision_model,
-            "source_digest": request.source_digest,
-            "crop_digest": request.crop_digest,
-            "prompt_version": CLOUDFLARE_COMPOSITE_PROMPT_VERSION,
-            "transcript_digest": transcript_digest,
-            "transcript": transcript,
-        },
+        "stage_v": stage_v,
         "stage_s": {
             "status": "success",
             "provider": "cloudflare",
@@ -2261,11 +2433,13 @@ def replay_cloudflare_composite_provider_body(
             "assembled_wrapper_digest": assembly["assembled_wrapper_digest"],
             "claim_boundary": claim_boundary,
         },
+        "stage_v_relation_preservation": relation_preservation,
         "final": {
             "status": "success",
             "result_digest": result_digest,
             "vision_model": vision_model,
             "structurer_model": structurer_model,
+            "relation_preservation_digest": relation_preservation["digest"],
         },
     }
     return ProviderResult(
@@ -2290,6 +2464,14 @@ def replay_cloudflare_composite_provider_body(
             "enum_normalization_version": assembly["enum_normalization_version"],
             "enum_normalization_applied": assembly["enum_normalization_applied"],
             "claim_boundary": claim_boundary,
+            "relation_preservation_version": relation_preservation["version"],
+            "preserved_stage_v_relation_count": relation_preservation[
+                "preserved_count"
+            ],
+            "stage_s_represented_relation_count": relation_preservation[
+                "represented_by_stage_s_count"
+            ],
+            "relation_preservation_digest": relation_preservation["digest"],
             "grounding_status": "passed",
             "_private_composite_checkpoint": checkpoint,
         },

@@ -224,7 +224,7 @@ def test_legacy_v2_stage_v_checkpoint_reuses_after_composite_v3_bump(
         model=provider_fabric.CLOUDFLARE_COMPOSITE_VISION_MODEL,
     )
     assert loaded["stage_v_artifact_schema_version"] == "cloudflare-composite-v2"
-    assert loaded["schema_version"] == "cloudflare-composite-v3"
+    assert loaded["schema_version"] == "cloudflare-composite-v4"
     monkeypatch.setattr(
         provider_fabric,
         "cloudflare_stage_v_call",

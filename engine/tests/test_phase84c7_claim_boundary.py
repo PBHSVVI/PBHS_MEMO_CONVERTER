@@ -266,7 +266,7 @@ def test_replay_provenance_retains_both_stage_and_assembled_digests():
     assert result.diagnostics["structurer_raw_result_digest"] == EXPECTED_RAW_DIGEST
     assert result.diagnostics["assembled_wrapper_digest"]
     checkpoint = result.diagnostics["_private_composite_checkpoint"]
-    assert checkpoint["schema_version"] == "cloudflare-composite-v3"
+    assert checkpoint["schema_version"] == "cloudflare-composite-v4"
     assert checkpoint["final"]["result_digest"] == result.result_digest
 
 
