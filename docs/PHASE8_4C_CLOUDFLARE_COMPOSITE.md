@@ -1,6 +1,6 @@
 # Phase 8.4C Cloudflare composite structured vision
 
-Status: **implemented; live qualification incomplete**
+Status: **COMPLETE — provider fabric activated from qualified zero-call replay**
 
 ## Decision
 
@@ -459,3 +459,38 @@ and Stage-S raw-body digest
 Final zero-call replay, hosted qualification, repository-variable activation,
 and the completion milestone are recorded only after all Phase 8.4C.9 gates
 pass.
+
+### Phase 8.4C completion record — 2026-10-25
+
+Commit `e2bcc0e25a6793d7951c54ad00b9147389bf55bc` passed hosted Phase 8 quality
+qualification in run `40158320545`. The run checked out that exact commit and
+passed Slices 1–4, Phase 8.4A, Phase 8.4B.4, and all 140 Phase 8.4C tests,
+including the captured-response preservation regressions.
+
+The final activation proof used only the exact captured Stage-V transcript and
+Stage-S provider body from run `40097974169`. Both captured digests matched. The
+production replay retained the equation values `10`, `250`, `1/25`, `0.04`, and
+`4%`, labels A and B, and the explicit overlapping-circles relationship. It
+passed grounding, production visual-schema validation, and the Slice 1–3 gates,
+with no unsupported numbers. The resulting composite-v4 `ProviderResult` was
+successful with result digest
+`f9da93ab4353f0f97de0e5d3bc3a1f0c9005fbfabf27e89b546189d89a38085d`.
+
+Exact cache replay returned the same digest with zero Stage-V and zero Stage-S
+calls. Test-only Groq-unavailable routing selected the cached Cloudflare
+composite result with the same digest and again made zero provider calls. The
+entire Phase 8.4C.9 increment used zero Cloudflare, Groq, or Mistral inference
+calls and incurred R0.00 / $0.00 provider spend. It did not access Supabase,
+Storage, teacher or learner data, PBHS memo data, production memo jobs, or any
+protected historical job.
+
+The repository variables now activate the qualified composite route:
+
+- `MEMO_CLOUDFLARE_VISION_MODEL=@cf/google/gemma-4-26b-a4b-it`
+- `MEMO_CLOUDFLARE_STRUCTURER_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast`
+- `MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED=true`
+- `MISTRAL_SCHOOL_PRIVATE_APPROVED=false`
+
+**PHASE 8.4C COMPLETE. PROVIDER-FABRIC ACTIVATION MILESTONE COMPLETE.** The next
+step is a fresh hosted Stage 1B regression using a brand-new UUID; no Stage 1B
+job was created or dispatched during this activation.
