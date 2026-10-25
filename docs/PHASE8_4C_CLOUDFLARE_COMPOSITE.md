@@ -494,3 +494,35 @@ The repository variables now activate the qualified composite route:
 **PHASE 8.4C COMPLETE. PROVIDER-FABRIC ACTIVATION MILESTONE COMPLETE.** The next
 step is a fresh hosted Stage 1B regression using a brand-new UUID; no Stage 1B
 job was created or dispatched during this activation.
+
+## Phase 8.4C.10 production Process Memo wiring — 2026-10-25
+
+The production `process-memo.yml` worker now receives all three accepted
+Cloudflare composite settings from repository variables: the Stage-V vision
+model, Stage-S structurer model, and composite-enabled flag. Cloudflare account
+and API credentials remain GitHub secrets. Existing Groq, free-only, provider
+order, and Mistral privacy settings remain unchanged.
+
+Before `run-job` can start, the workflow runs the network-free
+`validate-provider-config` CLI preflight. The validator reuses the provider
+fabric's model sets, capabilities, registry, provider order, zero-cost rules,
+credential-presence checks, and school-private eligibility logic. Enabled mode
+fails closed for missing or ineligible models, missing credentials, an
+unconfirmed zero-cost gate, a non-free plan, missing approval/order entries,
+paid or overage conditions, an ineligible registry result, or Mistral private
+approval. Disabled composite mode does not require composite configuration.
+Neither mode invokes a provider adapter or external service.
+
+Hosted Phase 8 quality qualification run `40159272698` passed on commit
+`93d778759d427d6d59fe3ab865e82f3cc3ad1802`. The controlled preflight resolved
+`@cf/google/gemma-4-26b-a4b-it` and
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, confirmed composite mode and
+free-only operation, exposed Cloudflare composite vision in the production
+registry, and produced the effective school-private route
+`groq -> cloudflare -> defer`. Mistral remained excluded.
+
+The qualification used zero provider inference calls and did not access
+Supabase, Storage, production memo data, or protected jobs. No Process Memo or
+Stage 1B workflow was dispatched.
+
+**PHASE 8.4C.10 COMPLETE. PRODUCTION PROCESS-MEMO COMPOSITE WIRING READY.**
