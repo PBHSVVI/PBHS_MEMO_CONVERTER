@@ -290,6 +290,15 @@ class ProviderPoolExhausted(RuntimeError):
         self.circuits = circuits
 
 
+class ProviderConfigurationError(RuntimeError):
+    """Fail-closed production provider configuration error without secret data."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+
+
 Adapter = Callable[
     [ProviderTaskRequest, ProviderSpec, float | None, int, Callable[[], float]],
     ProviderResult,
@@ -311,10 +320,11 @@ def _safe_provider_message(value: Any) -> str | None:
     )
 
 
-def _provider_order() -> list[str]:
+def _provider_order(values: Any | None = None) -> list[str]:
+    values = os.environ if values is None else values
     configured = [
         item.strip().lower()
-        for item in os.environ.get(
+        for item in values.get(
             "MEMO_VISUAL_PROVIDER_ORDER", ",".join(DEFAULT_VISUAL_PROVIDER_ORDER)
         ).split(",")
         if item.strip()
@@ -322,27 +332,29 @@ def _provider_order() -> list[str]:
     return list(dict.fromkeys(configured))
 
 
-def _approved_providers() -> set[str]:
+def _approved_providers(values: Any | None = None) -> set[str]:
+    values = os.environ if values is None else values
     return {
         item.strip().lower()
-        for item in os.environ.get(
+        for item in values.get(
             "MEMO_APPROVED_PROVIDERS", ",".join(DEFAULT_VISUAL_PROVIDER_ORDER)
         ).split(",")
         if item.strip()
     }
 
 
-def default_provider_registry() -> dict[str, ProviderSpec]:
-    order = _provider_order()
+def default_provider_registry(values: Any | None = None) -> dict[str, ProviderSpec]:
+    values = os.environ if values is None else values
+    order = _provider_order(values)
     priority = {provider: index for index, provider in enumerate(order)}
-    approved = _approved_providers()
+    approved = _approved_providers(values)
     _, _, cloudflare_model, cloudflare_composite_enabled = _cloudflare_composite_config(
-        os.environ
+        values
     )
     return {
         "groq": ProviderSpec(
             provider_id="groq",
-            model_id=os.environ.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
+            model_id=values.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
             or "qwen/qwen3.8-27b",
             capabilities=frozenset({
                 "vision", "structured_json", "structured_visual", "semantic_text"
@@ -352,7 +364,7 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
             school_private_allowed=True,
             free_model_ids=frozenset({"qwen/qwen3.8-27b"}),
             zero_cost_confirmation_env="GROQ_ZERO_COST_CONFIRMED",
-            plan_mode=os.environ.get("GROQ_PLAN_MODE", FREE_ONLY_PLAN_MODE).strip().lower(),
+            plan_mode=values.get("GROQ_PLAN_MODE", FREE_ONLY_PLAN_MODE).strip().lower(),
             enabled="groq" in approved,
         ),
         "cloudflare": ProviderSpec(
@@ -370,14 +382,14 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
             school_private_allowed=True,
             free_model_ids=(frozenset({cloudflare_model}) if cloudflare_composite_enabled else frozenset()),
             zero_cost_confirmation_env="CLOUDFLARE_ZERO_COST_CONFIRMED",
-            plan_mode=os.environ.get(
+            plan_mode=values.get(
                 "CLOUDFLARE_WORKERS_AI_PLAN_MODE", FREE_ONLY_PLAN_MODE
             ).strip().lower(),
             enabled="cloudflare" in approved and cloudflare_composite_enabled,
         ),
         "mistral": ProviderSpec(
             provider_id="mistral",
-            model_id=os.environ.get("MEMO_MISTRAL_VISION_MODEL", "").strip(),
+            model_id=values.get("MEMO_MISTRAL_VISION_MODEL", "").strip(),
             capabilities=frozenset({
                 "vision", "structured_json", "structured_visual", "semantic_text"
             }),
@@ -387,9 +399,154 @@ def default_provider_registry() -> dict[str, ProviderSpec]:
             requires_explicit_privacy_approval=True,
             privacy_approval_env="MISTRAL_SCHOOL_PRIVATE_APPROVED",
             zero_cost_confirmation_env="MISTRAL_ZERO_COST_CONFIRMED",
-            plan_mode=os.environ.get("MISTRAL_PLAN_MODE", FREE_ONLY_PLAN_MODE).strip().lower(),
+            plan_mode=values.get("MISTRAL_PLAN_MODE", FREE_ONLY_PLAN_MODE).strip().lower(),
             enabled="mistral" in approved,
         ),
+    }
+
+
+def validate_production_provider_configuration(
+    values: Any | None = None,
+) -> dict[str, Any]:
+    """Validate hosted provider routing without network or adapter calls."""
+    values = os.environ if values is None else values
+    composite_enabled = _truthy(
+        values.get("MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED")
+    )
+    order = _provider_order(values)
+    approved = _approved_providers(values)
+
+    if _truthy(values.get("MISTRAL_SCHOOL_PRIVATE_APPROVED")):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_MISTRAL_PRIVATE_ENABLED",
+            "Mistral must remain disabled for school-private traffic.",
+        )
+
+    if not composite_enabled:
+        return {
+            "status": "passed",
+            "cloudflare_composite_enabled": False,
+            "vision_model": None,
+            "structurer_model": None,
+            "cloudflare_free_only": None,
+            "provider_order": order,
+            "effective_school_private_route": [
+                provider for provider in order if provider != "mistral"
+            ] + ["defer"],
+            "mistral_school_private_eligible": False,
+        }
+
+    vision_model = str(values.get("MEMO_CLOUDFLARE_VISION_MODEL") or "").strip()
+    structurer_model = str(
+        values.get("MEMO_CLOUDFLARE_STRUCTURER_MODEL") or ""
+    ).strip()
+    required = {
+        "MEMO_CLOUDFLARE_VISION_MODEL": vision_model,
+        "MEMO_CLOUDFLARE_STRUCTURER_MODEL": structurer_model,
+        "CLOUDFLARE_ACCOUNT_ID": str(values.get("CLOUDFLARE_ACCOUNT_ID") or "").strip(),
+        "CLOUDFLARE_AI_API_TOKEN": str(
+            values.get("CLOUDFLARE_AI_API_TOKEN") or ""
+        ).strip(),
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_REQUIRED_VALUE_MISSING",
+            "Required provider configuration is missing: " + ", ".join(missing),
+        )
+    if (
+        vision_model not in CLOUDFLARE_FREE_VISION_MODELS
+        or "vision" not in cloudflare_model_capabilities(vision_model)
+    ):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_VISION_MODEL_INELIGIBLE",
+            "The configured Cloudflare vision model is not eligible for the free vision route.",
+        )
+    if structurer_model not in CLOUDFLARE_ACTIVE_FREE_JSON_MODE_MODELS:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_STRUCTURER_MODEL_INELIGIBLE",
+            "The configured Cloudflare structurer model is not active and free-only eligible.",
+        )
+    if not _truthy(values.get("CLOUDFLARE_ZERO_COST_CONFIRMED")):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_ZERO_COST_UNCONFIRMED",
+            "Cloudflare zero-cost operation has not been confirmed.",
+        )
+    plan_mode = str(
+        values.get("CLOUDFLARE_WORKERS_AI_PLAN_MODE") or ""
+    ).strip().lower()
+    if plan_mode != FREE_ONLY_PLAN_MODE:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_PLAN_NOT_FREE_ONLY",
+            "Cloudflare Workers AI must use free_only plan mode.",
+        )
+    if "cloudflare" not in approved:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_CLOUDFLARE_NOT_APPROVED",
+            "Cloudflare is absent from the approved provider set.",
+        )
+    if "groq" not in order or "cloudflare" not in order:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_ROUTE_INCOMPLETE",
+            "The visual provider order must contain Groq followed by Cloudflare.",
+        )
+    if order.index("cloudflare") <= order.index("groq"):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_ROUTE_ORDER_INVALID",
+            "Cloudflare must follow Groq in the visual provider order.",
+        )
+
+    registry = default_provider_registry(values)
+    cloudflare = registry["cloudflare"]
+    if not cloudflare.enabled or "composite_visual" not in cloudflare.capabilities:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_COMPOSITE_INELIGIBLE",
+            "The default provider registry did not enable Cloudflare composite vision.",
+        )
+    if (
+        cloudflare.plan_mode != FREE_ONLY_PLAN_MODE
+        or cloudflare.requires_paid_plan
+        or cloudflare.automatic_overage_possible
+        or cloudflare.model_id not in cloudflare.free_model_ids
+    ):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_ZERO_COST_POLICY_BLOCKED",
+            "Cloudflare composite does not satisfy the free-only provider policy.",
+        )
+
+    eligible = eligible_providers(
+        registry,
+        task_type=TASK_VISUAL_INTERPRETATION,
+        privacy_classification=PRIVACY_SCHOOL_PRIVATE,
+        env=values,
+    )
+    eligible_ids = [spec.provider_id for spec in eligible]
+    if "cloudflare" not in eligible_ids:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_CLOUDFLARE_NOT_ELIGIBLE",
+            "Cloudflare composite is not eligible for production school-private routing.",
+        )
+    if "mistral" in eligible_ids:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_MISTRAL_PRIVATE_ELIGIBLE",
+            "Mistral unexpectedly became eligible for school-private routing.",
+        )
+    effective = [provider for provider in eligible_ids if provider in {"groq", "cloudflare"}]
+    if effective != ["groq", "cloudflare"]:
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_EFFECTIVE_ROUTE_INVALID",
+            "The effective school-private route is not Groq followed by Cloudflare.",
+        )
+
+    return {
+        "status": "passed",
+        "cloudflare_composite_enabled": True,
+        "vision_model": vision_model,
+        "structurer_model": structurer_model,
+        "cloudflare_free_only": True,
+        "provider_order": order,
+        "effective_school_private_route": [*effective, "defer"],
+        "mistral_school_private_eligible": False,
     }
 
 

@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from .ai_router import ProviderError
+from .provider_fabric import (
+    ProviderConfigurationError,
+    validate_production_provider_configuration,
+)
 from .http import SupabaseRest
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
@@ -1018,10 +1022,22 @@ def run_job(job_id: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[1] == "validate-provider-config":
+        try:
+            summary = validate_production_provider_configuration()
+        except ProviderConfigurationError as exc:
+            print(
+                f"Provider configuration preflight failed: {exc.code}: "
+                f"{exc.public_message}",
+                file=sys.stderr,
+            )
+            return 1
+        print("Provider configuration preflight: " + json.dumps(summary, sort_keys=True))
+        return 0
     if len(argv) != 3 or argv[1] not in {"run-job", "finalize-interrupted-job"}:
         print(
             "usage: python -m engine.src.memo_engine.cli "
-            "{run-job|finalize-interrupted-job} <job_id>",
+            "validate-provider-config | {run-job|finalize-interrupted-job} <job_id>",
             file=sys.stderr,
         )
         return 2

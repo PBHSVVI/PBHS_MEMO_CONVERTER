@@ -27,6 +27,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
       MEMO_CLOUDFLARE_VISION_MODEL: ${{ vars.MEMO_CLOUDFLARE_VISION_MODEL }}
+      MEMO_CLOUDFLARE_STRUCTURER_MODEL: ${{ vars.MEMO_CLOUDFLARE_STRUCTURER_MODEL }}
+      MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED: ${{ vars.MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED }}
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       MEMO_MISTRAL_VISION_MODEL: ${{ vars.MEMO_MISTRAL_VISION_MODEL }}
       MISTRAL_SCHOOL_PRIVATE_APPROVED: ${{ vars.MISTRAL_SCHOOL_PRIVATE_APPROVED }}
@@ -93,6 +95,9 @@ jobs:
 
       - name: Run deterministic engine tests
         run: python -m pytest -q engine/tests
+
+      - name: Validate production provider configuration
+        run: python -m engine.src.memo_engine.cli validate-provider-config
 
       - name: Run hosted memo worker
         id: hosted_worker
