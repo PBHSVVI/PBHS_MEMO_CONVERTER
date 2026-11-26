@@ -14,6 +14,7 @@ from PIL import Image, ImageStat
 
 from .ai_router import ProviderError, _post_json, configured_provider
 from .math_notation import normalize_visual_math
+from .visual_coordinates import OPENAI_COORDINATE_CONTRACT, openai_crop_pixels
 from .provider_fabric import (
     PRIVACY_SCHOOL_PRIVATE,
     TASK_VISUAL_INTERPRETATION,
@@ -77,6 +78,13 @@ class VisualProviderDeferred(RuntimeError):
 
 
 def visual_checkpoint_ownership_is_compatible(candidate: dict[str, Any]) -> bool:
+    if any(
+        item.get("extractor_provider") == "openai"
+        and item.get("coordinate_contract") != OPENAI_COORDINATE_CONTRACT
+        for item in [*(candidate.get("evidence") or []), *(candidate.get("mark_changes") or [])]
+        if isinstance(item, dict)
+    ):
+        return False
     explicit = candidate.get("ownership_algorithm_version")
     if explicit is not None:
         return explicit == OWNERSHIP_ALGORITHM_VERSION
@@ -538,6 +546,14 @@ def _page_bbox(bbox: Any, region: dict[str, Any]) -> list[float] | None:
     render_bbox = region.get("render_bbox") or region.get("bbox")
     if not isinstance(render_bbox, list) or len(render_bbox) != 4:
         return [float(value) for value in bbox]
+    if region.get("coordinate_contract") == OPENAI_COORDINATE_CONTRACT:
+        width, height = region["pixel_width"], region["pixel_height"]
+        return [
+            float(render_bbox[0]) + float(bbox[0]) / width * (render_bbox[2] - render_bbox[0]),
+            float(render_bbox[1]) + float(bbox[1]) / height * (render_bbox[3] - render_bbox[1]),
+            float(render_bbox[0]) + float(bbox[2]) / width * (render_bbox[2] - render_bbox[0]),
+            float(render_bbox[1]) + float(bbox[3]) / height * (render_bbox[3] - render_bbox[1]),
+        ]
     scale = float(region.get("render_scale") or 1.0)
     if scale <= 0:
         scale = 1.0
@@ -858,11 +874,31 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
     if not isinstance(payload, dict):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response must be an object.")
     required = {"schema_version", "page", "visual_content_present", "evidence", "mark_changes", "warnings"}
-    allowed = required | {"provider", "model", "elapsed_ms", "usage", "rate_limits"}
+    allowed = required | {"provider", "model", "elapsed_ms", "usage", "rate_limits", "coordinate_provenance"}
     if set(payload) - allowed or not required.issubset(payload):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response fields do not match the closed schema.")
     if payload["schema_version"] != SCHEMA_VERSION or payload["page"] != region["page"]:
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response identity is invalid.")
+    provenance = payload.get("coordinate_provenance")
+    if payload.get("provider") == "openai":
+        try:
+            if not isinstance(provenance, dict):
+                raise ValueError("Missing declared coordinate provenance")
+            envelope = {k: payload[k] for k in required | {"coordinate_provenance"}}
+            width, height = provenance["pixel_width"], provenance["pixel_height"]
+            if region.get("pixel_width", width) != width or region.get("pixel_height", height) != height:
+                raise ValueError("Crop geometry differs from provider input")
+            openai_crop_pixels(envelope, width, height)
+            bounds = region.get("render_bbox")
+            if (not isinstance(bounds, list) or len(bounds) != 4
+                    or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]):
+                raise ValueError("Missing crop-to-page geometry")
+            region = {**region, "coordinate_contract": OPENAI_COORDINATE_CONTRACT,
+                      "pixel_width": width, "pixel_height": height}
+        except (ValueError, KeyError, TypeError) as error:
+            raise VisualEvidenceError("VISUAL_COORDINATES_INVALID", "The declared visual coordinate contract is invalid.") from error
+    elif provenance is not None:
+        raise VisualEvidenceError("VISUAL_COORDINATES_INVALID", "Coordinate provenance does not match the provider.")
     if not isinstance(payload["visual_content_present"], bool):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual presence must be boolean.")
     if (
@@ -874,7 +910,7 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
     ):
         raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual response arrays exceed the closed schema.")
     evidence: list[dict[str, Any]] = []
-    for item in payload["evidence"]:
+    for item_index, item in enumerate(payload["evidence"]):
         if not isinstance(item, dict) or set(item) != {"question_ref", "kind", "transcription", "normalized_math", "confidence", "source", "bbox"}:
             raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual evidence item is invalid.")
         question_ref = item["question_ref"]
@@ -900,6 +936,8 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         association_status, owned_question_ref = _association_status(
             question_ref, source_page_bbox, region
         )
+        if provenance is not None and bbox is None:
+            association_status = "context_only"
         validated_item = {
             **item,
             "question_ref": question_ref,
@@ -919,6 +957,13 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "extractor_provider": str(payload.get("provider") or "groq"),
             "extractor_model": str(payload.get("model") or "unknown"),
         }
+        if provenance is not None:
+            validated_item.update({
+                "coordinate_contract": OPENAI_COORDINATE_CONTRACT,
+                "coordinate_space": "crop_pixels", "provider_coordinate_space": "crop_unit_interval",
+                "provider_bbox": provenance["provider_response"]["evidence"][item_index]["bbox"],
+                "provider_response_digest": provenance["provider_response_digest"],
+            })
         if association_status in {"cross_anchor_mismatch", "context_only"}:
             validated_item["effective"] = False
             validated_item["evidence_status"] = association_status
@@ -930,7 +975,7 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         evidence.append(validated_item)
 
     mark_changes: list[dict[str, Any]] = []
-    for item in payload["mark_changes"]:
+    for item_index, item in enumerate(payload["mark_changes"]):
         expected = {"question_ref", "level", "printed_value", "visual_value", "confidence", "requires_confirmation", "bbox"}
         if not isinstance(item, dict) or set(item) != expected or item["requires_confirmation"] is not True:
             raise VisualEvidenceError("VISUAL_MODEL_SCHEMA_INVALID", "Visual mark change is invalid.")
@@ -949,6 +994,8 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
         association_status, owned_question_ref = _association_status(
             question_ref, source_page_bbox, region
         )
+        if provenance is not None and bbox is None:
+            association_status = "context_only"
         effective = (
             association_status not in {"cross_anchor_mismatch", "context_only"}
             and item.get("printed_value") != item.get("visual_value")
@@ -971,6 +1018,13 @@ def validate_visual_response(payload: Any, region: dict[str, Any]) -> dict[str, 
             "extractor_provider": str(payload.get("provider") or "groq"),
             "extractor_model": str(payload.get("model") or "unknown"),
         })
+        if provenance is not None:
+            mark_changes[-1].update({
+                "coordinate_contract": OPENAI_COORDINATE_CONTRACT,
+                "coordinate_space": "crop_pixels", "provider_coordinate_space": "crop_unit_interval",
+                "provider_bbox": provenance["provider_response"]["mark_changes"][item_index]["bbox"],
+                "provider_response_digest": provenance["provider_response_digest"],
+            })
     warnings = [_bounded_text(item, maximum=300) for item in payload["warnings"] if isinstance(item, str)]
     return {**payload, "evidence": evidence, "mark_changes": mark_changes, "warnings": warnings}
 
@@ -1056,6 +1110,7 @@ def extract_visual_evidence(
             dict(item) for item in checkpoint_record.get("composite_checkpoints") or []
             if isinstance(item, dict)
         ]
+        record["coordinate_responses"] = list(checkpoint_record.get("coordinate_responses") or [])
         record["evidence"] = list(checkpoint_record.get("evidence") or [])
         record["mark_changes"] = list(checkpoint_record.get("mark_changes") or [])
         record["assets"] = list(checkpoint_record.get("assets") or [])
@@ -1464,6 +1519,11 @@ def extract_visual_evidence(
                 "page": region["page"],
                 "rendered_asset_ref": region["asset_path"],
                 "item_count": VISUAL_EVIDENCE_MAX_ITEMS,
+            })
+        if result.get("coordinate_provenance") is not None:
+            record.setdefault("coordinate_responses", []).append({
+                "region_id": region["asset_path"], "crop_digest": artifact["sha256"],
+                "provenance": result["coordinate_provenance"],
             })
         record["runs"].append({
             "provider": str(result.get("provider") or "groq"),

@@ -19,6 +19,7 @@ from .ai_router import (
 )
 from .openai_credit import MODEL, CreditLedger, credit_eligible, private_job_enabled
 from .provider_fabric import ProviderResult, ProviderSpec, ProviderTaskRequest, _result
+from .visual_coordinates import openai_crop_pixels
 
 API_ROOT = "https://api.openai.com/v1"
 VISUAL_OUTPUT_LIMIT = 6250
@@ -278,14 +279,23 @@ class OpenAIInterpreter:
         if request.privacy_classification != expected or spec.model_id != MODEL:
             raise ProviderError("OPENAI_POLICY_BLOCKED", "The OpenAI source or model is outside the approved route.")
         prompt = request.prompt + (
-            "\nWhen reliably visible, use crop-relative normalized [left, top, right, bottom] bounds. "
+            "\nWhen reliably visible, use crop-relative normalized [left, top, right, bottom] bounds, "
+            "each in [0,1], measured from the crop's top-left corner. "
             "Use answer_working for actual solution steps, and teacher_comment for annotations about the solution. "
             "Use diagram_entry for visible diagram labels and relationships."
         )
         result = self._respond(stage="visual", prompt=prompt, schema=request.response_schema,
                                image=request.crop_bytes, mime=request.crop_mime_type, deadline=deadline, clock=clock)
-        return _result(request, replace(spec, model_id=result.model), {"_provider_rate_limits": result.quota},
-                       result.elapsed_ms, lambda _: (result.value, result.usage))
+        provider_result = _result(request, replace(spec, model_id=result.model), {"_provider_rate_limits": result.quota},
+                                  result.elapsed_ms, lambda _: (result.value, result.usage))
+        with Image.open(io.BytesIO(request.crop_bytes)) as crop:
+            width, height = crop.size
+        try:
+            provider_result.normalized_result = openai_crop_pixels(result.value, width, height)
+        except (ValueError, KeyError, TypeError) as error:
+            raise ProviderError("OPENAI_COORDINATES_INVALID", "The visual coordinates could not be verified.",
+                                category="content_request") from error
+        return provider_result
 
     def semantic(self, candidates: list[dict[str, Any]], *, strong: bool = False) -> ProviderRun:
         fields = {"candidate_id", "source_shorthand", "descriptor", "source_notation",

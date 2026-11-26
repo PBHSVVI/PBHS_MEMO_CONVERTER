@@ -8,6 +8,11 @@ on:
         description: "Memo Builder job UUID"
         required: true
         type: string
+      operation:
+        description: "Ordinary processing or authorised Phase 8.5A saved-evidence revalidation"
+        type: choice
+        default: process
+        options: [process, revalidate_coordinates]
 
 permissions:
   contents: read
@@ -119,7 +124,14 @@ jobs:
       - name: Run hosted memo worker
         id: hosted_worker
         timeout-minutes: 38
-        run: python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
+        env:
+          MEMO_OPERATION: ${{ inputs.operation || 'process' }}
+        run: |
+          if [ "$MEMO_OPERATION" = revalidate_coordinates ]; then
+            python -m engine.src.memo_engine.coordinate_revalidation "$MEMO_JOB_ID"
+          else
+            python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
+          fi
 
       - name: Recover interrupted hosted worker
         if: ${{ always() && (steps.hosted_worker.outcome == 'failure' || steps.hosted_worker.outcome == 'cancelled') }}

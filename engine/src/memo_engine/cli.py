@@ -257,8 +257,8 @@ def _try_reuse_semantic(
     return None, None, list(reusable_ai.values()), partial_source_job_id
 
 
-def run_job(job_id: str) -> int:
-    db = SupabaseRest()
+def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any = None) -> int:
+    db = db or SupabaseRest()
     job = db.get_job(job_id)
 
     if job["status"] != "dispatched":
@@ -324,6 +324,15 @@ def run_job(job_id: str) -> int:
             cached_visual = db.download_json(BUCKET, visual_path)
         except Exception:
             cached_visual = None
+        if replay_visual is not None:
+            if (replay_visual.get("job_id") != job_id
+                    or not visual_cache_is_complete(replay_visual, source["sha256"])):
+                raise RuntimeError("Revalidated checkpoint is not complete or source-bound")
+            cached_visual = replay_visual
+            db.upload_json(BUCKET, visual_path, replay_visual)
+            db.upload_json(BUCKET, f"{job['user_id']}/{job_id}/internal/visual/evidence.checkpoint.json", replay_visual)
+            db.add_event(job, "coordinate_revalidation_visual_complete", "visual_evidence",
+                         replay_visual["coordinate_revalidation"])
         if visual_cache_is_complete(cached_visual, source["sha256"]):
             visual = cached_visual
             visual_artifacts: list[dict[str, Any]] = []
