@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .ai_router import ProviderError, _post_json
+from .openai_credit import MODEL as OPENAI_MODEL, credit_eligible, private_job_enabled
 
 
 TASK_VISUAL_INTERPRETATION = "visual_interpretation"
@@ -19,6 +20,7 @@ TASK_SEMANTIC_CLASSIFICATION = "semantic_classification"
 PRIVACY_SCHOOL_PRIVATE = "school_private"
 PRIVACY_SYNTHETIC_TEST = "synthetic_test"
 FREE_ONLY_PLAN_MODE = "free_only"
+INCLUDED_CREDIT_PLAN_MODE = "included_credit"
 DEFAULT_VISUAL_PROVIDER_ORDER = ("groq", "cloudflare", "mistral")
 CLOUDFLARE_LLAMA_STRUCTURED_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 CLOUDFLARE_COMPOSITE_VISION_MODEL = "@cf/google/gemma-4-26b-a4b-it"
@@ -279,7 +281,7 @@ class ProviderPoolExhausted(RuntimeError):
         circuits: list[dict[str, Any]],
         retry_after_seconds: float | None,
     ) -> None:
-        super().__init__("No eligible zero-cost visual provider is currently available.")
+        super().__init__("No eligible visual provider is currently available within the configured budget.")
         self.code = "VISUAL_PROVIDER_POOL_EXHAUSTED"
         self.public_message = str(self)
         self.category = "transient_capacity"
@@ -329,18 +331,23 @@ def _provider_order(values: Any | None = None) -> list[str]:
         ).split(",")
         if item.strip()
     ]
+    if _truthy(values.get("MEMO_OPENAI_ENABLED")):
+        configured.insert(0, "openai")
     return list(dict.fromkeys(configured))
 
 
 def _approved_providers(values: Any | None = None) -> set[str]:
     values = os.environ if values is None else values
-    return {
+    approved = {
         item.strip().lower()
         for item in values.get(
             "MEMO_APPROVED_PROVIDERS", ",".join(DEFAULT_VISUAL_PROVIDER_ORDER)
         ).split(",")
         if item.strip()
     }
+    if _truthy(values.get("MEMO_OPENAI_ENABLED")):
+        approved.add("openai")
+    return approved
 
 
 def default_provider_registry(values: Any | None = None) -> dict[str, ProviderSpec]:
@@ -351,7 +358,7 @@ def default_provider_registry(values: Any | None = None) -> dict[str, ProviderSp
     _, _, cloudflare_model, cloudflare_composite_enabled = _cloudflare_composite_config(
         values
     )
-    return {
+    registry = {
         "groq": ProviderSpec(
             provider_id="groq",
             model_id=values.get("MEMO_GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
@@ -403,6 +410,17 @@ def default_provider_registry(values: Any | None = None) -> dict[str, ProviderSp
             enabled="mistral" in approved,
         ),
     }
+    if "openai" in approved and _truthy(values.get("MEMO_OPENAI_ENABLED")):
+        registry["openai"] = ProviderSpec(
+            provider_id="openai",
+            model_id=OPENAI_MODEL,
+            capabilities=frozenset({"vision", "structured_json", "structured_visual", "semantic_text"}),
+            credential_names=("OPENAI_API_KEY",),
+            priority=priority.get("openai", 100),
+            school_private_allowed=False,
+            plan_mode=INCLUDED_CREDIT_PLAN_MODE,
+        )
+    return registry
 
 
 def validate_production_provider_configuration(
@@ -415,6 +433,7 @@ def validate_production_provider_configuration(
     )
     order = _provider_order(values)
     approved = _approved_providers(values)
+    openai_enabled = _truthy(values.get("MEMO_OPENAI_ENABLED"))
 
     if _truthy(values.get("MISTRAL_SCHOOL_PRIVATE_APPROVED")):
         raise ProviderConfigurationError(
@@ -422,6 +441,11 @@ def validate_production_provider_configuration(
             "Mistral must remain disabled for school-private traffic.",
         )
 
+    if openai_enabled and (not composite_enabled or "openai" not in approved):
+        raise ProviderConfigurationError(
+            "PROVIDER_CONFIG_OPENAI_ROUTE_INCOMPLETE",
+            "The Phase 8.5 pilot requires the approved OpenAI and composite fallback route.",
+        )
     if not composite_enabled:
         return {
             "status": "passed",
@@ -531,11 +555,12 @@ def validate_production_provider_configuration(
             "PROVIDER_CONFIG_MISTRAL_PRIVATE_ELIGIBLE",
             "Mistral unexpectedly became eligible for school-private routing.",
         )
-    effective = [provider for provider in eligible_ids if provider in {"groq", "cloudflare"}]
-    if effective != ["groq", "cloudflare"]:
+    effective = eligible_ids
+    expected = ["openai", "groq", "cloudflare"] if openai_enabled else ["groq", "cloudflare"]
+    if effective != expected:
         raise ProviderConfigurationError(
             "PROVIDER_CONFIG_EFFECTIVE_ROUTE_INVALID",
-            "The effective school-private route is not Groq followed by Cloudflare.",
+            "The effective school-private route does not match the approved provider configuration.",
         )
 
     return {
@@ -570,6 +595,15 @@ def provider_ineligibility_reason(
         return "capability_unavailable"
     if not spec.model_id:
         return "model_unconfigured"
+    if spec.plan_mode == INCLUDED_CREDIT_PLAN_MODE:
+        if (spec.provider_id != "openai" or spec.model_id != OPENAI_MODEL
+                or spec.automatic_overage_possible or not credit_eligible(values)):
+            return "included_credit_policy_blocked"
+        if privacy_classification == PRIVACY_SYNTHETIC_TEST and spec.synthetic_allowed:
+            return None
+        if privacy_classification == PRIVACY_SCHOOL_PRIVATE and private_job_enabled(values, values.get("MEMO_JOB_ID")):
+            return None
+        return "privacy_ineligible"
     if zero_cost_required and (
         spec.plan_mode != FREE_ONLY_PLAN_MODE
         or spec.requires_paid_plan

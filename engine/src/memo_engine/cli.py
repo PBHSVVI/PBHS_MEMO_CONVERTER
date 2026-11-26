@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import traceback
@@ -11,10 +12,14 @@ from typing import Any
 
 from .ai_router import ProviderError
 from .provider_fabric import (
+    DEFAULT_ADAPTERS,
     ProviderConfigurationError,
+    ProviderFabric,
     validate_production_provider_configuration,
 )
 from .http import SupabaseRest
+from .openai_adapter import OpenAIInterpreter
+from .openai_credit import CreditLedger
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
@@ -44,6 +49,12 @@ from .canonical import (
 )
 
 BUCKET = "memo-files"
+PHASE85_SOURCE_SHA256 = "a48644bd4b7f959e5f8dab032d1e3e6a1144c29c06a4012177028278ea6d2491"
+PHASE85_SAVED_REGIONS = frozenset({
+    "internal/visual/regions/page-0001-q1_1.png", "internal/visual/regions/page-0001-q1_2.png",
+    "internal/visual/regions/page-0002-q2_1_1.png", "internal/visual/regions/page-0002-q2_1_2.png",
+    "internal/visual/regions/page-0002-q2_2.png", "internal/visual/regions/page-0002-q2_3.png",
+})
 
 
 def utc_now() -> str:
@@ -270,6 +281,9 @@ def run_job(job_id: str) -> int:
     db.add_event(job, "worker_started", "ingestion")
 
     try:
+        openai = None
+        if os.environ.get("MEMO_OPENAI_ENABLED", "").strip().lower() == "true":
+            openai = OpenAIInterpreter(CreditLedger(db), os.environ, job_id=job_id)
         source_path = validate_source_path(job)
         source_bytes = db.download_object(BUCKET, source_path)
 
@@ -278,6 +292,8 @@ def run_job(job_id: str) -> int:
         db.upload_json(BUCKET, ingestion_path, ingestion)
 
         source = ingestion["source"]
+        if openai and (len(source_bytes) != 1_007_519 or source["sha256"] != PHASE85_SOURCE_SHA256):
+            raise IngestionError("OPENAI_SOURCE_IDENTITY_MISMATCH", "The verified pilot source changed. Conversion paused before interpretation.")
         job = db.patch_job(
             job_id,
             "processing",
@@ -362,6 +378,10 @@ def run_job(job_id: str) -> int:
                 progress_callback=visual_progress,
                 checkpoint_callback=visual_checkpoint,
                 checkpoint_record=visual_checkpoint_record,
+                **({
+                    "provider_fabric": ProviderFabric(adapters={**DEFAULT_ADAPTERS, "openai": openai.visual}),
+                    "required_checkpoint_regions": PHASE85_SAVED_REGIONS,
+                } if openai else {}),
             )
             for artifact in visual_artifacts:
                 db.upload_object(
@@ -490,6 +510,7 @@ def run_job(job_id: str) -> int:
             semantic = interpret_semantics(
                 structure,
                 reusable_ai_results=reusable_ai_results,
+                **({"classifier": openai.semantic} if openai else {}),
             )
             if reusable_ai_results:
                 db.add_event(

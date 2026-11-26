@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import Any, Callable
 
 from .ai_router import ProviderError, ProviderRun, classify
 
@@ -206,7 +206,9 @@ def _run_batches(
     *,
     strong: bool,
     batch_size: int,
+    classifier: Callable[..., ProviderRun] | None = None,
 ) -> tuple[list[dict[str, Any]], list[ProviderRun]]:
+    classify_batch = classifier or classify
     output: list[dict[str, Any]] = []
     runs: list[ProviderRun] = []
 
@@ -223,7 +225,7 @@ def _run_batches(
         batch = candidates[start:start + batch_size]
 
         try:
-            run = classify(batch, strong=strong)
+            run = classify_batch(batch, strong=strong)
         except ProviderError as exc:
             if exc.code in {
                 "AI_PROVIDER_TOOL_USE_FAILED",
@@ -234,7 +236,7 @@ def _run_batches(
                     if single_index > 0:
                         time.sleep(3.0)
                     try:
-                        single_run = classify([candidate], strong=strong)
+                        single_run = classify_batch([candidate], strong=strong)
                         runs.append(single_run)
                         result = single_run.results[0]
                         valid, issue = _validate_result(candidate, result)
@@ -301,6 +303,7 @@ def interpret_semantics(
     structure: dict[str, Any],
     *,
     reusable_ai_results: list[dict[str, Any]] | None = None,
+    classifier: Callable[..., ProviderRun] | None = None,
 ) -> dict[str, Any]:
     deterministic, candidates = build_semantic_plan(structure)
     batch_size = max(1, min(20, int(os.environ.get("MEMO_AI_BATCH_SIZE", "16"))))
@@ -354,6 +357,7 @@ def interpret_semantics(
             uncached_candidates,
             strong=False,
             batch_size=batch_size,
+            classifier=classifier,
         )
         fast_results.extend(fresh_results)
         runs.extend(fast_runs)
@@ -374,7 +378,7 @@ def interpret_semantics(
     enable_escalation = os.environ.get("MEMO_AI_ESCALATE", "true").strip().lower() not in {
         "0", "false", "no"
     }
-    if escalation_candidates and enable_escalation:
+    if escalation_candidates and enable_escalation and classifier is None:
         strong_results, strong_runs = _run_batches(
             escalation_candidates,
             strong=True,
@@ -471,6 +475,7 @@ def interpret_semantics(
             "output_tokens": run.output_tokens,
             "total_tokens": run.total_tokens,
             "elapsed_ms": run.elapsed_ms,
+            **({"usage": run.usage} if run.usage is not None else {}),
         }
         for run in runs
     ]

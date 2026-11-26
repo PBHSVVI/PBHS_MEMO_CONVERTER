@@ -53,6 +53,12 @@ jobs:
       MEMO_VISUAL_PHASE_TIMEOUT_SECONDS: "900"
       MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS: "45"
       MEMO_CLOUDFLARE_REQUEST_TIMEOUT_SECONDS: "75"
+      OPENAI_API_KEY: ${{ inputs.job_id == '9544a589-ef6f-4f52-946b-a29ac0cdab43' && secrets.OPENAI_API_KEY || '' }}
+      MEMO_OPENAI_ENABLED: ${{ inputs.job_id == '9544a589-ef6f-4f52-946b-a29ac0cdab43' && vars.MEMO_OPENAI_ENABLED || 'false' }}
+      MEMO_OPENAI_INCLUDED_CREDIT_CONFIRMED: ${{ vars.MEMO_OPENAI_INCLUDED_CREDIT_CONFIRMED }}
+      MEMO_OPENAI_SCHOOL_PRIVATE_APPROVED: ${{ vars.MEMO_OPENAI_SCHOOL_PRIVATE_APPROVED }}
+      MEMO_OPENAI_ORGANIZATION: ${{ vars.MEMO_OPENAI_ORGANIZATION }}
+      MEMO_OPENAI_PROJECT: ${{ vars.MEMO_OPENAI_PROJECT }}
 
     steps:
       - name: Checkout
@@ -103,6 +109,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: '00000000000000000000000000000000'
           CLOUDFLARE_AI_API_TOKEN: synthetic-test-only
           MISTRAL_API_KEY: synthetic-test-only
+          OPENAI_API_KEY: ''
+          MEMO_OPENAI_ENABLED: 'false'
         run: python -m pytest -q engine/tests
 
       - name: Validate production provider configuration

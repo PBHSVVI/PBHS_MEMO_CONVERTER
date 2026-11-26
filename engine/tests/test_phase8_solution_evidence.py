@@ -219,6 +219,25 @@ def test_typed_pdf_math_solution_remains_eligible():
     assert "leaf_solution_missing" not in validation["error_codes"]
 
 
+@pytest.mark.parametrize(("source_working", "expected_review"), [("", True), ("x = 3\n", False)])
+def test_unplaced_owned_calculations_require_review_when_leaf_has_no_solution(source_working, expected_review):
+    question = _question("12.1")
+    question.update(printed_marks=None, computed_shorthand_marks=0, mark_points=[])
+    question["visual_evidence"] = [
+        {"kind": "teacher_comment", "normalized_math": math, "effective": True,
+         "association_status": "owned", "evidence_id": f"visual_{index}", "page": 1,
+         "rendered_asset_ref": "internal/visual/synthetic.png"}
+        for index, math in enumerate(("x=2+1", "x=3"))
+    ]
+    canonical, _, exceptions = _build(f"QUESTION 12\n12.1 Calculate x.\n{source_working}", question)
+    issues = [entry for entry in exceptions if entry["category"] == "visual_evidence_uncertain"]
+    assert bool(issues) is expected_review
+    if expected_review:
+        assert issues[0]["affected_id"] == "12.1"
+        assert issues[0]["suggestions"][0]["visual_evidence_ids"] == ["visual_0", "visual_1"]
+        assert not _item(canonical)["alternatives"][0]["blocks"]
+
+
 def test_teacher_question_text_is_not_promoted_but_solution_lines_are():
     source = [{
         "text": "Determine x. (1)",

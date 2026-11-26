@@ -7,12 +7,45 @@ on:
         description: Check the production provider model catalogues without inference
         type: boolean
         default: false
+      openai_check:
+        description: OpenAI verification mode (synthetic requires explicit credit approval)
+        type: choice
+        options: ['off', 'access', 'synthetic']
+        default: 'off'
 
 permissions:
   contents: read
 
 jobs:
+  openai:
+    if: inputs.openai_check == 'access' || inputs.openai_check == 'synthetic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check -r engine/requirements.txt
+      - name: Verify OpenAI access or perform bounded synthetic qualification
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEMO_OPENAI_ORGANIZATION: ${{ vars.MEMO_OPENAI_ORGANIZATION }}
+          MEMO_OPENAI_PROJECT: ${{ vars.MEMO_OPENAI_PROJECT }}
+          MEMO_OPENAI_ENABLED: 'true'
+          MEMO_OPENAI_INCLUDED_CREDIT_CONFIRMED: ${{ vars.MEMO_OPENAI_INCLUDED_CREDIT_CONFIRMED }}
+          SUPABASE_URL: ${{ inputs.openai_check == 'synthetic' && secrets.SUPABASE_URL || '' }}
+          SUPABASE_SECRET_KEY: ${{ inputs.openai_check == 'synthetic' && secrets.SUPABASE_SECRET_KEY || '' }}
+          OPENAI_CHECK_MODE: ${{ inputs.openai_check }}
+        run: |
+          if [ "$OPENAI_CHECK_MODE" = synthetic ]; then
+            python -m engine.src.memo_engine.phase85_qualification --synthetic
+          else
+            python -m engine.src.memo_engine.phase85_qualification
+          fi
+
   qualify:
+    if: inputs.openai_check != 'synthetic'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

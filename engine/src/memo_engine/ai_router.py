@@ -121,6 +121,7 @@ class ProviderRun:
     total_tokens: int | None
     elapsed_ms: int
     results: list[dict[str, Any]]
+    usage: dict[str, Any] | None = None
 
 
 def _duration_seconds(value: str | None) -> float | None:

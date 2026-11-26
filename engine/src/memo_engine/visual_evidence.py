@@ -985,6 +985,7 @@ def extract_visual_evidence(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     checkpoint_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
     checkpoint_record: dict[str, Any] | None = None,
+    required_checkpoint_regions: frozenset[str] = frozenset(),
     phase_timeout_seconds: float | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
@@ -1133,6 +1134,18 @@ def extract_visual_evidence(
         for item in record["runs"]
         if item.get("success") is True
     }
+    if required_checkpoint_regions:
+        matching = {
+            region["asset_path"] for region, artifact in unique_regions
+            if completed_runs.get(region["asset_path"], {}).get("crop_digest") == artifact["sha256"]
+        }
+        if not required_checkpoint_regions.issubset(matching):
+            raise VisualProviderDeferred(
+                "OPENAI_CHECKPOINT_REUSE_REQUIRED",
+                "The saved visual regions could not be matched safely. Conversion paused before interpretation.",
+                {"required_count": len(required_checkpoint_regions),
+                 "matched_count": len(required_checkpoint_regions & matching)},
+            )
     inline_wait_limit = _bounded_env_seconds(
         "MEMO_VISUAL_MAX_INLINE_WAIT_SECONDS",
         DEFAULT_VISUAL_INLINE_WAIT_SECONDS,

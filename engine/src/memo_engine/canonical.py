@@ -1021,6 +1021,32 @@ def _source_evidence_summary(
     }
 
 
+def _unplaced_visual_working(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Locate owned calculation sequences that were kept as comments."""
+    crops: dict[str, dict[str, dict[str, Any]]] = {}
+    for evidence in item.get("visual_evidence") or []:
+        if not isinstance(evidence, dict):
+            continue
+        math = evidence.get("normalized_math")
+        asset = evidence.get("rendered_asset_ref")
+        if (evidence.get("kind") == "teacher_comment" and evidence.get("effective") is True
+                and evidence.get("association_status") == "owned" and isinstance(math, str)
+                and math.strip() and isinstance(asset, str) and asset):
+            crops.setdefault(asset, {})[math.strip()] = evidence
+    suggestions = []
+    for asset, candidates in crops.items():
+        if len(candidates) < 2:
+            continue
+        rows = list(candidates.values())
+        suggestions.append({
+            "rendered_asset_ref": asset,
+            "source_page": rows[0].get("page"),
+            "visual_evidence_ids": [entry["evidence_id"] for entry in rows if entry.get("evidence_id")],
+            "reason": "solution_role_uncertain",
+        })
+    return suggestions
+
+
 def _visual_crop_assets(qmap: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     assets: dict[str, dict[str, Any]] = {}
     for qid, qdata in qmap.items():
@@ -2288,6 +2314,16 @@ def validate_canonical(memo: dict[str, Any]) -> dict[str, Any]:
                         "reason": "solution_evidence_missing",
                     }],
                 })
+            if not children and computed == 0 and not has_solution_evidence:
+                unplaced_working = _unplaced_visual_working(item)
+                if unplaced_working:
+                    issues.append({
+                        "level": "amber",
+                        "category": "visual_evidence_uncertain",
+                        "affected_id": item_number,
+                        "message": f"Review whether the handwritten calculations for {item_number} belong in the solution.",
+                        "suggestions": unplaced_working,
+                    })
 
             alt_marks = [
                 int(alt.get("marks_computed") or 0)
