@@ -218,6 +218,8 @@ def test_invisible_llama_stops_before_terms_or_inference(monkeypatch):
 
 
 def test_activation_success_persists_cache_and_proves_failover_without_second_call(monkeypatch):
+    monkeypatch.setenv("MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED", "false")
+    monkeypatch.setenv("CLOUDFLARE_WORKERS_AI_PLAN_MODE", "free_only")
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "a" * 32)
     monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
     monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")

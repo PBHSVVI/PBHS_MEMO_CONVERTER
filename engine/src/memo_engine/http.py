@@ -161,6 +161,22 @@ class SupabaseRest:
             },
         )
 
+    def fail_unclaimed_dispatch(self, job: dict[str, Any], values: dict[str, Any]) -> dict | None:
+        # Require the same dispatch even if a concurrent request has already
+        # recovered and retried this job back into dispatched/dispatch.
+        filters = urllib.parse.urlencode({
+            "id": f"eq.{job['id']}",
+            "status": "eq.dispatched",
+            "stage": "eq.dispatch",
+            "attempt_count": f"eq.{job['attempt_count']}",
+            "dispatched_at": f"eq.{job['dispatched_at']}",
+            "started_at": "is.null" if job["started_at"] is None else f"eq.{job['started_at']}",
+        })
+        rows = self._request_json(
+            "PATCH", f"/rest/v1/jobs?{filters}", body=values, prefer="return=representation"
+        )
+        return rows[0] if isinstance(rows, list) and len(rows) == 1 else None
+
     def upsert_paper_library_summary(self, summary: dict[str, Any]) -> None:
         self._request_json(
             "POST",

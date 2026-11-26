@@ -147,10 +147,15 @@ describe("conversion outcomes", () => {
     expect(screen.getByRole("button", { name: "Report delayed processing" })).toBeInTheDocument();
   });
 
-  it("offers the supported retry action for failed_retryable", async () => {
-    const job = { ...base, status: "failed_retryable", stage: "worker_failed", error_code: "WORKER_INTERNAL_ERROR" };
+  it.each([
+    ["worker_failed", "WORKER_INTERNAL_ERROR"],
+    ["worker_startup_failed", "WORKER_STARTUP_FAILED"],
+  ])("offers the supported retry action for %s", async (stage, error_code) => {
+    const job = { ...base, status: "failed_retryable", stage, error_code };
     const client = clientFor(job);
     render(<ConversionProgress client={client} user={user} initialJob={job} onBack={() => {}} />);
+    expect(screen.getByText("Conversion paused safely")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Review memo" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Retry conversion" }));
     await waitFor(() => expect(client.functions.invoke).toHaveBeenCalledWith("dispatch-memo", {
       body: { job_id: job.id },

@@ -8,6 +8,8 @@ from engine.src.memo_engine.provider_fabric import ProviderResult
 
 
 def _configure(monkeypatch):
+    monkeypatch.setenv("MEMO_CLOUDFLARE_COMPOSITE_VISUAL_ENABLED", "false")
+    monkeypatch.setenv("CLOUDFLARE_WORKERS_AI_PLAN_MODE", "free_only")
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "a" * 32)
     monkeypatch.setenv("CLOUDFLARE_AI_API_TOKEN", "configured")
     monkeypatch.setenv("CLOUDFLARE_ZERO_COST_CONFIRMED", "true")

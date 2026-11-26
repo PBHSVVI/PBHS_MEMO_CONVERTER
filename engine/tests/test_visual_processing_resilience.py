@@ -698,14 +698,15 @@ def test_worker_finalizer_never_overwrites_terminal_or_review_state(monkeypatch,
     assert database.event is None
 
 
-def test_hosted_workflow_bounds_worker_and_always_runs_finalizer():
+def test_hosted_workflow_bounds_worker_and_finalizes_interrupted_execution():
     workflow = (ROOT / ".github" / "workflows" / "process-memo.yml").read_text(
         encoding="utf-8"
     )
     assert 'MEMO_VISUAL_PHASE_TIMEOUT_SECONDS: "900"' in workflow
     assert 'MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS: "45"' in workflow
     assert "id: hosted_worker\n        timeout-minutes: 38" in workflow
-    assert "always() && steps.hosted_worker.outcome != 'success'" in workflow
+    assert "always() && (steps.hosted_worker.outcome == 'failure'" in workflow
+    assert "steps.hosted_worker.outcome == 'cancelled')" in workflow
     assert "finalize-interrupted-job" in workflow
 
 

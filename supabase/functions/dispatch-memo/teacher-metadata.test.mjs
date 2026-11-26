@@ -46,6 +46,18 @@ test("normal retry reuses stored metadata without mutation", () => {
   assert.equal(metadataDispatchPolicy({ status: "complete", stage: "complete" }, false).allowed, false);
 });
 
+test("startup recovery uses the authenticated retry dispatch and rejects duplicate claims", () => {
+  assert.deepEqual(metadataDispatchPolicy({ status: "failed_retryable", stage: "worker_startup_failed" }, false),
+    { allowed: true, mode: "retry" });
+  assert.equal(metadataDispatchPolicy({ status: "dispatched", stage: "dispatch" }, false).allowed, false);
+  assert.equal(metadataDispatchPolicy({ status: "processing", stage: "ingestion" }, false).allowed, false);
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  assert.match(source, /withSupabase\(\{ auth: "user" \}/);
+  assert.match(source, /ctx\.supabase\s*\.from\("jobs"\)[\s\S]*?\.eq\("id", jobId\)/);
+  assert.match(source, /\.eq\("status", claimedFromStatus\)\s*\.eq\("stage", claimedFromStage\)/);
+  assert.ok(source.indexOf("if (!claimedJob)") < source.indexOf("const dispatch = await fetch("));
+});
+
 test("initial dispatch failures become explicit retryable upload states", () => {
   assert.deepEqual(
     initialDispatchFailureState(

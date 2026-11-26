@@ -1,0 +1,47 @@
+name: Recover Memo Dispatch
+
+on:
+  workflow_run:
+    workflows: [Process Memo]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      failed_run_id:
+        description: Completed Process Memo run to verify
+        required: true
+        type: string
+      job_id:
+        description: Unclaimed memo job UUID
+        required: true
+        type: string
+      source_sha256:
+        description: Optional expected digest for a never-started job
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recover:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(fromJSON('["failure","timed_out","cancelled"]'), github.event.workflow_run.conclusion))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Use the trusted workflow's revision, never the triggering run's checkout.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify failed run and recover only its unclaimed dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_RUN_ID: ${{ inputs.failed_run_id || github.event.workflow_run.id }}
+          RECOVERY_JOB_ID: ${{ inputs.job_id }}
+          RECOVERY_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m engine.src.memo_engine.dispatch_recovery

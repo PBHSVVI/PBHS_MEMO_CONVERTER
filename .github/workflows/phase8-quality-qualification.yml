@@ -68,7 +68,7 @@ jobs:
       - name: Qualify Phase 8.4C Cloudflare composite contract
         run: python -m pytest -q engine/tests/test_phase84c_grounding_coverage.py engine/tests/test_phase84c_cloudflare_composite.py engine/tests/test_phase84c_activation.py engine/tests/test_phase84c7_claim_boundary.py engine/tests/test_phase84c9_relation_preservation.py
 
-      - name: Qualify production provider configuration preflight
+      - name: Qualify full engine under the production provider configuration
         env:
           MEMO_CLOUDFLARE_VISION_MODEL: "@cf/google/gemma-4-26b-a4b-it"
           MEMO_CLOUDFLARE_STRUCTURER_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
@@ -82,7 +82,13 @@ jobs:
           GROQ_API_KEY: "synthetic-hosted-preflight"
           GROQ_ZERO_COST_CONFIRMED: "true"
           GROQ_PLAN_MODE: "free_only"
+          MEMO_PRIVACY_MODE: "APPROVED_EXTERNAL_ONLY"
+          SUPABASE_URL: "https://supabase.invalid"
+          SUPABASE_SECRET_KEY: "synthetic-hosted-preflight"
+          MISTRAL_API_KEY: "synthetic-hosted-preflight"
+          MISTRAL_PLAN_MODE: "free_only"
+          MISTRAL_ZERO_COST_CONFIRMED: "true"
           MISTRAL_SCHOOL_PRIVATE_APPROVED: "false"
         run: |
-          python -m pytest -q engine/tests/test_production_provider_config.py
+          python -m pytest -q engine/tests
           python -m engine.src.memo_engine.cli validate-provider-config
