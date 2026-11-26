@@ -61,6 +61,17 @@ def test_previous_next_and_skip_rotate_only_actionable_items():
     assert result["order"] == ["second", "third", "first"]
 
 
+def test_marking_draft_precedes_dependent_totals_without_hiding_math_conflicts():
+    rows=[
+        {"id":"total","category":"item_total_mismatch","affected_id":"1.1"},
+        {"id":"draft","category":"marking_interpretation_review","affected_id":"1.1"},
+        {"id":"math","category":"mathematical_consistency_conflict","affected_id":"1.1"},
+        {"id":"other","category":"item_total_mismatch","affected_id":"1.2"},
+    ]
+    assert _evaluate(rows)["actionable"]==["math","draft","other"]
+    assert "total" in _evaluate([row for row in rows if row["id"]!="draft"])["actionable"]
+
+
 def test_skipped_item_remains_unresolved_and_returns_after_other_items():
     result = _evaluate([
         {"id": "one", "category": "item_total_mismatch", "affected_id": "1.1"},
