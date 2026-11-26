@@ -936,6 +936,7 @@ def _content_segments(
                 },
                 "canonical_latex": segment.get("canonical_latex"),
                 "evidence_order": int(segment.get("evidence_order") or 0),
+                "interpretation_evidence_id": segment.get("interpretation_evidence_id"),
             }
             for segment in visual_segments
             if str(segment.get("text") or "").strip()
@@ -1101,6 +1102,8 @@ def _blocks_from_segments(
     def add_block(payload: dict[str, Any]) -> None:
         payload["block_id"] = f"b_{safe_qid}_{alternative_label.lower()}_{len(blocks) + 1}"
         payload["source_content_role"] = segment_role
+        if segment.get("interpretation_evidence_id"):
+            payload["visual_evidence_ids"]=[segment["interpretation_evidence_id"]]
         blocks.append(payload)
 
     def add_text_block(value: str, refs: list[dict[str, Any]]) -> None:
@@ -1347,7 +1350,14 @@ def _marking_points_for_alternatives(
     """
     source_branch_count = max(1, len(alternative_blocks))
 
-    if OR_LINE_RE.search(marking_text):
+    interpreted=qdata.get("marking_interpretation")
+    if interpreted and any(point.get("alternative",0) for point in qdata.get("mark_points") or []):
+        raw_mark_branches=[""]*source_branch_count
+        parsed_mark_branches=[[p for p in qdata["mark_points"] if p.get("alternative",0)==index] for index in range(source_branch_count)]
+        if any(p.get("alternative",0)>=source_branch_count for p in qdata["mark_points"]):
+            issues.append({"level":"amber","category":"alternative_source_marking_conflict","affected_id":qid,
+                           "message":"An interpreted marking alternative has no corresponding source solution branch."})
+    elif OR_LINE_RE.search(marking_text):
         raw_mark_branches = [
             branch for branch in OR_LINE_RE.split(marking_text)
             if _collapse(branch)
@@ -1594,6 +1604,14 @@ def _marking_points_for_alternatives(
             }
             if correction_origin is not None:
                 mark["correction_origin"] = correction_origin
+            if point.get("criterion_id"):
+                mark["source_marking"]={"criterion_id":point["criterion_id"],"allocation_quote":point.get("source"),
+                                        "solution_evidence_ids":point.get("solution_evidence_ids",[]),
+                                        "allocation_evidence_ids":point.get("allocation_evidence_ids",[])}
+                mark["source_refs"]=point.get("source_refs") or mark["source_refs"]
+                proof=set(point.get("solution_evidence_ids") or [])
+                mark["applies_to_block_ids"]=[b["block_id"] for b in blocks if proof.intersection(
+                    b.get("visual_evidence_ids") or (b.get("figure") or {}).get("visual_evidence_ids") or [])]
             built.append(mark)
             if not blocks and not source_optional:
                 issues.append({
@@ -1752,6 +1770,10 @@ def _build_item_tree(
         if qdata is not None and qdata.get("visual_evidence"):
             item.setdefault("source_prompt", qdata.get("source_preview"))
             item["visual_evidence"] = qdata.get("visual_evidence")
+        if qdata is not None and qdata.get("marking_interpretation"):
+            item["marking_interpretation"]=qdata["marking_interpretation"]
+            if qdata["marking_interpretation"].get("unconfirmed") or not computed or not evidence_summary or evidence_summary.get("status")!="present":
+                item["confidence"]={"score":0.5,"band":"amber","rationale":"Marking interpretation or source working requires teacher confirmation."}
         correction_origin = _correction_origin(qdata) if qdata else None
         if correction_origin is not None:
             item["correction_origin"] = correction_origin
@@ -3027,6 +3049,21 @@ def build_canonical_memo(
     }
 
     validation = validate_canonical(memo)
+    # A structurally parsed item is not a verified marking interpretation.
+    for question in memo["questions"]:
+        for item in _iter_items(question.get("items",[])):
+            if not item.get("marking_interpretation"):continue
+            checks=[c for c in validation["mathematical_consistency"]["checks"] if c.get("question_id")==item["number"]]
+            if any(c["status"]=="checked_fail" for c in checks):
+                item["confidence"]={"score":0.0,"band":"red","rationale":"Source working contains a mathematical contradiction."}
+            elif any(c["status"]=="not_checked" for c in checks):
+                item["confidence"]={"score":0.5,"band":"amber","rationale":"Some displayed mathematics remains unsupported and unchecked."}
+                unchecked={"level":"amber","category":"mathematical_expression_not_checked","affected_id":item["number"],
+                           "message":"Some displayed source mathematics is outside the bounded checker; verify it before confirming the marking interpretation.",
+                           "suggestions":[{"displayed_expression":c["displayed_expression"],"reason":c.get("reason"),"source_refs":c.get("source_refs",[])} for c in checks if c["status"]=="not_checked"]}
+                memo["exceptions"].append(_exception_record(unchecked));new_issues.append(unchecked)
+    if any(item.get("marking_interpretation") for question in memo["questions"] for item in _iter_items(question.get("items",[]))):
+        validation=validate_canonical(memo)
     memo["audit"]["mathematical_consistency"] = {
         "checker_version": validation["mathematical_consistency"]["checker_version"],
         "counts": validation["mathematical_consistency"]["counts"],

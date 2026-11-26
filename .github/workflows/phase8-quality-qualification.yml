@@ -91,6 +91,9 @@ jobs:
       - name: Qualify Phase 8.5A coordinate conversion and audited replay
         run: python -m pytest -q engine/tests/test_phase85a_coordinates.py engine/tests/test_phase85_openai.py
 
+      - name: Qualify Phase 8.5B source-backed marking interpretation
+        run: python -m pytest -q engine/tests/test_phase85b_marking.py
+
       - name: Qualify Slice 2 spatial DOCX and PDF preservation
         run: python -m pytest -q -s engine/tests/test_phase8_spatial_preservation.py
 

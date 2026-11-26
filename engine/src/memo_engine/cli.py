@@ -23,6 +23,7 @@ from .openai_credit import CreditLedger
 from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
+from .marking_interpretation import interpret_marking
 from .structure import extract_structure
 from .visual_evidence import (
     VisualProviderDeferred,
@@ -331,8 +332,8 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
             cached_visual = replay_visual
             db.upload_json(BUCKET, visual_path, replay_visual)
             db.upload_json(BUCKET, f"{job['user_id']}/{job_id}/internal/visual/evidence.checkpoint.json", replay_visual)
-            db.add_event(job, "coordinate_revalidation_visual_complete", "visual_evidence",
-                         replay_visual["coordinate_revalidation"])
+            db.add_event(job, "marking_revalidation_visual_complete" if replay_visual.get("marking_revalidation") else "coordinate_revalidation_visual_complete", "visual_evidence",
+                         replay_visual.get("marking_revalidation") or replay_visual["coordinate_revalidation"])
         if visual_cache_is_complete(cached_visual, source["sha256"]):
             visual = cached_visual
             visual_artifacts: list[dict[str, Any]] = []
@@ -461,6 +462,21 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
             ),
             visual,
         )
+        if visual.get("evidence"):
+            marking_path=f"{job['user_id']}/{job_id}/internal/marking_interpretation.json"
+            try:
+                cached_marking=db.download_json(BUCKET,marking_path)
+            except Exception:
+                cached_marking=None
+            structure, marking = interpret_marking(
+                structure, normalized, visual,
+                interpreter=openai.marking if openai else None,
+                classifier=openai.semantic if openai else None,
+                cached=cached_marking,
+                progress=lambda artifact: db.upload_json(BUCKET,marking_path,artifact),
+            )
+            db.upload_json(BUCKET,marking_path,marking)
+            db.add_event(job,"marking_interpretation_complete","structure",marking["summary"])
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []
         correction_application_issues: list[dict[str, Any]] = []

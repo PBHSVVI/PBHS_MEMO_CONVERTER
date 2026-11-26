@@ -1,0 +1,154 @@
+"""Distinct owner-authorised Phase 8.5B lifecycle; never bypass Phase 8.5A's guard."""
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import os
+import sys
+import urllib.parse
+
+from .http import SupabaseRest
+from .openai_adapter import OpenAIInterpreter
+from .openai_credit import CreditLedger, MODEL, PBHS_URL, PILOT_JOB
+from .provider_fabric import ProviderTaskRequest, default_provider_registry
+from .visual_evidence import _render_regions, _vision_schema, validate_visual_response, visual_system_prompt, ensure_visual_evidence_ids
+
+# Owner-specified comparison targets identify crops, never expected answers.
+TARGETS = (
+    ("page-0001-q1_2.png", "solution-role misclassification"),
+    ("page-0002-q2_1_2.png", "ambiguous fraction grouping"),
+    ("page-0003-q4_2.png", "unreliable fraction transcription"),
+    ("page-0004-q5_1.png", "uncertain diagram digit"),
+    ("page-0004-q5_2_1.png", "uncertain decimal transcription"),
+    ("page-0005-q4_1.png", "incomplete multiplication transcription"),
+)
+VERSION="marking-revalidation-v1"
+
+
+def refresh_readings(visual: dict, source: bytes, normalized: dict, interpreter: OpenAIInterpreter,
+                     *, cached: dict | None = None, checkpoint=None, crop_store=None) -> dict:
+    regions={r["asset_path"]:r for r in _render_regions(source,normalized)}
+    assets={a["path"]:a for a in visual["assets"]}
+    for run in visual["runs"]:
+        ref=run["region_id"]
+        if hashlib.sha256(regions[ref]["image_bytes"]).hexdigest()!=run["crop_digest"] or assets[ref]["sha256"]!=run["crop_digest"]:
+            raise ValueError("Original source crop changed before targeted reinterpretation")
+    tasks=[]
+    for name,reason in TARGETS:
+        original="internal/visual/regions/"+name
+        region=copy.deepcopy(regions[original]);region["asset_path"]="internal/visual/reinterpretations/phase85b-"+name
+        tasks.append((region,[original],reason))
+    # The existing lower-family crop contains both labelled working lines. Keep
+    # original bytes; an explicit two-question scope prevents cross-family use.
+    original="internal/visual/regions/page-0005-q4_2_2.png"
+    family=copy.deepcopy(regions[original]);family.update({
+        "asset_path":"internal/visual/reinterpretations/phase85b-page-0005-family4_2.png",
+        "question_refs":["4.2.1","4.2.2"],"owned_bbox":family["render_bbox"],
+        "association_scope":"labelled_question_family",
+    })
+    tasks.append((family,["internal/visual/regions/page-0005-q4_2_1.png",original],"working lies below adjacent printed prompts"))
+    checkpoint_record={"version":VERSION,"source_sha256":visual["source_sha256"],"responses":[]}
+    reusable={r["asset_path"]:r for r in (cached or {}).get("responses",[]) if (cached or {}).get("version")==VERSION and (cached or {}).get("source_sha256")==visual["source_sha256"]}
+    result=copy.deepcopy(visual);history=[];new_calls=0
+    for region,original_refs,reason in tasks:
+        ref=region["asset_path"];digest=hashlib.sha256(region["image_bytes"]).hexdigest()
+        saved=reusable.get(ref)
+        if saved and saved["crop_digest"]!=digest:raise ValueError("Recognition checkpoint crop differs")
+        if not saved:
+            request=ProviderTaskRequest(task_type="visual_interpretation",region_id=ref,
+                current_question_owner=region["question_refs"][0] if len(region["question_refs"])==1 else None,
+                source_question=region["question_refs"][0],source_page=region["page"],
+                source_digest=visual["source_sha256"],crop_digest=digest,crop_bytes=region["image_bytes"],
+                crop_mime_type=region["mime_type"],interpretation_schema_version="1.0",task_prompt_version=VERSION,
+                privacy_classification="school_private",prompt=visual_system_prompt()+
+                "\nTranscribe exactly as written, even when mathematically wrong. Do not repair arithmetic or invent a missing answer. "
+                "Read complete fractions, every factor and every visible decimal digit. Distinguish blue working from red marking instructions. "
+                "Use only these source question labels: "+json.dumps(region["question_refs"]),response_schema=_vision_schema(region["page"]))
+            response=interpreter.visual(request,default_provider_registry()["openai"],None,1,__import__('time').monotonic)
+            saved={"asset_path":ref,"crop_digest":digest,"payload":response.normalized_result,
+                   "result_digest":response.result_digest,"usage":response.usage,"quota":response.quota,"latency_ms":response.latency_ms}
+            new_calls+=1
+        validated=validate_visual_response({**saved["payload"],"provider":"openai","model":MODEL},region)
+        checkpoint_record["responses"].append(saved)
+        if checkpoint:checkpoint(checkpoint_record)
+        old=[e for e in result["evidence"] if e["rendered_asset_ref"] in original_refs]
+        history.append({"original_refs":original_refs,"reason":reason,"original_observations":old,
+                        "new_asset_ref":ref,"result_digest":saved["result_digest"]})
+        result["evidence"]=[e for e in result["evidence"] if e["rendered_asset_ref"] not in original_refs]+validated["evidence"]
+        result["mark_changes"]=[e for e in result["mark_changes"] if e["rendered_asset_ref"] not in original_refs]+validated["mark_changes"]
+        ensure_visual_evidence_ids(result["evidence"]);ensure_visual_evidence_ids(result["mark_changes"])
+        asset={k:region[k] for k in ["pixel_width","pixel_height","page","question_refs","render_bbox","owned_bbox","page_bbox"]}
+        result["assets"].append({**asset,"path":ref,"sha256":digest,"size_bytes":len(region["image_bytes"]),
+                                 "mime_type":region["mime_type"],"preservation_method":"source_crop"})
+        result.setdefault("coordinate_responses",[]).append({"region_id":ref,"crop_digest":digest,
+                                                            "provenance":validated["coordinate_provenance"]})
+        if crop_store:crop_store(ref,region["image_bytes"],region["mime_type"])
+    result["recognition_revisions"]=history
+    result["marking_revalidation"]={"version":VERSION,"new_visual_calls":new_calls,
+        "targeted_requests":len(tasks),"affected_original_regions":sum(len(t[1]) for t in tasks),
+        "original_region_coverage":21,"prior_coordinate_contract":visual["coordinate_revalidation"]["contract"]}
+    result["summary"].update({"vision_calls":0,"effective_evidence_count":sum(e.get("effective",True) for e in result["evidence"]),
+                               "suppressed_evidence_count":sum(not e.get("effective",True) for e in result["evidence"])})
+    return result
+
+
+def revalidate_marking(job_id: str, db=None) -> int:
+    from .cli import BUCKET, PHASE85_SOURCE_SHA256, run_job, utc_now
+    from .ingestion import validate_source_path
+    if job_id!=PILOT_JOB:raise ValueError("Only the authorised marking pilot is eligible")
+    db=db or SupabaseRest()
+    if db.base!=PBHS_URL:raise ValueError("Wrong project")
+    if (os.environ.get("GITHUB_ACTIONS")!="true" or os.environ.get("GITHUB_REPOSITORY")!="PBHSVVI/PBHS_MEMO_CONVERTER"
+        or os.environ.get("GITHUB_REF")!="refs/heads/main" or os.environ.get("GITHUB_WORKFLOW")!="Process Memo"):
+        raise ValueError("Authorised hosted Process Memo execution required")
+    run_id=os.environ["GITHUB_RUN_ID"];attempt=os.environ["GITHUB_RUN_ATTEMPT"]
+    if not run_id.isdigit() or not attempt.isdigit():raise ValueError("Invalid hosted audit identity")
+    job=db.get_job(job_id)
+    if job["status"]!="needs_review" or job["stage"]!="phase5_canonicalized" or job.get("source_sha256")!=PHASE85_SOURCE_SHA256:
+        raise ValueError("Pilot marking revalidation state differs")
+    prefix=f"{job['user_id']}/{job_id}/internal";archive=f"{prefix}/revisions/phase85b-{run_id}-{attempt}"
+    rows={table:db._request_json("GET",f"/rest/v1/{table}?job_id=eq.{job_id}&select=*") for table in ["corrections","exceptions","job_events"]}
+    if rows["corrections"]:raise ValueError("Teacher corrections require a different lifecycle")
+    originals={name:db.download_object(BUCKET,f"{prefix}/{name}") for name in [
+        "ingestion.json","normalized.json","structure.json","semantic.json","canonical.json","validation.json",
+        "visual/evidence.json","visual/evidence.checkpoint.json"]}
+    visual=json.loads(originals["visual/evidence.json"])
+    if not visual.get("coordinate_revalidation") or visual.get("job_id")!=job_id:
+        raise ValueError("Accepted coordinate revalidation history is required")
+    if visual.get("marking_revalidation"):raise ValueError("Marking revalidation already published")
+    source=db.download_object(BUCKET,validate_source_path(job))
+    if hashlib.sha256(source).hexdigest()!=PHASE85_SOURCE_SHA256 or len(source)!=1_007_519:raise ValueError("Immutable source differs")
+    for name,data in originals.items():db.upload_object(BUCKET,f"{archive}/{name}",data,content_type="application/json",upsert=False)
+    db.upload_json(BUCKET,f"{archive}/audit.json",{"job":job,**rows,"sha256":{n:hashlib.sha256(d).hexdigest() for n,d in originals.items()}},upsert=False)
+    query=f"/rest/v1/jobs?id=eq.{job_id}&status=eq.needs_review&stage=eq.phase5_canonicalized&updated_at=eq.{urllib.parse.quote(job['updated_at'],safe='')}"
+    claimed=db._request_json("PATCH",query,body={"status":"dispatched","stage":"marking_revalidation",
+        "attempt_count":int(job.get("attempt_count") or 0)+1,"updated_at":utc_now(),"dispatched_at":utc_now()},prefer="return=representation")
+    if not claimed or len(claimed)!=1:raise ValueError("Concurrent pilot revision changed")
+    db.add_event(claimed[0],"marking_revalidation_started","marking_revalidation",{
+        "archive_path":archive,"github_run_id":run_id,"actor":os.environ.get("GITHUB_ACTOR"),"version":VERSION})
+    try:
+        if db._request_json("GET",f"/rest/v1/corrections?job_id=eq.{job_id}&select=id"):raise ValueError("Concurrent teacher correction")
+        checkpoint_path=f"{prefix}/recognition_revalidation.json"
+        try:cached=db.download_json(BUCKET,checkpoint_path)
+        except Exception:cached=None
+        interpreter=OpenAIInterpreter(CreditLedger(db),os.environ,job_id=job_id)
+        rebuilt=refresh_readings(visual,source,json.loads(originals["normalized.json"]),interpreter,cached=cached,
+            checkpoint=lambda r:db.upload_json(BUCKET,checkpoint_path,r),
+            crop_store=lambda ref,data,mime:db.upload_object(BUCKET,f"{job['user_id']}/{job_id}/{ref}",data,content_type=mime))
+        outcome=run_job(job_id,replay_visual=rebuilt,db=db)
+    except Exception as error:
+        current=db.get_job(job_id)
+        if current["status"]=="dispatched":
+            db.patch_job(job_id,"dispatched",{"status":"needs_review","stage":"phase5_canonicalized","updated_at":utc_now()})
+        db.add_event(current,"marking_revalidation_failed","marking_revalidation",{"archive_path":archive,"error_type":type(error).__name__})
+        raise
+    final=db.get_job(job_id)
+    db.add_event(final,"marking_revalidation_complete","marking_revalidation",{
+        "archive_path":archive,"version":VERSION,"status":final["status"],"stage":final["stage"]})
+    return outcome
+
+
+if __name__=="__main__":
+    if len(sys.argv)!=2:raise SystemExit("Expected the authorised pilot job ID")
+    raise SystemExit(revalidate_marking(sys.argv[1]))

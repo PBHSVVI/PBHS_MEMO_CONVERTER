@@ -12,7 +12,7 @@ on:
         description: "Ordinary processing or authorised Phase 8.5A saved-evidence revalidation"
         type: choice
         default: process
-        options: [process, revalidate_coordinates]
+        options: [process, revalidate_coordinates, revalidate_marking]
 
 permissions:
   contents: read
@@ -129,6 +129,8 @@ jobs:
         run: |
           if [ "$MEMO_OPERATION" = revalidate_coordinates ]; then
             python -m engine.src.memo_engine.coordinate_revalidation "$MEMO_JOB_ID"
+          elif [ "$MEMO_OPERATION" = revalidate_marking ]; then
+            python -m engine.src.memo_engine.marking_revalidation "$MEMO_JOB_ID"
           else
             python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
           fi

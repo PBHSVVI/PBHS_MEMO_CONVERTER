@@ -80,6 +80,12 @@ def _normalise_expression(value: str) -> str:
     if len(value) > MAX_INPUT_LENGTH:
         raise _UnsupportedExpression("input_length_limit")
     text = value.strip()
+    if re.search(r"\d\s+\d",text):
+        raise _UnsupportedExpression("ambiguous_numeric_spacing")
+    # These are LaTeX spacing commands, not decimal/list commas or intervals.
+    text = re.sub(r"\\[,;:!]", " ", text)
+    text = re.sub(r"\\(?:quad|qquad)\b", " ", text)
+    text = text.replace("{,}", ",")
     if ";" in text:
         raise _UnsupportedExpression("pair_or_interval")
     if re.search(r"\d\s*,\s+\d|\d\s+,\s*\d", text):
@@ -95,6 +101,9 @@ def _normalise_expression(value: str) -> str:
     text = text.replace("≃", "≈")
     text = text.replace("×", "*").replace("·", "*").replace("÷", "/")
     text = text.replace(r"\%", "%")
+    # Adjacent factorial factors are an ordinary product, not unrestricted
+    # symbolic juxtaposition. Double factorials remain unsupported.
+    text = re.sub(r"!(\s*)(?=\d)", "!*", text)
     text = re.sub(r"(?<=\d),(?=\d)", ".", text)
     if "," in text:
         raise _UnsupportedExpression("ambiguous_comma")

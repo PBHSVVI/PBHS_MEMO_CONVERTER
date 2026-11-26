@@ -573,7 +573,12 @@ def _association_status(
     anchors = [str(value) for value in region.get("question_refs") or []]
     owner = anchors[0] if len(anchors) == 1 else None
     if owner is None:
-        return "unanchored", None
+        if region.get("association_scope") == "labelled_question_family":
+            if question_ref is None or str(question_ref) not in anchors:
+                return "cross_anchor_mismatch", None
+            owner = str(question_ref)
+        else:
+            return "unanchored", None
     if question_ref is not None and str(question_ref) != owner:
         return "cross_anchor_mismatch", owner
     owned_bbox = region.get("owned_bbox")
@@ -1741,6 +1746,12 @@ def spatial_visual_groups(
 
 def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     questions = {str(item.get("question_id")): item for item in structure.get("questions", [])}
+    def target_for(qid: Any, page: Any) -> dict[str, Any] | None:
+        matches=[q for q in structure.get("questions",[]) if str(q.get("question_id"))==str(qid)]
+        exact=[q for q in matches if q.get("source_page")==page]
+        if len(exact)==1:return exact[0]
+        if len(matches)==1 and matches[0].get("source_page") is None:return matches[0]
+        return None
     attached = 0
     evidence_items = visual.get("evidence", [])
     _deduplicate_visual_items(evidence_items)
@@ -1759,7 +1770,7 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
     association_items.extend({**item, "association_status": "unresolved_question"}
         for item in evidence_items
         if item.get("effective", True)
-        and questions.get(str(item.get("question_ref"))) is None
+        and target_for(item.get("owned_question_ref") or item.get("question_ref"),item.get("page")) is None
     )
     for unit in visual_association_review_units(association_items):
         structure.setdefault("exceptions", []).append({
@@ -1774,7 +1785,7 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             "suggestions": [unit],
         })
     for group in spatial_groups:
-        target = questions.get(str(group.get("owner_question_id") or ""))
+        target = target_for(group.get("owner_question_id"),group.get("page"))
         if target is not None:
             target.setdefault("essential_visual_evidence", []).append(group)
         if target is not None and group.get("reliable"):
@@ -1800,8 +1811,8 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
             }],
         })
     for evidence_order, item in enumerate(evidence_items):
-        question_ref = item.get("question_ref")
-        target = questions.get(str(question_ref)) if question_ref is not None else None
+        question_ref = item.get("question_ref") or item.get("owned_question_ref")
+        target = target_for(question_ref,item.get("page")) if question_ref is not None else None
         confidence = float(item.get("confidence") or 0)
         if not item.get("effective", True):
             continue
@@ -1839,6 +1850,7 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
                     "confidence": confidence,
                     "canonical_latex": item.get("normalized_math"),
                     "evidence_order": evidence_order,
+                    "interpretation_evidence_id": item.get("evidence_id"),
                 })
         if confidence < VISUAL_REVIEW_THRESHOLD:
             structure.setdefault("exceptions", []).append({

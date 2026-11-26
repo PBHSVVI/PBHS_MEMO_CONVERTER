@@ -168,8 +168,8 @@ class OpenAIInterpreter:
     def _respond(self, *, stage: str, prompt: str, schema: dict[str, Any],
                  image: bytes | None = None, mime: str | None = None,
                  deadline: float | None = None, clock: Callable[[], float] = time.monotonic) -> Response:
-        schema_name = "memo_visual_evidence" if stage == "visual" else "memo_mark_semantics"
-        output_limit = VISUAL_OUTPUT_LIMIT if stage == "visual" else SEMANTIC_OUTPUT_LIMIT
+        schema_name = "memo_visual_evidence" if stage == "visual" else ("memo_marking_interpretation" if stage == "marking" else "memo_mark_semantics")
+        output_limit = VISUAL_OUTPUT_LIMIT if stage == "visual" else (4096 if stage == "marking" else SEMANTIC_OUTPUT_LIMIT)
         transport_schema = _transport_schema(schema)
         image_ceiling = _image_token_ceiling(image) if image is not None else 0
         text_ceiling = len(prompt.encode("utf-8")) + len(json.dumps(transport_schema).encode("utf-8")) + 2048
@@ -317,3 +317,8 @@ class OpenAIInterpreter:
                            result.usage["output_tokens"], result.usage["total_tokens"], result.elapsed_ms,
                            [{"candidate_id": item["candidate_id"], **keyed[str(item["candidate_id"])]} for item in candidates],
                            usage=result.usage)
+
+    def marking(self, packet: dict[str, Any]) -> Response:
+        from .marking_interpretation import MARKING_PROMPT, marking_schema
+        return self._respond(stage="marking", prompt=MARKING_PROMPT + "\nSOURCE PACKET:\n" + json.dumps(packet, ensure_ascii=False),
+                             schema=marking_schema([e["evidence_id"] for e in packet["observations"]]))
