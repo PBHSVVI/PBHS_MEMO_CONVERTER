@@ -115,24 +115,38 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import urllib.error
           import urllib.request
 
-          from engine.src.memo_engine.phase84b1_cloudflare_activation import list_account_models
+          from engine.src.memo_engine.phase84b1_cloudflare_activation import (
+              CloudflareDiagnosticError, list_account_models,
+          )
 
           if (os.environ['CLOUDFLARE_ZERO_COST_CONFIRMED'] != 'true'
                   or os.environ['MISTRAL_SCHOOL_PRIVATE_APPROVED'] != 'false'):
               raise SystemExit('Required free-only and privacy gates are not set.')
           request = urllib.request.Request(
               'https://api.groq.com/openai/v1/models',
-              headers={'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY']},
+              headers={
+                  'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY'],
+                  'Accept': 'application/json',
+                  'User-Agent': 'PBHS-Memo-Converter/phase5.1',
+              },
           )
           try:
               with urllib.request.urlopen(request, timeout=30) as response:
                   groq_status = response.status
                   groq_models = {model['id'] for model in json.load(response)['data']}
-              cards, _, cloudflare_status = list_account_models(os.environ['CLOUDFLARE_ACCOUNT_ID'])
+          except urllib.error.HTTPError as exc:
+              groq_status, groq_models = exc.code, set()
           except Exception as exc:
-              raise SystemExit(f'Provider catalogue GET failed ({type(exc).__name__}).') from None
+              raise SystemExit(f'Groq catalogue GET failed ({type(exc).__name__}).') from None
+          try:
+              cards, _, cloudflare_status = list_account_models(os.environ['CLOUDFLARE_ACCOUNT_ID'])
+          except CloudflareDiagnosticError as exc:
+              cloudflare_status, cards = exc.http_status, []
+          except Exception as exc:
+              raise SystemExit(f'Cloudflare catalogue GET failed ({type(exc).__name__}).') from None
 
           expected = {os.environ['MEMO_CLOUDFLARE_VISION_MODEL'], os.environ['MEMO_CLOUDFLARE_STRUCTURER_MODEL']}
           cloudflare_visible = expected <= {card['id'] for card in cards}
