@@ -188,6 +188,28 @@ def test_stage_v_receives_image_and_stage_s_receives_only_transcript(monkeypatch
     assert transport["required"] == ["payload", "grounding"]
 
 
+def test_cloudflare_timeout_override_leaves_groq_timeout_unchanged(monkeypatch):
+    monkeypatch.setenv("MEMO_CLOUDFLARE_REQUEST_TIMEOUT_SECONDS", "75")
+    monkeypatch.setenv("MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS", "45")
+    monkeypatch.delenv("MEMO_VISION_REQUEST_TIMEOUT_SECONDS", raising=False)
+    timeouts = []
+
+    def post(_url, _headers, _body, **kwargs):
+        timeouts.append(kwargs["timeout_seconds"])
+        return {}, 0
+
+    monkeypatch.setattr(provider_fabric, "_post_json", post)
+    provider_fabric._cloudflare_stage_post(
+        CLOUDFLARE_COMPOSITE_VISION_MODEL, {},
+        deadline_monotonic=None, remaining_requests=1, clock=lambda: 0,
+    )
+    with pytest.raises(ProviderError):  # No structured response in this transport stub.
+        provider_fabric.groq_visual_adapter(
+            _request(), default_provider_registry()["groq"], None, 1, lambda: 0
+        )
+    assert timeouts == [75, 45]
+
+
 def test_provider_body_excludes_application_owned_wrapper_metadata():
     schema = cloudflare_grounded_provider_body_schema(
         visual_evidence._vision_schema(1)

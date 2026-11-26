@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import random
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -194,6 +197,23 @@ def _safe_rate_metadata(headers: Any) -> dict[str, Any]:
     return result
 
 
+def _transport_error_category(exc: Exception) -> str:
+    cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(cause, TimeoutError):
+        return "timeout"
+    if isinstance(cause, socket.gaierror):
+        return "dns_failure"
+    if isinstance(cause, ssl.SSLError):
+        return "tls_failure"
+    if isinstance(cause, ConnectionError):
+        return "connection_failure"
+    if isinstance(cause, OSError) and cause.errno in {
+        errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTUNREACH,
+    }:
+        return "connection_failure"
+    return "other_transport_failure"
+
+
 def _post_json(
     url: str,
     headers: dict[str, str],
@@ -224,6 +244,15 @@ def _post_json(
     response_rate_limits: dict[str, Any] = {}
 
     while True:
+        request_started = clock()
+        request_timeout = timeout_seconds
+        if deadline_monotonic is not None:
+            request_timeout = min(timeout_seconds, deadline_monotonic - request_started)
+            if request_timeout <= 0:
+                raise ProviderError(
+                    "VISUAL_PHASE_BUDGET_EXCEEDED",
+                    "The visual processing budget was exhausted before the provider request.",
+                )
         req = urllib.request.Request(
             url,
             data=data,
@@ -236,8 +265,10 @@ def _post_json(
             },
         )
 
+        transport_phase = "request"
         try:
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(req, timeout=request_timeout) as response:
+                transport_phase = "read"
                 raw = response.read()
                 response_rate_limits = _safe_rate_metadata(getattr(response, "headers", None))
                 elapsed_ms = int((clock() - started) * 1000)
@@ -447,7 +478,14 @@ def _post_json(
                 "The configured AI provider could not be reached.",
                 retryable=True,
                 category="transient_capacity",
-            ) from exc
+                diagnostics={
+                    "transport_error_category": _transport_error_category(exc),
+                    "transport_phase": transport_phase,
+                    "transport_elapsed_ms": round((clock() - request_started) * 1000),
+                    "configured_timeout_seconds": timeout_seconds,
+                    "request_timeout_seconds": request_timeout,
+                },
+            ) from None
 
     try:
         payload = json.loads(raw.decode("utf-8"))

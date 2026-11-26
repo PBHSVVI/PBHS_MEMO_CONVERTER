@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import io
+import socket
+import ssl
 import urllib.error
 from email.message import Message
 from pathlib import Path
@@ -124,6 +126,60 @@ def test_visual_request_uses_its_bounded_timeout(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
     _post_json("https://example.invalid", {}, {}, timeout_seconds=45)
     assert observed["timeout"] == 45
+
+
+@pytest.mark.parametrize(("cause", "category"), [
+    (TimeoutError, "timeout"),
+    (ConnectionRefusedError, "connection_failure"),
+    (socket.gaierror, "dns_failure"),
+    (ssl.SSLCertVerificationError, "tls_failure"),
+    (RuntimeError, "other_transport_failure"),
+])
+def test_network_error_reports_only_sanitized_transport_facts(monkeypatch, cause, category):
+    def fail(*_args, **_kwargs):
+        raise urllib.error.URLError(cause("must-not-leak"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fail)
+    values = iter([10.0, 10.0, 10.25])
+    with pytest.raises(ProviderError) as caught:
+        _post_json("https://example.invalid", {}, {}, timeout_seconds=75,
+                   clock=lambda: next(values))
+    assert caught.value.code == "AI_PROVIDER_NETWORK_ERROR"
+    assert caught.value.diagnostics == {
+        "transport_error_category": category,
+        "transport_phase": "request",
+        "transport_elapsed_ms": 250,
+        "configured_timeout_seconds": 75,
+        "request_timeout_seconds": 75,
+    }
+    assert caught.value.__suppress_context__
+
+
+def test_reads_report_timeout_and_use_the_remaining_visual_budget(monkeypatch):
+    class Response(io.BytesIO):
+        def read(self, *_args):
+            raise TimeoutError("must-not-leak")
+
+    def urlopen(_request, timeout):
+        assert timeout == 7
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(ProviderError) as caught:
+        _post_json("https://example.invalid", {}, {}, timeout_seconds=75,
+                   deadline_monotonic=107, clock=lambda: 100)
+    assert caught.value.diagnostics["transport_phase"] == "read"
+    assert caught.value.diagnostics["transport_error_category"] == "timeout"
+    assert caught.value.diagnostics["configured_timeout_seconds"] == 75
+    assert caught.value.diagnostics["request_timeout_seconds"] == 7
+
+
+def test_expired_visual_budget_prevents_provider_transport(monkeypatch):
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: pytest.fail("unexpected HTTP call"))
+    with pytest.raises(ProviderError) as caught:
+        _post_json("https://example.invalid", {}, {}, deadline_monotonic=100,
+                   clock=lambda: 100)
+    assert caught.value.code == "VISUAL_PHASE_BUDGET_EXCEEDED"
 
 
 def test_success_response_exposes_only_normalized_rate_metadata(monkeypatch):
@@ -614,8 +670,6 @@ def test_retry_after_that_cannot_serve_remaining_regions_skips_wait(monkeypatch)
 
     monkeypatch.setattr("urllib.request.urlopen", rate_limited)
     sleeps = []
-    clock_values = iter([0.0, 0.0])
-
     with pytest.raises(ProviderError, match="remaining visual processing budget") as caught:
         _post_json(
             "https://example.invalid",
@@ -624,7 +678,7 @@ def test_retry_after_that_cannot_serve_remaining_regions_skips_wait(monkeypatch)
             timeout_seconds=45,
             deadline_monotonic=180,
             remaining_requests=16,
-            clock=lambda: next(clock_values),
+            clock=lambda: 0.0,
             sleeper=lambda seconds: sleeps.append(seconds),
         )
 

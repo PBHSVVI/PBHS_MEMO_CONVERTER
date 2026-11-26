@@ -1579,7 +1579,8 @@ def _cloudflare_stage_post(
         {"Authorization": f"Bearer {os.environ.get('CLOUDFLARE_AI_API_TOKEN', '').strip()}"},
         body,
         timeout_seconds=max(5.0, min(75.0, float(os.environ.get(
-            "MEMO_VISION_REQUEST_TIMEOUT_SECONDS", "45"
+            "MEMO_CLOUDFLARE_REQUEST_TIMEOUT_SECONDS",
+            os.environ.get("MEMO_VISION_REQUEST_TIMEOUT_SECONDS", "45"),
         )))),
         deadline_monotonic=deadline_monotonic,
         remaining_requests=remaining_requests,

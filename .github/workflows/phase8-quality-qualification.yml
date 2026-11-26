@@ -2,6 +2,11 @@ name: Phase 8 Quality Hosted Qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      check_provider_connectivity:
+        description: Check the production provider model catalogues without inference
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -79,6 +84,9 @@ jobs:
           CLOUDFLARE_WORKERS_AI_PLAN_MODE: "free_only"
           MEMO_APPROVED_PROVIDERS: "groq,cloudflare,mistral"
           MEMO_VISUAL_PROVIDER_ORDER: "groq,cloudflare,mistral"
+          MEMO_VISUAL_PHASE_TIMEOUT_SECONDS: "900"
+          MEMO_GROQ_VISION_REQUEST_TIMEOUT_SECONDS: "45"
+          MEMO_CLOUDFLARE_REQUEST_TIMEOUT_SECONDS: "75"
           GROQ_API_KEY: "synthetic-hosted-preflight"
           GROQ_ZERO_COST_CONFIRMED: "true"
           GROQ_PLAN_MODE: "free_only"
@@ -92,3 +100,46 @@ jobs:
         run: |
           python -m pytest -q engine/tests
           python -m engine.src.memo_engine.cli validate-provider-config
+
+      - name: Check production provider model catalogues without inference
+        if: inputs.check_provider_connectivity
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
+          CLOUDFLARE_ZERO_COST_CONFIRMED: ${{ vars.CLOUDFLARE_ZERO_COST_CONFIRMED }}
+          MISTRAL_SCHOOL_PRIVATE_APPROVED: ${{ vars.MISTRAL_SCHOOL_PRIVATE_APPROVED }}
+          MEMO_CLOUDFLARE_VISION_MODEL: ${{ vars.MEMO_CLOUDFLARE_VISION_MODEL }}
+          MEMO_CLOUDFLARE_STRUCTURER_MODEL: ${{ vars.MEMO_CLOUDFLARE_STRUCTURER_MODEL }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          from engine.src.memo_engine.phase84b1_cloudflare_activation import list_account_models
+
+          if (os.environ['CLOUDFLARE_ZERO_COST_CONFIRMED'] != 'true'
+                  or os.environ['MISTRAL_SCHOOL_PRIVATE_APPROVED'] != 'false'):
+              raise SystemExit('Required free-only and privacy gates are not set.')
+          request = urllib.request.Request(
+              'https://api.groq.com/openai/v1/models',
+              headers={'Authorization': 'Bearer ' + os.environ['GROQ_API_KEY']},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  groq_status = response.status
+                  groq_models = {model['id'] for model in json.load(response)['data']}
+              cards, _, cloudflare_status = list_account_models(os.environ['CLOUDFLARE_ACCOUNT_ID'])
+          except Exception as exc:
+              raise SystemExit(f'Provider catalogue GET failed ({type(exc).__name__}).') from None
+
+          expected = {os.environ['MEMO_CLOUDFLARE_VISION_MODEL'], os.environ['MEMO_CLOUDFLARE_STRUCTURER_MODEL']}
+          cloudflare_visible = expected <= {card['id'] for card in cards}
+          groq_visible = 'qwen/qwen3.8-27b' in groq_models
+          print(f'Groq catalogue HTTP {groq_status}. Configured vision model visible: {groq_visible}.')
+          print(f'Cloudflare catalogue HTTP {cloudflare_status}. Both configured models visible: {cloudflare_visible}.')
+          print('Inference calls: 0.')
+          if not all((groq_status == 200, groq_visible, cloudflare_status == 200, cloudflare_visible)):
+              raise SystemExit('Required provider models failed catalogue verification.')
+          PY
