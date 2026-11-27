@@ -465,6 +465,9 @@ function isDependent(ex,list,staged=[]){
  if(['item_total_mismatch','mark_arithmetic_mismatch'].includes(ex.category)){
    return unresolved.some(o=>o.id!==ex.id&&o.category==='marking_interpretation_review'&&normalizedQuestionId(o.affected_id)===normalizedQuestionId(ex.affected_id));
  }
+ if(['mathematical_expression_not_checked','visual_evidence_uncertain','visual_math_notation_uncertain'].includes(ex.category)){
+   return unresolved.some(o=>o.id!==ex.id&&o.category==='marking_interpretation_review'&&normalizedQuestionId(o.affected_id)===normalizedQuestionId(ex.affected_id)&&o.suggestions?.some(s=>s.guideline_verification&&(ex.category==='mathematical_expression_not_checked'||ex.suggestions?.every(e=>e.rendered_asset_ref===s.rendered_asset_ref))));
+ }
  if(ex.category==='question_total_mismatch'){
    return unresolved.some(o=>o.id!==ex.id&&o.category!=='question_total_mismatch'&&isDescendantId(o.affected_id,ex.affected_id));
  }
@@ -836,6 +839,7 @@ async function renderChoices(ex){
    const note=document.createElement('p');note.textContent='These drafts are not accepted marks or instructions supplied by the original teacher. Check the source, edit where necessary, then use the normal review and confirmation steps.';card.append(note);
    const list=document.createElement('ul');for(const point of [...(s.accepted_criteria||[]),...(s.unconfirmed_criteria||[])]){const row=document.createElement('li');row.textContent=`${point.category==='explicit'?'Explicit source instruction':point.category==='proposed'?'Proposed — not confirmed':'Ambiguous — confirmation required'}: ${point.count??'Unspecified'}${point.code||' mark(s)'} ${point.descriptor}${point.allocation_quote?' · Source: '+point.allocation_quote:''}`;list.append(row)}card.append(list);
    for(const text of s.notes||[]){const p=document.createElement('p');p.textContent=text;card.append(p)}
+   if(s.guideline_verification&&s.converted_working?.length){const heading=document.createElement('b');heading.textContent='Converted working';const working=document.createElement('pre');working.textContent=s.converted_working.join('\n');card.append(heading,working)}
    const drafts=[...(s.accepted_criteria||[]),...(s.unconfirmed_criteria||[]).filter(p=>p.category==='proposed')];
    if(drafts.length){const button=document.createElement('button');button.className='secondary';button.textContent='Prepare editable marking draft';button.onclick=()=>{setCorrectionTool('content');$('#contentTarget').value=String(ex.affected_id||'');const branches=[...new Set(drafts.map(p=>p.alternative||0))].sort((a,b)=>a-b);$('#contentMarking').value=branches.map(branch=>drafts.filter(p=>(p.alternative||0)===branch).map(p=>`${p.count}${p.code||'A'} ${p.descriptor}`).join('\n')).join('\nOR\n');status('Draft prepared locally — not submitted or confirmed. Check the original source and complete scheme before reviewing.','warn');$('#contentCorrectionBlock').scrollIntoView({behavior:'smooth',block:'center'})};card.append(button)}
    $sb.append(card)})

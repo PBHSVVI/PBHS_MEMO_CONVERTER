@@ -1605,9 +1605,14 @@ def _marking_points_for_alternatives(
             if correction_origin is not None:
                 mark["correction_origin"] = correction_origin
             if point.get("criterion_id"):
-                mark["source_marking"]={"criterion_id":point["criterion_id"],"allocation_quote":point.get("source"),
+                provenance = {"criterion_id":point["criterion_id"],
                                         "solution_evidence_ids":point.get("solution_evidence_ids",[]),
                                         "allocation_evidence_ids":point.get("allocation_evidence_ids",[])}
+                if point.get("notation") == "constructed_verified":
+                    mark["marking_provenance"] = {**provenance, "origin": "constructed_verified",
+                                                  "verification_id": point.get("verification_id")}
+                else:
+                    mark["source_marking"] = {**provenance, "allocation_quote": point.get("source")}
                 mark["source_refs"]=point.get("source_refs") or mark["source_refs"]
                 proof=set(point.get("solution_evidence_ids") or [])
                 mark["applies_to_block_ids"]=[b["block_id"] for b in blocks if proof.intersection(
@@ -3058,6 +3063,10 @@ def build_canonical_memo(
                 item["confidence"]={"score":0.0,"band":"red","rationale":"Source working contains a mathematical contradiction."}
             elif any(c["status"]=="not_checked" for c in checks):
                 item["confidence"]={"score":0.5,"band":"amber","rationale":"Some displayed mathematics remains unsupported and unchecked."}
+                if (item["marking_interpretation"].get("verification") or {}).get("status") == "verified":
+                    # Source-based review and the bounded numeric checker are independent.
+                    # The numeric audit remains not_checked, even when no additional decision is needed.
+                    continue
                 unchecked={"level":"amber","category":"mathematical_expression_not_checked","affected_id":item["number"],
                            "message":"Some displayed source mathematics is outside the bounded checker; verify it before confirming the marking interpretation.",
                            "suggestions":[{"displayed_expression":c["displayed_expression"],"reason":c.get("reason"),"source_refs":c.get("source_refs",[])} for c in checks if c["status"]=="not_checked"]}

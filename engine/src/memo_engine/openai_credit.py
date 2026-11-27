@@ -108,10 +108,11 @@ def reconcile_ledger(db: SupabaseRest) -> dict[str, Any]:
     if not isinstance(entries, list):
         raise ValueError("Invalid credit inventory")
     names = {row.get("name") for row in entries}
-    if any(not isinstance(name, str) or not re.fullmatch(r"0\d{2}-(reservation|receipt)\.json", name) for name in names):
+    if len(names) != len(entries) or any(not isinstance(name, str) or not re.fullmatch(r"0\d{2}-(reservation|receipt)\.json", name) for name in names):
         raise ValueError("Unexpected credit inventory")
+    ordered = sorted(names)
     with ThreadPoolExecutor(max_workers=8) as workers:
-        records = dict(zip(names, workers.map(lambda name: db.download_json(BUCKET, f"{LEDGER}/{name}"), names)))
+        records = dict(zip(ordered, workers.map(lambda name: db.download_json(BUCKET, f"{LEDGER}/{name}"), ordered)))
     stages = {}
     count = uncertain = total_priced = total_upper = 0
     for name, reservation in records.items():

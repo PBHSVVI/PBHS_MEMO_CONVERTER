@@ -10,7 +10,7 @@ import urllib.parse
 
 from .http import SupabaseRest
 from .openai_adapter import OpenAIInterpreter
-from .openai_credit import CreditLedger, MODEL, PBHS_URL, PILOT_JOB
+from .openai_credit import CreditLedger, MODEL, PBHS_URL, PILOT_JOB, reconcile_ledger
 from .provider_fabric import ProviderTaskRequest, default_provider_registry
 from .visual_evidence import _render_regions, _vision_schema, validate_visual_response, visual_system_prompt, ensure_visual_evidence_ids
 
@@ -93,7 +93,7 @@ def refresh_readings(visual: dict, source: bytes, normalized: dict, interpreter:
     return result
 
 
-def revalidate_marking(job_id: str, db=None) -> int:
+def revalidate_marking(job_id: str, db=None, *, guideline: bool = False) -> int:
     from .cli import BUCKET, PHASE85_SOURCE_SHA256, run_job, utc_now
     from .ingestion import validate_source_path
     if job_id!=PILOT_JOB:raise ValueError("Only the authorised marking pilot is eligible")
@@ -107,48 +107,69 @@ def revalidate_marking(job_id: str, db=None) -> int:
     job=db.get_job(job_id)
     if job["status"]!="needs_review" or job["stage"]!="phase5_canonicalized" or job.get("source_sha256")!=PHASE85_SOURCE_SHA256:
         raise ValueError("Pilot marking revalidation state differs")
-    prefix=f"{job['user_id']}/{job_id}/internal";archive=f"{prefix}/revisions/phase85b-{run_id}-{attempt}"
+    prefix=f"{job['user_id']}/{job_id}/internal"
+    revision = "phase85c" if guideline else "phase85b"
+    operation = "guideline_revalidation" if guideline else "marking_revalidation"
+    version = "guideline-revalidation-v1" if guideline else VERSION
+    archive=f"{prefix}/revisions/{revision}-{run_id}-{attempt}"
     rows={table:db._request_json("GET",f"/rest/v1/{table}?job_id=eq.{job_id}&select=*") for table in ["corrections","exceptions","job_events"]}
     if rows["corrections"]:raise ValueError("Teacher corrections require a different lifecycle")
-    originals={name:db.download_object(BUCKET,f"{prefix}/{name}") for name in [
+    names = [
         "ingestion.json","normalized.json","structure.json","semantic.json","canonical.json","validation.json",
-        "visual/evidence.json","visual/evidence.checkpoint.json"]}
+        "visual/evidence.json","visual/evidence.checkpoint.json"]
+    if guideline:
+        names += ["marking_interpretation.json", "recognition_revalidation.json"]
+    originals={name:db.download_object(BUCKET,f"{prefix}/{name}") for name in names}
     visual=json.loads(originals["visual/evidence.json"])
     if not visual.get("coordinate_revalidation") or visual.get("job_id")!=job_id:
         raise ValueError("Accepted coordinate revalidation history is required")
-    if visual.get("marking_revalidation"):raise ValueError("Marking revalidation already published")
+    if guideline:
+        if not visual.get("marking_revalidation") or visual.get("guideline_revalidation"):
+            raise ValueError("An unrevised Phase 8.5B marking generation is required")
+        before_ledger = reconcile_ledger(db)
+        if before_ledger["available_worker_slots"] < 30:
+            raise ValueError("Insufficient included-credit slots for controlled guideline verification")
+        print("Guideline credit before " + json.dumps(before_ledger, sort_keys=True))
+    elif visual.get("marking_revalidation"):
+        raise ValueError("Marking revalidation already published")
     source=db.download_object(BUCKET,validate_source_path(job))
     if hashlib.sha256(source).hexdigest()!=PHASE85_SOURCE_SHA256 or len(source)!=1_007_519:raise ValueError("Immutable source differs")
     for name,data in originals.items():db.upload_object(BUCKET,f"{archive}/{name}",data,content_type="application/json",upsert=False)
     db.upload_json(BUCKET,f"{archive}/audit.json",{"job":job,**rows,"sha256":{n:hashlib.sha256(d).hexdigest() for n,d in originals.items()}},upsert=False)
     query=f"/rest/v1/jobs?id=eq.{job_id}&status=eq.needs_review&stage=eq.phase5_canonicalized&updated_at=eq.{urllib.parse.quote(job['updated_at'],safe='')}"
-    claimed=db._request_json("PATCH",query,body={"status":"dispatched","stage":"marking_revalidation",
+    claimed=db._request_json("PATCH",query,body={"status":"dispatched","stage":operation,
         "attempt_count":int(job.get("attempt_count") or 0)+1,"updated_at":utc_now(),"dispatched_at":utc_now()},prefer="return=representation")
     if not claimed or len(claimed)!=1:raise ValueError("Concurrent pilot revision changed")
-    db.add_event(claimed[0],"marking_revalidation_started","marking_revalidation",{
-        "archive_path":archive,"github_run_id":run_id,"actor":os.environ.get("GITHUB_ACTOR"),"version":VERSION})
+    db.add_event(claimed[0],operation + "_started",operation,{
+        "archive_path":archive,"github_run_id":run_id,"actor":os.environ.get("GITHUB_ACTOR"),"version":version})
     try:
         if db._request_json("GET",f"/rest/v1/corrections?job_id=eq.{job_id}&select=id"):raise ValueError("Concurrent teacher correction")
-        checkpoint_path=f"{prefix}/recognition_revalidation.json"
-        try:cached=db.download_json(BUCKET,checkpoint_path)
-        except Exception:cached=None
-        interpreter=OpenAIInterpreter(CreditLedger(db),os.environ,job_id=job_id)
-        rebuilt=refresh_readings(visual,source,json.loads(originals["normalized.json"]),interpreter,cached=cached,
-            checkpoint=lambda r:db.upload_json(BUCKET,checkpoint_path,r),
-            crop_store=lambda ref,data,mime:db.upload_object(BUCKET,f"{job['user_id']}/{job_id}/{ref}",data,content_type=mime))
+        if guideline:
+            rebuilt = {**visual, "guideline_revalidation": {"version": version, "github_run_id": run_id}}
+        else:
+            checkpoint_path=f"{prefix}/recognition_revalidation.json"
+            try:cached=db.download_json(BUCKET,checkpoint_path)
+            except Exception:cached=None
+            interpreter=OpenAIInterpreter(CreditLedger(db),os.environ,job_id=job_id)
+            rebuilt=refresh_readings(visual,source,json.loads(originals["normalized.json"]),interpreter,cached=cached,
+                checkpoint=lambda r:db.upload_json(BUCKET,checkpoint_path,r),
+                crop_store=lambda ref,data,mime:db.upload_object(BUCKET,f"{job['user_id']}/{job_id}/{ref}",data,content_type=mime))
         outcome=run_job(job_id,replay_visual=rebuilt,db=db)
     except Exception as error:
         current=db.get_job(job_id)
         if current["status"]=="dispatched":
             db.patch_job(job_id,"dispatched",{"status":"needs_review","stage":"phase5_canonicalized","updated_at":utc_now()})
-        db.add_event(current,"marking_revalidation_failed","marking_revalidation",{"archive_path":archive,"error_type":type(error).__name__})
+        db.add_event(current,operation + "_failed",operation,{"archive_path":archive,"error_type":type(error).__name__})
         raise
     final=db.get_job(job_id)
-    db.add_event(final,"marking_revalidation_complete","marking_revalidation",{
-        "archive_path":archive,"version":VERSION,"status":final["status"],"stage":final["stage"]})
+    db.add_event(final,operation + "_complete",operation,{
+        "archive_path":archive,"version":version,"status":final["status"],"stage":final["stage"]})
+    if guideline:
+        print("Guideline credit after " + json.dumps(reconcile_ledger(db), sort_keys=True))
     return outcome
 
 
 if __name__=="__main__":
-    if len(sys.argv)!=2:raise SystemExit("Expected the authorised pilot job ID")
-    raise SystemExit(revalidate_marking(sys.argv[1]))
+    if len(sys.argv) not in {2, 3} or len(sys.argv) == 3 and sys.argv[2] != "--verify-guideline":
+        raise SystemExit("Expected the authorised pilot job ID")
+    raise SystemExit(revalidate_marking(sys.argv[1], guideline=len(sys.argv) == 3))

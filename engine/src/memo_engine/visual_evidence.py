@@ -1635,6 +1635,8 @@ def _positive_int(value: Any) -> int | None:
 def spatial_visual_groups(
     evidence_items: list[dict[str, Any]],
     assets: list[dict[str, Any]],
+    *,
+    verified_bounds_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Build stable source-crop groups for position-dependent answer evidence."""
     ensure_visual_evidence_ids(evidence_items)
@@ -1675,7 +1677,8 @@ def spatial_visual_groups(
             for item in observations
         ):
             reasons.append("owner_association_unresolved")
-        if any(float(item.get("confidence") or 0) < VISUAL_REVIEW_THRESHOLD for item in observations):
+        if any(float(item.get("confidence") or 0) < VISUAL_REVIEW_THRESHOLD
+               and item.get("evidence_id") not in verified_bounds_ids for item in observations):
             reasons.append("evidence_confidence_below_threshold")
         if asset is None:
             reasons.append("source_crop_asset_missing")

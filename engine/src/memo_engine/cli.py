@@ -24,6 +24,7 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .marking_interpretation import interpret_marking
+from .guideline_verification import verify_guideline
 from .structure import extract_structure
 from .visual_evidence import (
     VisualProviderDeferred,
@@ -477,6 +478,22 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
             )
             db.upload_json(BUCKET,marking_path,marking)
             db.add_event(job,"marking_interpretation_complete","structure",marking["summary"])
+            if visual.get("guideline_revalidation"):
+                prefix = f"{job['user_id']}/{job_id}"
+                verification_path = f"{prefix}/internal/guideline_verification.json"
+                try:
+                    cached_verification = db.download_json(BUCKET, verification_path)
+                except Exception:
+                    cached_verification = None
+                verification = verify_guideline(
+                    structure, normalized, visual,
+                    load_crop=lambda ref: db.download_object(BUCKET, f"{prefix}/{ref}"),
+                    verifier=openai.verify_guideline if openai and replay_visual else None,
+                    cached=cached_verification,
+                    checkpoint=lambda record: db.upload_json(BUCKET, verification_path, record),
+                )
+                db.upload_json(BUCKET, verification_path, verification)
+                db.add_event(job, "guideline_verification_complete", "structure", verification["summary"])
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []
         correction_application_issues: list[dict[str, Any]] = []
@@ -650,6 +667,12 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
                 canonical, confirmed_corrections, structure["correction_overlay"],
             )
             validation = validate_canonical(canonical)
+        if visual.get("guideline_revalidation"):
+            mathematics = validation["mathematical_consistency"]
+            db.add_event(job, "guideline_mathematics_summary", "phase5_canonicalized", {
+                "checked_expressions": mathematics["checked_expression_count"],
+                "conflicts": mathematics["conflict_count"], "counts": mathematics["counts"],
+            })
 
         canonical_path = (
             f"{job['user_id']}/{job['id']}/internal/canonical.json"

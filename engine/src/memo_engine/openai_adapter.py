@@ -54,7 +54,7 @@ def check_model_access(env: Any) -> None:
 
 def _transport_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Encode nullable fields in the transport subset, then validate the full original locally."""
-    value = {key: item for key, item in schema.items() if key not in {"minimum", "maximum", "minItems", "maxItems"}}
+    value = {key: item for key, item in schema.items() if key not in {"minimum", "maximum", "minItems", "maxItems", "uniqueItems"}}
     if "properties" in value:
         value["properties"] = {key: _transport_schema(item) for key, item in value["properties"].items()}
     if "items" in value:
@@ -168,8 +168,11 @@ class OpenAIInterpreter:
     def _respond(self, *, stage: str, prompt: str, schema: dict[str, Any],
                  image: bytes | None = None, mime: str | None = None,
                  deadline: float | None = None, clock: Callable[[], float] = time.monotonic) -> Response:
-        schema_name = "memo_visual_evidence" if stage == "visual" else ("memo_marking_interpretation" if stage == "marking" else "memo_mark_semantics")
-        output_limit = VISUAL_OUTPUT_LIMIT if stage == "visual" else (4096 if stage == "marking" else SEMANTIC_OUTPUT_LIMIT)
+        schema_name, output_limit = {
+            "visual": ("memo_visual_evidence", VISUAL_OUTPUT_LIMIT),
+            "marking": ("memo_marking_interpretation", 4096),
+            "guideline_verify": ("memo_guideline_verification", 4096),
+        }.get(stage, ("memo_mark_semantics", SEMANTIC_OUTPUT_LIMIT))
         transport_schema = _transport_schema(schema)
         image_ceiling = _image_token_ceiling(image) if image is not None else 0
         text_ceiling = len(prompt.encode("utf-8")) + len(json.dumps(transport_schema).encode("utf-8")) + 2048
@@ -322,3 +325,8 @@ class OpenAIInterpreter:
         from .marking_interpretation import MARKING_PROMPT, marking_schema
         return self._respond(stage="marking", prompt=MARKING_PROMPT + "\nSOURCE PACKET:\n" + json.dumps(packet, ensure_ascii=False),
                              schema=marking_schema([e["evidence_id"] for e in packet["observations"]]))
+
+    def verify_guideline(self, packet: dict[str, Any], crop: bytes, mime: str) -> Response:
+        from .guideline_verification import STYLE, VERIFY_PROMPT, verification_schema
+        return self._respond(stage="guideline_verify", prompt=VERIFY_PROMPT + "\n" + STYLE + "\nSOURCE PACKET:\n"
+                             + json.dumps(packet, ensure_ascii=False), schema=verification_schema(), image=crop, mime=mime)
