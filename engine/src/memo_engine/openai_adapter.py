@@ -167,11 +167,13 @@ class OpenAIInterpreter:
 
     def _respond(self, *, stage: str, prompt: str, schema: dict[str, Any],
                  image: bytes | None = None, mime: str | None = None,
+                 reasoning_effort: str = "low",
                  deadline: float | None = None, clock: Callable[[], float] = time.monotonic) -> Response:
         schema_name, output_limit = {
             "visual": ("memo_visual_evidence", VISUAL_OUTPUT_LIMIT),
             "marking": ("memo_marking_interpretation", 4096),
             "guideline_verify": ("memo_guideline_verification", 4096),
+            "guideline_repair": ("memo_guideline_question", 4096),
         }.get(stage, ("memo_mark_semantics", SEMANTIC_OUTPUT_LIMIT))
         transport_schema = _transport_schema(schema)
         image_ceiling = _image_token_ceiling(image) if image is not None else 0
@@ -187,7 +189,7 @@ class OpenAIInterpreter:
         body = {
             "model": MODEL,
             "service_tier": "default",
-            "reasoning": {"effort": "low"},
+            "reasoning": {"effort": reasoning_effort},
             "store": False,
             "prompt_cache_options": {"mode": "explicit", "ttl": "30m"},
             "truncation": "disabled",
