@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from engine.src.memo_engine.canonical import build_canonical_memo
-from engine.src.memo_engine.guideline_verification import CHECKS, _eligible_scheme, verify_guideline
+from engine.src.memo_engine.guideline_verification import (
+    CHECKS, _eligible_scheme, require_complete_admission_cache, verify_guideline,
+)
 from engine.src.memo_engine.marking_interpretation import interpret_marking
-from engine.src.memo_engine.semantic import interpret_semantics
+from engine.src.memo_engine.semantic import build_semantic_plan, interpret_semantics
 from engine.src.memo_engine.openai_credit import PBHS_URL, reconcile_ledger
 from engine.src.memo_engine.visual_evidence import fuse_visual_evidence
 from engine.tests.test_phase85b_marking import criterion, fixture, responder
@@ -120,6 +122,97 @@ def test_verified_draft_reuses_exact_audit_without_provider_io():
                              verifier=None, cached=cached)
     assert second == structure
     assert "verification_calls" not in reuse["summary"]
+
+
+def legacy_response(packet, crop, mime):
+    result = verify(packet, crop, mime)
+    result.value["selected_ids"] = packet["solution_ids"]
+    result.value["criteria"] = [
+        {key: p[key] for key in ("count", "code", "descriptor", "alternative", "solution_evidence_ids")}
+        for p in packet["criteria"] if p["category"] != "ambiguous"
+    ]
+    return result
+
+
+@pytest.mark.parametrize("failure", [None, "wrong_count", "foreign_link", "mixed_ids", "outside_crop"])
+def test_saved_legacy_solution_ids_require_complete_matching_criteria(failure):
+    points = [{**criterion(code="M"), "descriptor": "method"},
+              {**criterion(code="A"), "descriptor": "calculation is correct"}]
+    structure, normalized, visual = inputs(points)
+    if failure == "outside_crop":
+        q = structure["questions"][0]
+        visual["evidence"].append({**visual["evidence"][0], "evidence_id": "other_step",
+                                   "rendered_asset_ref": "internal/visual/compatible-but-not-checked.png"})
+        q["marking_interpretation"]["unconfirmed"][1]["solution_evidence_ids"] = ["other_step"]
+
+    def old_adapter(packet, crop, mime):
+        result = legacy_response(packet, crop, mime)
+        if failure == "wrong_count":
+            result.value["criteria"][0]["count"] += 1
+        elif failure == "foreign_link":
+            result.value["criteria"][0]["solution_evidence_ids"] = ["foreign"]
+        elif failure == "mixed_ids":
+            result.value["selected_ids"] += [packet["criteria"][0]["criterion_id"]]
+        return result
+
+    untouched = copy.deepcopy(structure)
+    saved = verify_guideline(untouched, normalized, visual, load_crop=lambda _: CROP, verifier=old_adapter)
+    audit = verify_guideline(structure, normalized, visual, cached=saved, verifier=None,
+                             load_crop=lambda _: pytest.fail("legacy replay must use the saved response"))
+    require_complete_admission_cache(saved, audit)
+    admission = next(iter(audit["items"].values()))["admission"]
+    assert all(entry["resolves_as_solution_evidence"] for entry in admission["selected_ids"]
+               if not entry["resolves_as_criterion"])
+    if failure:
+        expected = "solution_outside_verified_crop" if failure == "outside_crop" else "unresolved_criterion_ids"
+        assert expected in admission["rejection_reasons"]
+        assert not structure["questions"][0]["mark_points"]
+    else:
+        assert admission["selection_mode"] == "legacy_solution_ids"
+        assert admission["scheme"]["branch_totals"] == {0: 2}
+        assert len(structure["questions"][0]["mark_points"]) == 2
+        assert not build_semantic_plan(structure)[1]
+
+
+def test_replay_preserves_source_instruction_even_when_provider_claims_ambiguity_is_resolved():
+    structure, normalized, visual = inputs([
+        {**criterion(code="M"), "descriptor": "method"}, criterion(),
+        criterion("ambiguous", count=None, code="", quote="CA", allocation=["e1"]),
+    ])
+    audit = verify_guideline(structure, normalized, visual, load_crop=lambda _: CROP, verifier=legacy_response)
+    admission = next(iter(audit["items"].values()))["admission"]
+    assert admission["rejection_reasons"] == ["source_instruction_unresolved"]
+    assert not structure["questions"][0]["mark_points"]
+    assert structure["exceptions"][0]["suggestions"][0]["unconfirmed_criteria"][-1]["allocation_quote"] == "CA"
+
+
+def test_unreliable_diagram_reading_keeps_verified_pixels_and_independent_mark():
+    structure, normalized, visual = fixture()
+    evidence = visual["evidence"][0]
+    visual["evidence"].append({**evidence, "evidence_id": "diagram", "kind": "diagram_entry",
+                               "confidence": .68, "source_page_bbox": [25, 145, 45, 160]})
+    visual["assets"] = [{"path": evidence["rendered_asset_ref"], "sha256": hashlib.sha256(CROP).hexdigest(),
+                         "mime_type": "image/png", "page": 1, "question_refs": ["1.1"],
+                         "render_bbox": [0, 0, 240, 240], "owned_bbox": [5, 10, 210, 220],
+                         "page_bbox": [0, 0, 500, 800], "pixel_width": 240, "pixel_height": 240,
+                         "size_bytes": 1024, "preservation_method": "source_crop"}]
+    fuse_visual_evidence(structure, visual)
+    structure, _ = interpret_marking(structure, normalized, visual, interpreter=responder([
+        {**criterion(code="M"), "descriptor": "method"}, criterion(steps=["diagram"]),
+    ]))
+
+    def verified_diagram(packet, crop, mime):
+        result = legacy_response(packet, crop, mime)
+        result.value["figure_bounds"] = [{"evidence_id": "diagram", "bounds": [.1, .5, .7, .85]}]
+        return result
+
+    audit = verify_guideline(structure, normalized, visual, load_crop=lambda _: CROP, verifier=verified_diagram)
+    question = structure["questions"][0]
+    assert question["spatial_visual_groups"][0]["reliable"]
+    assert question["computed_shorthand_marks"] == 1
+    assert audit["summary"]["partially_verified_questions"] == 1
+    assert audit["summary"]["rejection_unavailable_spatial_evidence"] == 1
+    assert any(row["category"] == "marking_interpretation_review" for row in structure["exceptions"])
 
 
 def test_alternatives_use_the_printed_maximum_with_branch_local_step_links():

@@ -44,6 +44,32 @@ def _evaluate(exceptions: list[dict], staged: list[dict] | None = None) -> dict:
     return json.loads(result.stdout)
 
 
+def test_numbering_heading_groups_only_the_exact_shared_source_occurrence():
+    def mismatch(id_, question, page, offset):
+        return {"id": id_, "category": "question_parent_heading_mismatch", "affected_id": question,
+                "suggestions": [{"source_question_id": question, "heading_question_id": "12",
+                                 "source_page": page, "source_block_index": 3, "character_offset": offset}]}
+
+    rows = [
+        mismatch("parent", "7.1", 5, 10), mismatch("child", "7.1.1", 5, 20),
+        mismatch("other_page", "7.2", 6, 30),
+        {"id": "duplicate", "category": "duplicate_question_identifier", "affected_id": "7.1",
+         "suggestions": [{"occurrences": [{"source_page": 2, "source_block_index": 1, "character_offset": 10},
+                                        {"source_page": 5, "source_block_index": 3, "character_offset": 10}]}]},
+        {"id": "heading_subtotal", "category": "question_total_mismatch", "affected_id": "12"},
+    ]
+    assert _evaluate(rows)["actionable"] == ["parent", "other_page"]
+
+
+def test_mathematics_only_finding_groups_with_one_same_page_conflict():
+    conflict = {"id": "deterministic", "category": "mathematical_consistency_conflict", "affected_id": "8.2",
+                "suggestions": [{"source_refs": [{"page": 4}], "calculated_left": "7", "displayed_right": "8"}]}
+    marking = {"id": "marking_review", "category": "marking_interpretation_review", "affected_id": "8.2",
+               "suggestions": [{"source_page": 4, "guideline_math_conflict_only": True}]}
+    independent = {**marking, "id": "independent", "suggestions": [{"source_page": 2, "guideline_math_conflict_only": True}]}
+    assert _evaluate([conflict, marking, independent])["actionable"] == ["deterministic", "independent"]
+
+
 def test_previous_next_and_skip_rotate_only_actionable_items():
     exceptions = [
         {"id": "parent", "category": "question_total_mismatch", "affected_id": "7"},

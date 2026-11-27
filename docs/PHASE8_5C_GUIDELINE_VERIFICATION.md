@@ -13,3 +13,11 @@ The review screen includes the source crop, converted working and editable marki
 Use Process Memo on `main` with `operation=revalidate_guideline` for the existing authorised pilot. The operation requires an unrevised Phase 8.5B generation and zero teacher corrections. It archives the complete preceding marking generation, uses an optimistic job claim, and retains original visual regions and earlier archives. It performs no full-document visual read. The shared included-credit ledger is reconciled before inference, and reports only aggregate usage to Actions. A read-only reconciliation can also be run through the hosted qualification workflow.
 
 The review uses the repository’s accepted renderer and marking conventions. The controlled explanatory documents and GOLD memos must be available for direct conformance assessment.
+
+## Phase 8.5D admission replay
+
+Some saved verification responses returned solution evidence IDs in the criterion selection field. Replay can recover them only when the selection matches the complete solution set and the verified scoring entries match the draft one-to-one by count, code, branch and source links. A verified code can fill a blank proposed code. Existing explicit awards retain their identity and original wording.
+
+The private verification artifact records the per-occurrence selection resolution and the reasons a scheme was held back. Figure preservation uses the original source crop. An unresolved diagram entry can hold back its award without removing the image or other independently admitted awards. The full set of release checks is still required.
+
+The authorised pilot operation `revalidate_admission` previews the canonical result against saved inputs before claiming the job. It requires an improvement, exact verification checkpoint coverage and no new inference. It archives the preceding guideline, verification responses and job audit under a separate Phase 8.5D revision.

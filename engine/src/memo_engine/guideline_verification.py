@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections import Counter
 from typing import Any, Callable
 
@@ -12,7 +13,7 @@ from .ai_router import ProviderError
 from .canonical import _split_alternative_segments
 from .math_notation import normalize_visual_math
 from .marking_interpretation import _id, question_source
-from .visual_evidence import spatial_visual_groups
+from .visual_evidence import VISUAL_REVIEW_THRESHOLD, spatial_visual_groups
 
 VERSION = "source-guideline-qa-v1"
 MAX_REPAIRS = 7
@@ -31,7 +32,8 @@ Judge exact visible mathematics, the written answer, ownership and numbering, ev
 explicit marking instructions, the allocation on each alternative, duplicated or missing content, and spatial evidence.
 A coherent routine scheme can be verified from actual source steps and printed marks even when per-step marks
 were never written. Ignore non-instruction ticks. Preserve all material explicit instructions and alternative methods.
-Return verified only when every check passes and your selected IDs fully describe the validated scheme.
+Return verified only when every check passes. For verified, selected_ids must contain criterion_id
+values from the draft criteria, never evidence_id values from observations or solution_ids.
 If the source is unambiguous but the conversion or scheme is wrong, return repairable with precise replacements
 anchored to supplied solution IDs and a complete constructed scheme when the marking criteria need replacement.
 For a visible figure with missing or incorrect bounds, return its existing diagram evidence IDs and normalized
@@ -70,46 +72,109 @@ def verification_schema() -> dict[str, Any]:
     })
 
 
-def _eligible_scheme(question: dict, selected: list[dict], solution_ids: set[str]) -> bool:
-    # Distinct marking codes may legitimately refer to one displayed step. A
-    # same-code, same-step award in a branch must be represented once.
+def _scheme_diagnostic(question: dict, selected: list[dict], solution_ids: set[str], *,
+                       crop_ids: set[str], diagram_ids: set[str], figure_ids: set[str]) -> dict:
     total = question.get("printed_marks")
-    if type(total) is not int or total < 1 or not selected:
-        return False
-    branch_totals = Counter()
-    used = set()
+    reasons = set()
+    branches = _split_alternative_segments(question.get("visual_solution_segments", []))
+    branch_steps = {
+        index: {s.get("interpretation_evidence_id") or s.get("evidence_id") for s in branch}
+        for index, branch in enumerate(branches)
+    }
+    branch_totals: Counter = Counter()
+    used: dict = {}
+    criteria = []
+    if type(total) is not int or total < 1:
+        reasons.add("invalid_printed_allocation")
+    if not selected:
+        reasons.add("no_selected_criteria")
     for criterion in selected:
-        steps = criterion.get("solution_evidence_ids") or []
+        links = criterion.get("solution_evidence_ids") or []
+        steps = set(links)
         code = criterion.get("code")
         count = criterion.get("count")
         branch = criterion.get("alternative", 0)
-        if (not steps or not set(steps) <= solution_ids or type(count) is not int or count < 1
-                or not criterion.get("descriptor", "").strip()
-                or not code):
-            return False
-        # The accepted explicit source points remain canonical if independently
-        # derived points would award that same mark again.
-        keys = {(branch, code, step) for step in steps}
-        if used & keys:
-            return False
-        used.update(keys)
-        branch_totals[branch] += count
-    # Alternative claims must match real, separately supplied working branches.
-    # The current verifier can safely add to a primary branch or to branches
-    # already established by explicit source marking. Canonical checks their links.
-    branches = _split_alternative_segments(question.get("visual_solution_segments", []))
-    if len(branches) > 1:
-        expected = set(range(len(branches)))
-        if set(branch_totals) != expected:
-            return False
-        for criterion in selected:
-            branch = branches[criterion.get("alternative", 0)]
-            ids = {s.get("interpretation_evidence_id") for s in branch}
-            if not set(criterion["solution_evidence_ids"]) <= ids:
-                return False
-    elif set(branch_totals) != {0}:
-        return False
-    return set(branch_totals.values()) == {total}
+        identifier = criterion.get("criterion_id")
+        invalid = steps - solution_ids
+        outside = (steps & solution_ids) - crop_ids
+        spatial = steps & diagram_ids
+        wrong_branch = steps - branch_steps.get(branch, set()) if len(branches) > 1 else set()
+        duplicates = set()
+        for step in steps:
+            key = branch, code, step
+            for previous_steps in used.setdefault(key, []):
+                # A preserved figure may anchor more than one award. Each
+                # award still needs its own distinct step or the figure alone.
+                if step not in figure_ids or steps == previous_steps:
+                    duplicates.add(step)
+            used[key].append(steps)
+        if not steps or len(links) != len(steps) or invalid:
+            reasons.add("invalid_solution_links")
+        if outside:
+            reasons.add("solution_outside_verified_crop")
+        if spatial - figure_ids:
+            reasons.add("unavailable_spatial_evidence")
+        if wrong_branch:
+            reasons.add("solution_in_wrong_alternative")
+        if duplicates:
+            reasons.add("duplicate_award")
+        if not code or not criterion.get("descriptor", "").strip():
+            reasons.add("missing_mark_code_or_descriptor")
+        if type(count) is not int or count < 1:
+            reasons.add("invalid_mark_count")
+        else:
+            branch_totals[branch] += count
+        criteria.append({"criterion_id": identifier, "category": criterion.get("category"),
+                         "alternative": branch, "solution_evidence_ids": sorted(steps),
+                         "invalid_links": sorted(invalid), "outside_verified_crop": sorted(outside),
+                         "wrong_alternative_links": sorted(wrong_branch), "duplicate_links": sorted(duplicates),
+                         "spatial_dependencies": sorted(spatial), "unavailable_spatial_links": sorted(spatial - figure_ids)})
+    if set(branch_totals) != (set(branch_steps) if len(branches) > 1 else {0}):
+        reasons.add("alternative_membership_mismatch")
+    if set(branch_totals.values()) != {total}:
+        reasons.add("branch_total_mismatch")
+    return {"printed_allocation": total, "branch_totals": dict(branch_totals), "criteria": criteria,
+            "reasons": sorted(reasons)}
+
+
+def _eligible_scheme(question: dict, selected: list[dict], solution_ids: set[str]) -> bool:
+    return not _scheme_diagnostic(question, selected, solution_ids, crop_ids=solution_ids,
+                                  diagram_ids=set(), figure_ids=set())["reasons"]
+
+
+def _legacy_selection(draft: dict, outcome: dict) -> list[dict]:
+    """Recover a complete attested draft when the v1 response uses observation IDs."""
+    wanted = outcome.get("selected_ids") or []
+    if not wanted or set(wanted) != set(draft["solution_ids"]) or not outcome.get("criteria"):
+        return []
+    expected = [p for p in draft["criteria"] if p["category"] in {"explicit", "proposed"}]
+    if len(expected) != len(outcome["criteria"]):
+        return []
+    matched = {}
+    for returned in outcome["criteria"]:
+        links = set(returned["solution_evidence_ids"])
+        matches = [p for p in expected if p["count"] == returned["count"]
+                   and p["alternative"] == returned["alternative"]
+                   and set(p["solution_evidence_ids"] or []) == links
+                   and (p["code"] == returned["code"] or (not p["code"] and p["category"] == "proposed"))]
+        if not links or not links <= set(wanted) or len(matches) != 1:
+            return []
+        point = matches[0]
+        key = point["criterion_id"]
+        if key in matched:
+            return []
+        matched[key] = point if point["category"] == "explicit" else {
+            **point, "descriptor": returned["descriptor"], "code": returned["code"],
+        }
+    return [matched[p["criterion_id"]] for p in expected] if len(matched) == len(expected) else []
+
+
+def _unresolved_explicit_annotations(interpretation: dict) -> list[str]:
+    # A claimed resolution of unweighted approval ticks must not discard a
+    # source shorthand code or a signed allocation with an unresolved scope.
+    return [p["criterion_id"] for p in interpretation["unconfirmed"] if p["category"] == "ambiguous"
+            and re.match(r"^\s*[\"'“]*\s*(?:C\.?A\.?\b|[−-]\s*\d+|\d+\s*(?:M|A|CA|F|S|R)\b)",
+                         p.get("allocation_quote") or "", re.IGNORECASE)]
 
 
 def _with_repairs(draft: dict, outcome: dict) -> dict | None:
@@ -188,12 +253,16 @@ def verify_guideline(structure: dict, normalized: dict, visual: dict, *,
         audit_key = _id([VERSION, STYLE, draft, assets.get(ref, {}).get("sha256"), source_offset])
         record = copy.deepcopy(cached_by_key.get(audit_key)) or {"draft": draft, "reason": ""}
         reason = ""
+        source_blocker = None
         if question_counts[qid] != 1:
             reason = "The printed question identifier is repeated. Confirm which occurrence owns this working."
+            source_blocker = "ambiguous_source_occurrence"
         elif not ref or not solution_ids or type(scoring_total) is not int or scoring_total < 1:
             reason = "A reliable source solution and printed item allocation are needed for a complete scheme."
+            source_blocker = "missing_source_evidence_or_allocation"
         elif (verifier is None or provider_unavailable) and "verification" not in record:
             reason = "Independent source verification is pending."
+            source_blocker = "missing_verification_response"
         elif verifier and not provider_unavailable and ("verification" not in record or
                 record["verification"]["decision"] == "repairable" and "repaired" not in record):
             crop = load_crop(ref)
@@ -234,47 +303,104 @@ def verify_guideline(structure: dict, normalized: dict, visual: dict, *,
         revised = record["draft"]
         by_id = {p["criterion_id"]: p for p in revised["criteria"]}
         wanted = outcome.get("selected_ids", [])
-        selected = [by_id[key] for key in wanted if key in by_id]
+        resolved_ids = [key for key in wanted if key in by_id]
+        selected = [by_id[key] for key in resolved_ids]
+        selection_mode = "criterion_ids"
+        if wanted and not selected and outcome.get("decision") == "verified":
+            selected = _legacy_selection(revised, outcome)
+            if selected:
+                selection_mode = "legacy_solution_ids"
+        selected_ids = {p["criterion_id"] for p in selected}
         already_accepted = {p["criterion_id"] for p in interpretation["accepted"]}
-        available_in_crop = {e["evidence_id"] for e in observations if e["rendered_asset_ref"] == ref}
+        available_in_crop = {e["evidence_id"] for e in observations if e["rendered_asset_ref"] == ref
+                             and e.get("association_status") == "owned"
+                             and str(e.get("owned_question_ref")) == qid}
         checks = outcome.get("checks", {})
-        figure_trial = copy.deepcopy(question) if revised.get("figure_bounds") else question
-        figure_repaired = bool(revised.get("figure_bounds") and ref and _repair_figure(
-            figure_trial, revised, observations, assets[ref]))
-        spatial_ids = {identifier for group in figure_trial.get("spatial_visual_groups", []) if group.get("reliable")
+        rejection_reasons = []
+        if source_blocker:
+            rejection_reasons.append(source_blocker)
+        if outcome.get("decision") != "verified":
+            rejection_reasons.append("provider_did_not_verify")
+        if not all(checks.get(check) is True for check in CHECKS):
+            rejection_reasons.append("verification_checks_incomplete")
+        if outcome.get("ambiguities_resolved") is not True:
+            rejection_reasons.append("ambiguities_unresolved")
+        if selection_mode == "criterion_ids" and (len(resolved_ids) != len(wanted) or len(set(wanted)) != len(wanted)):
+            rejection_reasons.append("unresolved_criterion_ids")
+        if not already_accepted <= selected_ids:
+            rejection_reasons.append("explicit_points_not_preserved")
+        rejected_categories = {p["category"] for p in selected} - {"proposed", "explicit"}
+        if rejected_categories:
+            rejection_reasons.append("unresolved_criterion_category")
+        verified_source = not rejection_reasons
+        pending_instructions = _unresolved_explicit_annotations(interpretation)
+        if pending_instructions:
+            rejection_reasons.append("source_instruction_unresolved")
+
+        bounds = revised.get("figure_bounds") or outcome.get("figure_bounds")
+        figure_repaired = bool(not reason and ref and bounds and checks.get("spatial_evidence") is True
+                               and checks.get("numbering_and_ownership") is True
+                               and _repair_figure(question, bounds, observations, assets[ref]))
+        if figure_repaired:
+            summaries["repaired_figures"] += 1
+            structure["exceptions"] = [e for e in structure["exceptions"] if not (
+                e.get("category") == "essential_visual_preservation_required" and e.get("affected_id") == qid
+                and any(s.get("rendered_asset_ref") == ref for s in e.get("suggestions", [])))]
+        spatial_ids = {identifier for group in question.get("spatial_visual_groups", []) if group.get("reliable")
                        for identifier in group.get("visual_evidence_ids", [])}
-        unavailable_figures = {e["evidence_id"] for e in observations if e.get("kind") == "diagram_entry"} - spatial_ids
-        verified = (not reason and outcome.get("decision") == "verified" and set(checks) == set(CHECKS) and all(checks.values())
-                    and outcome.get("ambiguities_resolved") is True
-                    and len(wanted) == len(selected) and already_accepted <= set(wanted)
-                    and all(p["category"] in {"proposed", "explicit"} for p in selected)
-                    and _eligible_scheme(question, selected, (solution_ids & available_in_crop) - unavailable_figures))
+        diagrams = {e["evidence_id"] for e in observations if e.get("kind") == "diagram_entry"}
+        uncertain_diagram_ids = {e["evidence_id"] for e in observations
+                                 if e["evidence_id"] in diagrams and
+                                 float(e.get("confidence") or 0) < VISUAL_REVIEW_THRESHOLD}
+        scheme = _scheme_diagnostic(question, selected, solution_ids, crop_ids=available_in_crop,
+                                    diagram_ids=diagrams, figure_ids=spatial_ids - uncertain_diagram_ids)
+        verified = not rejection_reasons and not scheme["reasons"]
+        partial = []
+        if not rejection_reasons and scheme["reasons"] == ["unavailable_spatial_evidence"] and set(scheme["branch_totals"]) == {0}:
+            partial = [p for p, diagnostic in zip(selected, scheme["criteria"])
+                       if not diagnostic["unavailable_spatial_links"]]
+        admitted = selected if verified else partial
+        record["admission"] = {
+            "provider_decision": outcome.get("decision"), "checks": {check: checks.get(check) for check in CHECKS},
+            "ambiguities_resolved": outcome.get("ambiguities_resolved"), "selection_mode": selection_mode,
+            "selected_ids": [{"id": key, "resolves_as_criterion": key in by_id,
+                              "resolves_as_solution_evidence": key in solution_ids} for key in wanted],
+            "explicit_points_preserved": already_accepted <= selected_ids,
+            "rejected_criterion_categories": sorted(rejected_categories),
+            "unresolved_source_instruction_ids": pending_instructions,
+            "admitted_criterion_ids": [p["criterion_id"] for p in admitted],
+            "source_figure_preserved": figure_repaired, "scheme": scheme,
+            "rejection_reasons": rejection_reasons + scheme["reasons"],
+        }
+        summaries.update({f"rejection_{reason}": 1 for reason in record["admission"]["rejection_reasons"]})
         existing_issue = next((e for e in structure["exceptions"] if e.get("category") == "marking_interpretation_review"
                                and str(e.get("affected_id")) == qid and any(
                                    s.get("source_block_index") == question.get("source_block_index")
                                    for s in e.get("suggestions", []))), None)
         record.update({"question_id": qid, "page": page, "source_crop_digest": assets.get(ref, {}).get("sha256"),
+                       "source_block_index": question.get("source_block_index"), "source_offset": source_offset,
                        "accepted": bool(verified), "verified_constructed_count": 0})
+        if verified_source:
+            changed_count = _apply_working(question, revised, observations, solution_ids & available_in_crop, audit_key)
+            summaries["repaired_readings"] += changed_count
+        if admitted:
+            _apply_verified(question, interpretation, admitted, audit_key, complete=verified)
+            record["verified_constructed_count"] = len(interpretation["constructed"])
+            summaries["constructed_marking_points"] += record["verified_constructed_count"]
+            summaries["partially_verified_questions"] += bool(partial)
         if verified:
-            changed_count = _apply_verified(question, interpretation, revised, selected, audit_key)
-            if figure_repaired:
-                for field in ("essential_visual_evidence", "spatial_visual_groups"):
-                    question[field] = figure_trial[field]
-                summaries["repaired_figures"] += 1
-                structure["exceptions"] = [e for e in structure["exceptions"] if not (
-                    e.get("category") == "essential_visual_preservation_required" and e.get("affected_id") == qid
-                    and any(s.get("rendered_asset_ref") == ref for s in e.get("suggestions", [])))]
             structure["exceptions"] = [e for e in structure["exceptions"] if not (
                 e.get("category") == "visual_evidence_uncertain" and e.get("affected_id") == qid
                 and e.get("suggestions") and all(s.get("rendered_asset_ref") == ref for s in e["suggestions"]))]
             summaries["verified_questions"] += 1
             summaries["repaired_questions"] += bool(record.get("repaired"))
-            summaries["repaired_readings"] += changed_count
-            record["verified_constructed_count"] = len(interpretation["constructed"])
-            summaries["constructed_marking_points"] += record["verified_constructed_count"]
             if existing_issue:
                 structure["exceptions"].remove(existing_issue)
         else:
+            if pending_instructions and verified_source:
+                reason = "Check how the source marking instruction applies to the constructed guideline."
+            elif partial:
+                reason = "Some marks were verified. Check the remaining diagram entries against the original figure."
             reason = reason or outcome.get("reason") or "The draft could not be linked uniquely to source working and its printed allocation."
             record["reason"] = reason
             summaries["unresolved_questions"] += 1
@@ -287,8 +413,19 @@ def verify_guideline(structure: dict, normalized: dict, visual: dict, *,
                         "unconfirmed_criteria": interpretation["unconfirmed"]}]})
                 existing_issue = structure["exceptions"][-1]
             for suggestion in existing_issue.get("suggestions", []):
-                suggestion["converted_working"] = [s.get("text") for s in segments if s.get("text")][:18]
+                suggestion["converted_working"] = [s["text"] for s in question.get("visual_solution_segments", [])
+                                                    if s.get("text")][:18]
                 suggestion["guideline_verification"] = True
+                suggestion["guideline_provider_decision"] = outcome.get("decision")
+                suggestion["guideline_math_conflict_only"] = outcome.get("decision") == "source_issue" and (
+                    checks.get("working_and_answer") is False
+                    and all(checks.get(check) is True for check in CHECKS if check != "working_and_answer"))
+                if partial:
+                    # Keep the complete proposal editable while showing which
+                    # awards have already been independently counted.
+                    admitted_ids = {p["criterion_id"] for p in partial}
+                    suggestion["constructed_criteria"] = partial
+                    suggestion["unconfirmed_criteria"] = [p for p in selected if p["criterion_id"] not in admitted_ids]
         audit["items"][audit_key] = record
         audit["summary"] = dict(summaries)
         if checkpoint:
@@ -296,7 +433,17 @@ def verify_guideline(structure: dict, normalized: dict, visual: dict, *,
     return audit
 
 
-def _apply_verified(question: dict, interpretation: dict, draft: dict, selected: list[dict], audit_key: str) -> int:
+def require_complete_admission_cache(cached: dict | None, replayed: dict) -> None:
+    old = (cached or {}).get("items") or {}
+    if ((cached or {}).get("version") != VERSION or not old or set(old) != set(replayed["items"])
+            or replayed["summary"].get("verification_calls")
+            or any(old[key].get("source_crop_digest") != row.get("source_crop_digest")
+                   or old[key].get("verification") != row.get("verification")
+                   for key, row in replayed["items"].items())):
+        raise ValueError("Admission replay differs from the complete saved verification generation")
+
+
+def _apply_verified(question: dict, interpretation: dict, selected: list[dict], audit_key: str, *, complete: bool) -> None:
     constructed = []
     for entry in selected:
         if entry["category"] != "proposed":
@@ -306,8 +453,10 @@ def _apply_verified(question: dict, interpretation: dict, draft: dict, selected:
         constructed.append(point)
         question["mark_points"].append(point)
     interpretation["constructed"] = constructed
-    interpretation["unconfirmed"] = []
-    interpretation["verification"] = {"id": audit_key, "status": "verified"}
+    constructed_ids = {p["criterion_id"] for p in constructed}
+    interpretation["unconfirmed"] = [] if complete else [
+        p for p in interpretation["unconfirmed"] if p["criterion_id"] not in constructed_ids]
+    interpretation["verification"] = {"id": audit_key, "status": "verified" if complete else "partially_verified"}
     if any(point.get("alternative", 0) for point in question["mark_points"]):
         question["mark_calculation_mode"] = "alternative_max"
     totals = Counter()
@@ -315,12 +464,27 @@ def _apply_verified(question: dict, interpretation: dict, draft: dict, selected:
         totals[point.get("alternative", 0)] += point["count"]
     question["computed_shorthand_marks"] = max(totals.values(), default=0)
 
+
+def _apply_working(question: dict, draft: dict, observations: list[dict], available: set[str], audit_key: str) -> int:
     revised = {e["evidence_id"]: e for e in draft["observations"]}
+    segments = question.setdefault("visual_solution_segments", [])
+    by_id = {s.get("interpretation_evidence_id") or s.get("evidence_id"): s for s in segments}
     changed = 0
-    for segment in question.get("visual_solution_segments", []):
-        identifier = segment.get("interpretation_evidence_id") or segment.get("evidence_id")
-        row = revised.get(identifier)
-        if not row or row["transcription"] == segment.get("raw_transcription"):
+    for order, source in enumerate(observations):
+        identifier = source["evidence_id"]
+        if identifier not in available or source["kind"] == "diagram_entry":
+            continue
+        row = revised[identifier]
+        segment = by_id.get(identifier)
+        if segment is None:
+            if source["kind"] not in {"answer", "answer_working"} or not row.get("transcription"):
+                continue
+            segment = {"source_ref": {"file_id": "source_1", "page": question["source_page"]},
+                       "rendered_asset_ref": source["rendered_asset_ref"], "confidence": source["confidence"],
+                       "evidence_order": order}
+            segments.append(segment)
+        elif row["transcription"] == segment.get("raw_transcription") and (
+                row.get("normalized_math") == source.get("normalized_math")):
             continue
         math, issue = normalize_visual_math(row.get("normalized_math"))
         if issue:
@@ -332,20 +496,32 @@ def _apply_verified(question: dict, interpretation: dict, draft: dict, selected:
     return changed
 
 
-def _repair_figure(question: dict, draft: dict, observations: list[dict], asset: dict) -> bool:
+def _repair_figure(question: dict, figure_bounds: list[dict], observations: list[dict], asset: dict) -> bool:
     ref = asset["path"]
     original = [copy.deepcopy(e) for e in observations if e.get("rendered_asset_ref") == ref and e.get("kind") == "diagram_entry"]
-    updated = {row["evidence_id"]: row["bounds"] for row in draft["figure_bounds"]}
-    if not updated or not set(updated) <= {e["evidence_id"] for e in original}:
+    updated = {row["evidence_id"]: row["bounds"] for row in figure_bounds}
+    if len(updated) != len(figure_bounds) or not set(updated) <= {e["evidence_id"] for e in original}:
         return False
     x1, y1, x2, y2 = asset["render_bbox"]
+    trusted_bounds = set(updated)
+    verified_boxes = []
     for row in original:
         if row["evidence_id"] not in updated:
             continue
         left, top, right, bottom = updated[row["evidence_id"]]
-        row["source_page_bbox"] = [x1 + left * (x2 - x1), y1 + top * (y2 - y1),
-                                   x1 + right * (x2 - x1), y1 + bottom * (y2 - y1)]
-    groups = spatial_visual_groups(original, [asset], verified_bounds_ids=frozenset(updated))
+        if not 0 <= left < right <= 1 or not 0 <= top < bottom <= 1:
+            return False
+        box = [x1 + left * (x2 - x1), y1 + top * (y2 - y1),
+               x1 + right * (x2 - x1), y1 + bottom * (y2 - y1)]
+        row["source_page_bbox"] = box
+        verified_boxes.append(box)
+    # Keeping the actual picture requires spatial containment. Its labels
+    # need not all be readable for the pixels to be faithful to the source.
+    for row in original:
+        box = row.get("source_page_bbox")
+        if box and any(v[0] <= box[0] < box[2] <= v[2] and v[1] <= box[1] < box[3] <= v[3] for v in verified_boxes):
+            trusted_bounds.add(row["evidence_id"])
+    groups = spatial_visual_groups(original, [asset], verified_bounds_ids=frozenset(trusted_bounds))
     if not groups or any(not group["reliable"] for group in groups):
         return False
     for field in ("essential_visual_evidence", "spatial_visual_groups"):

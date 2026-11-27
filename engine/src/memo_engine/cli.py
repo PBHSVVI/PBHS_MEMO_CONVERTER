@@ -24,7 +24,7 @@ from .ingestion import IngestionError, ingest_bytes, validate_source_path
 from .normalization import NormalizationError, normalize_source
 from .semantic import build_semantic_plan, interpret_semantics
 from .marking_interpretation import interpret_marking
-from .guideline_verification import verify_guideline
+from .guideline_verification import require_complete_admission_cache, verify_guideline
 from .structure import extract_structure
 from .visual_evidence import (
     VisualProviderDeferred,
@@ -259,7 +259,10 @@ def _try_reuse_semantic(
     return None, None, list(reusable_ai.values()), partial_source_job_id
 
 
-def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any = None) -> int:
+def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None,
+            db: Any = None, admission_replay: bool = False) -> int:
+    if admission_replay and not (replay_visual or {}).get("admission_revalidation"):
+        raise ValueError("Admission replay requires its audited saved visual generation")
     db = db or SupabaseRest()
     job = db.get_job(job_id)
 
@@ -284,7 +287,7 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
 
     try:
         openai = None
-        if os.environ.get("MEMO_OPENAI_ENABLED", "").strip().lower() == "true":
+        if not admission_replay and os.environ.get("MEMO_OPENAI_ENABLED", "").strip().lower() == "true":
             openai = OpenAIInterpreter(CreditLedger(db), os.environ, job_id=job_id)
         source_path = validate_source_path(job)
         source_bytes = db.download_object(BUCKET, source_path)
@@ -498,6 +501,8 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
                     cached=cached_verification,
                     checkpoint=lambda record: db.upload_json(BUCKET, verification_path, record),
                 )
+                if admission_replay:
+                    require_complete_admission_cache(cached_verification, verification)
                 db.upload_json(BUCKET, verification_path, verification)
                 db.add_event(job, "guideline_verification_complete", "structure", verification["summary"])
         confirmed_corrections = db.get_confirmed_corrections(job_id)
@@ -547,12 +552,17 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
             {"stage": "semantic_interpretation", "updated_at": utc_now()},
         )
 
-        (
-            semantic,
-            semantic_cache_job_id,
-            reusable_ai_results,
-            partial_cache_job_id,
-        ) = _try_reuse_semantic(db, job, structure, source["sha256"])
+        if admission_replay:
+            if build_semantic_plan(structure)[1]:
+                raise ValueError("Admission replay would require fresh semantic interpretation")
+            semantic, semantic_cache_job_id, reusable_ai_results, partial_cache_job_id = None, None, [], None
+        else:
+            (
+                semantic,
+                semantic_cache_job_id,
+                reusable_ai_results,
+                partial_cache_job_id,
+            ) = _try_reuse_semantic(db, job, structure, source["sha256"])
 
         if semantic is None:
             semantic = interpret_semantics(

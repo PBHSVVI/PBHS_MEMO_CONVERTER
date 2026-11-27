@@ -61,6 +61,8 @@ def deterministic_semantic(point: dict[str, Any]) -> tuple[str | None, str | Non
     if code == "A":
         if any(token in desc for token in ["answer", "answers", " ans", "final answer"]):
             return "answer", "descriptor_answer"
+        if point.get("notation") == "constructed_verified" and point.get("verification_id"):
+            return "accuracy", "independently_verified_constructed_accuracy"
         return None, None
 
     if code == "S":
