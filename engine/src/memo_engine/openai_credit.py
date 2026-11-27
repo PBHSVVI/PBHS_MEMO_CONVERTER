@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,3 +97,59 @@ class CreditLedger:
             self.db.upload_json(BUCKET, f"{LEDGER}/{reservation.slot:03d}-receipt.json", receipt, upsert=False)
         except Exception:
             raise ProviderError("OPENAI_LEDGER_UNAVAILABLE", "The credit receipt could not be stored.") from None
+
+
+def reconcile_ledger(db: SupabaseRest) -> dict[str, Any]:
+    """Read reservations and receipts without exporting any provider payloads."""
+    CreditLedger(db)
+    entries = db._request_json("POST", f"/storage/v1/object/list/{BUCKET}", body={
+        "prefix": LEDGER, "limit": SLOT_COUNT * 2 + 1, "offset": 0,
+    })
+    if not isinstance(entries, list):
+        raise ValueError("Invalid credit inventory")
+    names = {row.get("name") for row in entries}
+    if any(not isinstance(name, str) or not re.fullmatch(r"0\d{2}-(reservation|receipt)\.json", name) for name in names):
+        raise ValueError("Unexpected credit inventory")
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        records = dict(zip(names, workers.map(lambda name: db.download_json(BUCKET, f"{LEDGER}/{name}"), names)))
+    stages = {}
+    count = uncertain = total_priced = total_upper = 0
+    for name, reservation in records.items():
+        if not name.endswith("-reservation.json"):
+            if name.replace("-receipt", "-reservation") not in records:
+                raise ValueError("Credit receipt lacks a reservation")
+            continue
+        ceiling = reservation.get("request_ceiling_nusd")
+        if type(ceiling) is not int or not 0 < ceiling <= SLOT_CEILING_NUSD:
+            raise ValueError("Invalid credit reservation")
+        count += 1
+        receipt = records.get(name.replace("-reservation", "-receipt")) or {}
+        usage = receipt.get("usage") or {}
+        priced = usage.get("estimated_cost_nusd")
+        upper = receipt.get("charged_budget_nusd", ceiling)
+        if type(upper) is not int or not 0 <= upper <= ceiling:
+            raise ValueError("Invalid credit receipt")
+        if priced is not None and (type(priced) is not int or not 0 <= priced <= upper):
+            raise ValueError("Invalid priced usage")
+        stage = reservation.get("stage")
+        if stage not in {"visual", "semantic", "marking", "guideline_verify", "guideline_repair"}:
+            raise ValueError("Unexpected credit stage")
+        counters = stages.setdefault(stage, {"calls": 0, "priced_nusd": 0, "upper_nusd": 0})
+        counters["calls"] += 1
+        counters["priced_nusd"] += priced or 0
+        counters["upper_nusd"] += upper
+        uncertain += priced is None
+        total_priced += priced or 0
+        total_upper += upper
+    return {"reservations": count, "uncertain_charges": uncertain, "priced_nusd": total_priced,
+            "accounted_upper_nusd": total_upper, "available_worker_slots": SLOT_COUNT - 2 - sum(
+                name[:3] not in {"000", "001"} and name.endswith("-reservation.json") for name in names),
+            "by_stage": stages}
+
+
+if __name__ == "__main__":
+    import json
+    try:
+        print("OpenAI ledger " + json.dumps(reconcile_ledger(SupabaseRest()), sort_keys=True))
+    except Exception:
+        raise SystemExit("The private credit ledger could not be reconciled.") from None

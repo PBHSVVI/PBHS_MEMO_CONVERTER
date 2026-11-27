@@ -12,11 +12,30 @@ on:
         type: choice
         options: ['off', 'access', 'synthetic']
         default: 'off'
+      reconcile_openai_ledger:
+        description: Read the included-credit ledger and print only aggregate usage
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  ledger:
+    if: inputs.reconcile_openai_ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Reconcile aggregate credit use from private PBHS Storage
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m engine.src.memo_engine.openai_credit
+
   openai:
     if: inputs.openai_check == 'access' || inputs.openai_check == 'synthetic'
     runs-on: ubuntu-latest
@@ -45,7 +64,7 @@ jobs:
           fi
 
   qualify:
-    if: inputs.openai_check != 'synthetic'
+    if: inputs.openai_check != 'synthetic' && !inputs.reconcile_openai_ledger
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
