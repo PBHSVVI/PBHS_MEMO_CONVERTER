@@ -424,8 +424,27 @@ def _rename_question_identifier(
         "source_block_index": q.get("source_block_index"),
     }
     structure["questions"].sort(key=lambda item: (int(item.get("source_block_index", 10**9)), tuple(item.get("path") or (999,))))
-    _remove_exception(structure, category, affected_id)
+    if category != "duplicate_question_identifier":
+        _remove_exception(structure, category, affected_id)
     _remove_exception(structure, "question_parent_heading_mismatch", affected_id)
+    if len(candidates) <= 2:
+        _remove_exception(structure, "duplicate_question_identifier", affected_id)
+    # A marking review prepared before the overlay must follow the renamed
+    # occurrence, while keeping the printed locator for the source crop.
+    page = q.get("source_page")
+    block = q.get("source_block_index")
+    occurrence = f"{source_id}@{page}:{q.get('source_character_offset')}"
+    if page is not None and block is not None:
+        for review in structure.get("exceptions", []):
+            if review.get("category") != "marking_interpretation_review" or review.get("affected_id") != source_id:
+                continue
+            suggestions = review.get("suggestions") or []
+            if suggestions and all(
+                s.get("source_page") == page and s.get("source_block_index") == block
+                and s.get("source_occurrence") == occurrence
+                for s in suggestions
+            ):
+                review["affected_id"] = target_id
     locator_resolution = {
         "method": resolution_method,
         "original_source_block_index": source_block_index,

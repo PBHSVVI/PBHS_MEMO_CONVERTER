@@ -4,7 +4,8 @@ import copy
 
 import pytest
 
-from engine.src.memo_engine.reference_replay import CHECKS, apply_reference_results
+from engine.src.memo_engine.corrections import apply_confirmed_corrections
+from engine.src.memo_engine.reference_replay import CHECKS, apply_reference_results, apply_renumbered_reference_results
 
 
 def sample(diagram=False):
@@ -69,6 +70,40 @@ def test_verified_working_cannot_score_under_a_conflicting_parent_heading():
     assert question["mark_points"] == []
     assert pending["suggestions"][0]["verified_working"] == ["7", "9"]
     assert structure["exceptions"][0]["suggestions"][0]["depends_on_source_numbering"]
+
+
+@pytest.mark.parametrize("target,source_block,admitted", [("12.1", 7, True), ("11.1", 7, False), ("12.1", 1, False)])
+def test_reference_marking_admitted_only_after_exact_confirmed_rename(target, source_block, admitted):
+    structure, question, entry = sample()
+    question.update(source_heading_major="12", source_character_offset=100, path=[3, 1])
+    structure["exceptions"][0]["suggestions"][0]["source_occurrence"] = "3.1@2:100"
+    other = {"question_id": "3.1", "source_page": 1, "source_block_index": 1, "path": [3, 1],
+             "source_heading_major": "3", "source_character_offset": 200, "mark_points": [{"count": 1}]}
+    structure["questions"].append(other)
+    category = "question_parent_heading_mismatch"
+    structure["exceptions"].append({"category": category, "affected_id": "3.1",
+                                   "suggestions": [{"source_page": 2, "source_block_index": 7}]})
+    structure["exceptions"].append({"category": "duplicate_question_identifier", "affected_id": "3.1"})
+    pending = []
+    apply_reference_results(structure, [entry], pending_numbering=pending)
+    correction = {"id": "confirmed-rename", "confirmation_status": "confirmed", "proposed_patch": {
+        "category": category, "affected_id": "3.1", "operation": "rename_question_identifier",
+        "target_id": target, "source_block_index": source_block,
+    }}
+    corrected, applied, issues = apply_confirmed_corrections(structure, {}, [correction])
+    assert issues == [] and len(applied) == 1
+    review, = corrected["exceptions"]
+    assert review["affected_id"] == (target if source_block == 7 else "3.1")
+    assert review["suggestions"][0]["source_occurrence"] == "3.1@2:100"
+    assert apply_renumbered_reference_results(corrected, pending, applied) == int(admitted)
+    after = next(q for q in corrected["questions"] if q["source_page"] == 2)
+    assert sum(point["count"] for point in after["mark_points"]) == (2 if admitted else 0)
+    assert corrected["questions"][0]["mark_points"] == [{"count": 1}]
+    assert any(row["category"] == "marking_interpretation_review" for row in corrected["exceptions"]) is not admitted
+    if admitted:
+        assert after["reference_verification"]["numbering_correction_id"] == "confirmed-rename"
+        assert [line["canonical_latex"] for line in after["visual_solution_segments"]] == ["7", "9"]
+        assert apply_renumbered_reference_results(corrected, pending, applied) == 0
 
 
 def test_replay_rejects_unverified_provider_output():

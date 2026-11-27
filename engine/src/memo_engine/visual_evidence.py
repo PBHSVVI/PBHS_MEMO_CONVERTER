@@ -1747,6 +1747,48 @@ def spatial_visual_groups(
     return result
 
 
+def _context_annotation_needs_no_separate_review(
+    item: dict[str, Any], owner: dict[str, Any] | None, exceptions: list[dict[str, Any]],
+) -> bool:
+    # Keep the raw reading in the visual artifact. Only omit a separate
+    # association decision for an already non-scoring context annotation.
+    if (owner is None or item.get("association_status") != "context_only"
+            or item.get("evidence_status") != "context_only" or item.get("effective") is not False
+            or item.get("question_ref") != item.get("owned_question_ref")
+            or item.get("normalized_math") or item.get("model_normalized_math")
+            or item.get("math_normalization_issue")):
+        return False
+    box = _finite_bbox(item.get("source_page_bbox"))
+    owned = _finite_bbox(item.get("owned_bbox"))
+    if box is None or owned is None or owned[1] <= (box[1] + box[3]) / 2 < owned[3]:
+        return False
+    reading = str(item.get("transcription") or "").strip()
+    if item.get("kind") == "tick" and reading.casefold() in {"✓", "✔", "tick", "red tick"}:
+        return True
+
+    # A leading margin annotation matching the actual heading belongs with
+    # the existing numbering decision. It is never a numbering correction.
+    page = _finite_bbox(item.get("page_bbox"))
+    heading = str(owner.get("source_heading_major") or "")
+    if (item.get("kind") != "other_visible_annotation" or page is None
+            or not re.fullmatch(r"\d{1,2}", heading)
+            or not re.fullmatch(rf"{heading}\s*[✓✔]", reading)
+            or not box[1] < owned[1] <= box[3]
+            or box[2] > page[0] + (page[2] - page[0]) / 10):
+        return False
+    return any(
+        row.get("category") == "question_parent_heading_mismatch"
+        and row.get("affected_id") == item.get("owned_question_ref")
+        and any(
+            s.get("source_page") == item.get("page")
+            and s.get("source_block_index") == owner.get("source_block_index")
+            and str(s.get("heading_question_id")) == heading
+            for s in row.get("suggestions") or []
+        )
+        for row in exceptions
+    )
+
+
 def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
     questions = {str(item.get("question_id")): item for item in structure.get("questions", [])}
     def target_for(qid: Any, page: Any) -> dict[str, Any] | None:
@@ -1775,7 +1817,19 @@ def fuse_visual_evidence(structure: dict[str, Any], visual: dict[str, Any]) -> d
         if item.get("effective", True)
         and target_for(item.get("owned_question_ref") or item.get("question_ref"),item.get("page")) is None
     )
+    association_by_id = {
+        (visual_association_unit_key(item), item["evidence_id"]): item for item in association_items
+    }
     for unit in visual_association_review_units(association_items):
+        owner = target_for(unit["owned_question_ref"], unit["page"])
+        key = (unit["rendered_asset_ref"] or "", unit["page"], unit["owned_question_ref"] or "", unit["association_status"])
+        if unit["evidence_ids"] and all(
+            _context_annotation_needs_no_separate_review(
+                association_by_id[key, evidence_id], owner, structure.get("exceptions", []),
+            )
+            for evidence_id in unit["evidence_ids"]
+        ):
+            continue
         structure.setdefault("exceptions", []).append({
             "level": "amber",
             "category": "visual_evidence_association_uncertain",

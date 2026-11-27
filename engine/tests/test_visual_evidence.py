@@ -427,6 +427,55 @@ def test_printed_mark_and_handwritten_change_is_review_candidate_not_override():
     assert "printed_marks" not in structure["questions"][0]
 
 
+def _context_annotation(kind="tick", reading="Red tick", **changes):
+    return {
+        "evidence_id": "annotation", "kind": kind, "transcription": reading, "page": 2,
+        "question_ref": "7.2", "owned_question_ref": "7.2",
+        "rendered_asset_ref": "internal/visual/region.png",
+        "association_status": "context_only", "evidence_status": "context_only", "effective": False,
+        "source_page_bbox": [15, 93, 33, 103], "owned_bbox": [0, 100, 600, 180],
+        "page_bbox": [0, 0, 600, 840], **changes,
+    }
+
+
+def test_unweighted_context_ticks_are_audit_only():
+    question = {"question_id": "7.2", "source_page": 2}
+    tick = _context_annotation()
+    visual = {"evidence": [tick]}
+    structure = fuse_visual_evidence({"questions": [question]}, visual)
+    assert not structure.get("exceptions")
+    assert visual["evidence"] == [_context_annotation()]
+    assert "visual_evidence" not in question and "mark_points" not in question
+
+
+def test_mixed_context_region_keeps_the_entire_review_unit():
+    tick = _context_annotation()
+    instruction = _context_annotation("marking_note", "-1 if no conclusion", evidence_id="instruction")
+    structure = fuse_visual_evidence(
+        {"questions": [{"question_id": "7.2", "source_page": 2}]}, {"evidence": [tick, instruction]},
+    )
+    review, = structure["exceptions"]
+    assert review["category"] == "visual_evidence_association_uncertain"
+    assert review["suggestions"][0]["evidence_ids"] == ["annotation", "instruction"]
+
+
+def test_margin_heading_hint_uses_exact_numbering_review_and_never_renames():
+    question = {"question_id": "7.2", "source_page": 2, "source_block_index": 4, "source_heading_major": "12"}
+    another_occurrence = {"question_id": "7.2", "source_page": 1}
+    annotation = _context_annotation("other_visible_annotation", "12✓")
+    mismatch = {"category": "question_parent_heading_mismatch", "affected_id": "7.2", "level": "red",
+                "suggestions": [{"source_page": 2, "source_block_index": 4, "heading_question_id": "12"}]}
+    structure = {"questions": [another_occurrence, question], "exceptions": [mismatch]}
+    fuse_visual_evidence(structure, {"evidence": [annotation]})
+    assert structure["exceptions"] == [mismatch]
+    assert [q["question_id"] for q in structure["questions"]] == ["7.2", "7.2"]
+    assert annotation == _context_annotation("other_visible_annotation", "12✓")
+
+    mismatch["suggestions"][0]["source_page"] = 1
+    fuse_visual_evidence(structure, {"evidence": [annotation]})
+    assert structure["exceptions"][-1]["category"] == "visual_evidence_association_uncertain"
+
+
 def test_vision_outage_after_positive_screening_fails_safe():
     text = "3.1 Find the regression equation. (3)"
     data = _pdf(text=text, black=True)

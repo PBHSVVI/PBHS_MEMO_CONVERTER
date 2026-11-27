@@ -113,7 +113,32 @@ def _diagram_additions(question: dict, entry: dict, ids: list[str], awards: list
     return additions
 
 
-def apply_reference_results(structure: dict, entries: list[dict]) -> dict:
+def _add_verified_awards(question: dict, entry: dict, ids: list[str], awards: list) -> None:
+    points = [
+        {"category": "proposed", "criterion_id": f"{entry['artifact_digest'][:20]}_{index}",
+         "count": award["marks"], "code": award["code"], "descriptor": award["descriptor"],
+         "solution_evidence_ids": [ids[link] for link in links], "alternative": 0,
+         "source_refs": [{"file_id": "source_1", "page": entry["page"]}], "notation": "constructed_verified",
+         "verification_id": entry["artifact_digest"]}
+        for index, (award, links) in enumerate(awards)
+    ]
+    question["mark_points"].extend(points)
+    question["computed_shorthand_marks"] = sum(point["count"] for point in question["mark_points"])
+    interpretation = question["marking_interpretation"]
+    interpretation.setdefault("constructed", []).extend(points)
+    interpretation["unconfirmed"] = []
+    interpretation["verification"] = {"id": entry["artifact_digest"], "status": "verified"}
+
+
+def _clear_verified_review(structure: dict, review: dict, ref: str, source_id: str) -> None:
+    structure["exceptions"].remove(review)
+    structure["exceptions"] = [row for row in structure["exceptions"] if not (
+        row["affected_id"] == source_id and row["category"] == "visual_evidence_uncertain"
+        and row.get("suggestions") and all(s.get("rendered_asset_ref") == ref for s in row["suggestions"]))]
+
+
+def apply_reference_results(structure: dict, entries: list[dict], *,
+                            pending_numbering: list[dict] | None = None) -> dict:
     totals = {"verified_questions": 0, "added_marking_points": 0, "source_issues_with_verified_working": 0,
               "verified_working_pending_ownership": 0}
     for entry in entries:
@@ -152,6 +177,11 @@ def apply_reference_results(structure: dict, entries: list[dict]) -> dict:
             for row in ownership:
                 for suggestion in row["suggestions"]:
                     suggestion["verified_working"] = [line["source_text"] for line in draft["working"]]
+            if (pending_numbering is not None and qa["decision"] == "accept"
+                    and all(line["kind"] == "math" for line in draft["working"])):
+                pending_numbering.append({
+                    "entry": entry, "offset": offset, "ref": ref, "ids": ids, "awards": awards,
+                })
             totals["verified_working_pending_ownership"] += 1
             continue
         if all(line["kind"] == "diagram_entry" for line in draft["working"]):
@@ -172,24 +202,59 @@ def apply_reference_results(structure: dict, entries: list[dict]) -> dict:
                 suggestion["converted_working"] = [line["source_text"] for line in draft["working"]]
             totals["source_issues_with_verified_working"] += 1
             continue
-        added = []
-        for count, (award, links) in enumerate(awards):
-            point = {"category": "proposed", "criterion_id": f"{entry['artifact_digest'][:20]}_{count}",
-                     "count": award["marks"], "code": award["code"], "descriptor": award["descriptor"],
-                     "solution_evidence_ids": [ids[index] for index in links], "alternative": 0,
-                     "source_refs": [{"file_id": "source_1", "page": page}], "notation": "constructed_verified",
-                     "verification_id": entry["artifact_digest"]}
-            added.append(point)
-        question["mark_points"].extend(added)
-        question["computed_shorthand_marks"] = sum(point["count"] for point in question["mark_points"])
-        interpretation = question["marking_interpretation"]
-        interpretation.setdefault("constructed", []).extend(added)
-        interpretation["unconfirmed"] = []
-        interpretation["verification"] = {"id": entry["artifact_digest"], "status": "verified"}
-        structure["exceptions"].remove(review)
-        structure["exceptions"] = [row for row in structure["exceptions"] if not (
-            row["affected_id"] == qid and row["category"] == "visual_evidence_uncertain"
-            and row.get("suggestions") and all(s.get("rendered_asset_ref") == ref for s in row["suggestions"]))]
+        _add_verified_awards(question, entry, ids, awards)
+        _clear_verified_review(structure, review, ref, qid)
         totals["verified_questions"] += 1
-        totals["added_marking_points"] += len(added)
+        totals["added_marking_points"] += len(awards)
     return totals
+
+
+def apply_renumbered_reference_results(structure: dict, pending: list[dict], applied: list[dict]) -> int:
+    """Admit verified working held only for the exact source occurrence's numbering."""
+    admitted = 0
+    for saved in pending:
+        entry, ref, offset = saved["entry"], saved["ref"], saved["offset"]
+        qid, page = entry["printed_label"], entry["page"]
+        renames = [
+            row for row in applied
+            if row["operation"] == "rename_question_identifier"
+            and row.get("category") == "question_parent_heading_mismatch"
+            and row["affected_id"] == qid and row.get("source_block_index") == offset
+            and row.get("locator_resolution", {}).get("source_page") == page
+        ]
+        if len(renames) != 1:
+            continue
+        rename, = renames
+        target = rename["target_id"]
+        questions = [
+            q for q in structure["questions"]
+            if q["question_id"] == target and q.get("source_question_id") == qid
+            and q.get("source_page") == page and q.get("source_block_index") == offset
+        ]
+        if len(questions) != 1:
+            continue
+        question, = questions
+        heading = str(question.get("source_heading_major") or "")
+        audit = question["reference_verification"]
+        if (not heading or target.split(".")[0] != heading or target.count(".") != qid.count(".")
+                or question["mark_points"] or question.get("content_override")
+                or question.get("correction_overlay", {}).get("correction_id") != rename["correction_id"]
+                or audit.get("artifact_sha256") != entry["artifact_digest"]
+                or audit.get("pending_marks") != question.get("printed_marks")):
+            continue
+        reviews = [
+            row for row in structure["exceptions"]
+            if row["category"] == "marking_interpretation_review" and row["affected_id"] == target
+            and any(s.get("depends_on_source_numbering") and s.get("source_page") == page
+                    and s.get("source_block_index") == offset and s.get("rendered_asset_ref") == ref
+                    for s in row["suggestions"])
+        ]
+        if len(reviews) != 1:
+            continue
+        _set_working(question, entry, saved["ids"], ref)
+        _add_verified_awards(question, entry, saved["ids"], saved["awards"])
+        _clear_verified_review(structure, reviews[0], ref, qid)
+        audit.pop("pending_marks")
+        audit["numbering_correction_id"] = rename["correction_id"]
+        admitted += 1
+    return admitted

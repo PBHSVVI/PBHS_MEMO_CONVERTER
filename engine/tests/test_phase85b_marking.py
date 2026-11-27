@@ -3,6 +3,9 @@ from __future__ import annotations
 import copy
 import io
 import json
+import shutil
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -234,7 +237,6 @@ def test_distinct_marking_lifecycle_preserves_coordinate_history_and_archives_be
 
 
 def test_teacher_proposal_control_only_prepares_a_local_editable_draft():
-    from pathlib import Path
     page=(Path(__file__).resolve().parents[2]/'docs/phase7-5-review/index.html').read_text(encoding='utf8')
     section=page.split("if(!grouped&&ex.category==='marking_interpretation_review'){",1)[1].split(
         "}else if(!grouped&&ex.category==='ambiguous_mark_semantics'",1
@@ -243,3 +245,29 @@ def test_teacher_proposal_control_only_prepares_a_local_editable_draft():
     assert 'not submitted or confirmed' in section
     assert 'textContent' in section
     assert 'submitAndInterpret' not in section and 'confirmCorrection' not in section
+
+
+def test_editable_marking_draft_retains_a_linked_one_mark_conclusion_condition():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required to exercise the review-page draft")
+    page = (Path(__file__).resolve().parents[2] / "docs/phase7-5-review/index.html").read_text(encoding="utf-8")
+    helper = page[page.index("function markingDraftText("):page.index("async function renderChoices(")]
+    program = helper + """
+const awards = [
+  {count: 1, code: 'M', descriptor: 'Calculate probability', solution_evidence_ids: ['probability']},
+  {count: 1, code: 'A', descriptor: 'Show equality and conclude independence', solution_evidence_ids: ['equality', 'conclusion']},
+];
+const condition = {category: 'ambiguous', count: null, allocation_quote: '"-1 if no conclusion"',
+  allocation_evidence_ids: ['note'], solution_evidence_ids: ['conclusion']};
+console.log(JSON.stringify([
+  markingDraftText(awards, [condition]),
+  markingDraftText(awards, [{...condition, solution_evidence_ids: ['probability']}]),
+  markingDraftText(awards, [{...condition, allocation_quote: '-2 if no conclusion'}]),
+]));
+"""
+    output = subprocess.check_output([node, "--input-type=module", "-e", program], text=True)
+    included, unlinked, different = json.loads(output)
+    expected = "1M Calculate probability\n1A Show equality and conclude independence"
+    assert included == expected + ". Withhold this mark if no conclusion is stated."
+    assert unlinked == different == expected

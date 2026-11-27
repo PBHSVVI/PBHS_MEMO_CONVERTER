@@ -505,9 +505,12 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None,
                     require_complete_admission_cache(cached_verification, verification)
                 db.upload_json(BUCKET, verification_path, verification)
                 db.add_event(job, "guideline_verification_complete", "structure", verification["summary"])
+        pending_numbering: list[dict] = []
         if visual.get("reference_revalidation"):
             from .reference_replay import apply_reference_results, load_trial
-            reference = apply_reference_results(structure, load_trial(db, job, source_bytes))
+            reference = apply_reference_results(
+                structure, load_trial(db, job, source_bytes), pending_numbering=pending_numbering,
+            )
             db.add_event(job, "reference_guideline_replay_complete", "structure", reference)
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []
@@ -522,6 +525,12 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None,
                     visual,
                 )
             )
+
+            if pending_numbering:
+                from .reference_replay import apply_renumbered_reference_results
+                admitted = apply_renumbered_reference_results(structure, pending_numbering, applied_corrections)
+                if admitted:
+                    db.add_event(job, "reference_guideline_numbering_resolved", "structure", {"verified_questions": admitted})
 
             if applied_corrections:
                 applied_at = utc_now()
