@@ -12,7 +12,7 @@ on:
         description: "Ordinary processing or authorised saved-evidence revalidation"
         type: choice
         default: process
-        options: [process, revalidate_coordinates, revalidate_marking, revalidate_guideline, revalidate_admission, revalidate_reference]
+        options: [process, revalidate_coordinates, revalidate_marking, revalidate_guideline, revalidate_admission, revalidate_reference, revalidate_review_preparation]
 
 permissions:
   contents: read
@@ -148,6 +148,8 @@ jobs:
             python -m engine.src.memo_engine.marking_revalidation "$MEMO_JOB_ID" --replay-admission
           elif [ "$MEMO_OPERATION" = revalidate_reference ]; then
             python -m engine.src.memo_engine.marking_revalidation "$MEMO_JOB_ID" --replay-reference
+          elif [ "$MEMO_OPERATION" = revalidate_review_preparation ]; then
+            python -m engine.src.memo_engine.marking_revalidation "$MEMO_JOB_ID" --prepare-review
           else
             python -m engine.src.memo_engine.cli run-job "$MEMO_JOB_ID"
           fi

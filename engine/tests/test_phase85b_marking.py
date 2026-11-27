@@ -271,3 +271,27 @@ console.log(JSON.stringify([
     expected = "1M Calculate probability\n1A Show equality and conclude independence"
     assert included == expected + ". Withhold this mark if no conclusion is stated."
     assert unlinked == different == expected
+
+
+def test_review_preparation_preserves_working_and_only_removes_context_cards():
+    from engine.src.memo_engine.marking_revalidation import _verify_prepared_review
+
+    memo = {"source": {"sha256": "original"}, "questions": [{"marks": ["1M", "1A"]}],
+            "totals": {"computed": 2}, "status": "needs_review"}
+    math = {"conflict_count": 1}
+    decision = {"category": "marking_interpretation_review", "message": "Keep this",
+                "level": "amber", "affected_id": "3.2"}
+    old = [decision] + [
+        {"category": "visual_evidence_association_uncertain", "message": "Context tick",
+         "level": "amber", "affected_id": f"4.{i}"} for i in range(1, 4)
+    ]
+    assert _verify_prepared_review(memo, memo, math, math, old, [decision]) == {
+        "open_before": 4, "open_after": 1, "admitted_working_preserved": True,
+    }
+    changed = {**memo, "questions": [{"marks": ["1A", "1A"]}]}
+    with pytest.raises(ValueError, match="admitted marks"):
+        _verify_prepared_review(memo, changed, math, math, old, [decision])
+    with pytest.raises(ValueError, match="three redundant"):
+        _verify_prepared_review(memo, memo, math, math, old, [])
+    with pytest.raises(ValueError, match="three redundant"):
+        _verify_prepared_review(memo, memo, math, math, old, [{**decision, "message": "Changed"}])
