@@ -333,8 +333,14 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None, db: Any
             cached_visual = replay_visual
             db.upload_json(BUCKET, visual_path, replay_visual)
             db.upload_json(BUCKET, f"{job['user_id']}/{job_id}/internal/visual/evidence.checkpoint.json", replay_visual)
-            db.add_event(job, "marking_revalidation_visual_complete" if replay_visual.get("marking_revalidation") else "coordinate_revalidation_visual_complete", "visual_evidence",
-                         replay_visual.get("marking_revalidation") or replay_visual["coordinate_revalidation"])
+            if replay_visual.get("guideline_revalidation"):
+                db.add_event(job, "guideline_revalidation_visual_reused", "visual_evidence", {
+                    "reused_regions": sum(run.get("success") is True for run in replay_visual["runs"]),
+                    "new_visual_extraction_calls": 0,
+                })
+            else:
+                db.add_event(job, "marking_revalidation_visual_complete" if replay_visual.get("marking_revalidation") else "coordinate_revalidation_visual_complete", "visual_evidence",
+                             replay_visual.get("marking_revalidation") or replay_visual["coordinate_revalidation"])
         if visual_cache_is_complete(cached_visual, source["sha256"]):
             visual = cached_visual
             visual_artifacts: list[dict[str, Any]] = []
