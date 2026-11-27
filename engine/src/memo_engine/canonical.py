@@ -10,7 +10,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from .geometry_validation import geometry_consistency_issues
-from .math_notation import SUPPORTED_LATEX_COMMANDS, unsupported_latex_commands
+from .math_notation import SUPPORTED_LATEX_COMMANDS, normalize_visual_math, unsupported_latex_commands
 from .mathematical_consistency import check_canonical_mathematics
 from .metadata import MetadataValidationError, resolve_document_metadata
 from .structure import MAJOR_QUESTION_BOUNDARY_RE, find_question_ids, parse_mark_points
@@ -1166,7 +1166,15 @@ def _blocks_from_segments(
         drawings = segment.get("drawing_assets") or []
         refs = _source_ref(segment)
 
+        visual = segment.get("visual_evidence") or {}
         visual_latex = segment.get("canonical_latex")
+        if visual and not visual_latex:
+            # Saved visual readings can contain a whole inline equation even
+            # when the separate normalized-math field was omitted.
+            delimited = re.fullmatch(r"\$([^$]+)\$", text)
+            if delimited:
+                normalized, _ = normalize_visual_math(delimited[1])
+                visual_latex = normalized or delimited[1]
         if isinstance(visual_latex, str) and visual_latex.strip():
             try:
                 validate_latex_subset(visual_latex)
@@ -1178,7 +1186,6 @@ def _blocks_from_segments(
                     "message": exc.public_message,
                 })
                 continue
-            visual = segment.get("visual_evidence") or {}
             raw_text = _collapse(visual.get("raw_transcription") or text)
             score = float(visual.get("confidence") or 0.95)
             add_block({

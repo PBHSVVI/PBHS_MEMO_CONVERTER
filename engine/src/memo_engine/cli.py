@@ -505,6 +505,10 @@ def run_job(job_id: str, *, replay_visual: dict[str, Any] | None = None,
                     require_complete_admission_cache(cached_verification, verification)
                 db.upload_json(BUCKET, verification_path, verification)
                 db.add_event(job, "guideline_verification_complete", "structure", verification["summary"])
+        if visual.get("reference_revalidation"):
+            from .reference_replay import apply_reference_results, load_trial
+            reference = apply_reference_results(structure, load_trial(db, job, source_bytes))
+            db.add_event(job, "reference_guideline_replay_complete", "structure", reference)
         confirmed_corrections = db.get_confirmed_corrections(job_id)
         applied_corrections: list[dict[str, Any]] = []
         correction_application_issues: list[dict[str, Any]] = []

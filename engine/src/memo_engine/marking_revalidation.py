@@ -93,7 +93,8 @@ def refresh_readings(visual: dict, source: bytes, normalized: dict, interpreter:
     return result
 
 
-def preview_admission(job: dict, source: bytes, originals: dict[str, bytes]) -> dict:
+def preview_admission(job: dict, source: bytes, originals: dict[str, bytes], *,
+                      reference_results: list[dict] | None = None) -> dict:
     """Validate the full saved canonical replay before claiming the live job."""
     from .canonical import build_canonical_memo
     from .guideline_verification import verify_guideline, require_complete_admission_cache
@@ -119,6 +120,10 @@ def preview_admission(job: dict, source: bytes, originals: dict[str, bytes]) -> 
     verification = verify_guideline(structure, normalized, visual, load_crop=unavailable,
                                    verifier=None, cached=cached_verification)
     require_complete_admission_cache(cached_verification, verification)
+    reference = {}
+    if reference_results is not None:
+        from .reference_replay import apply_reference_results
+        reference = apply_reference_results(structure, reference_results)
     if build_semantic_plan(structure)[1]:
         raise ValueError("Admission preview would require fresh semantic interpretation")
     canonical, validation, _ = build_canonical_memo(
@@ -130,10 +135,12 @@ def preview_admission(job: dict, source: bytes, originals: dict[str, bytes]) -> 
     if canonical["totals"]["computed"] <= prior_total or conflicts > previous_conflicts:
         raise ValueError("Saved admission replay did not improve the canonical result safely")
     return {"computed_before": prior_total, "computed_after": canonical["totals"]["computed"],
-            "canonical_status": canonical["status"], "math_conflicts": conflicts, **verification["summary"]}
+            "canonical_status": canonical["status"], "math_conflicts": conflicts,
+            **verification["summary"], **({"reference": reference} if reference_results is not None else {})}
 
 
-def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admission: bool = False) -> int:
+def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admission: bool = False,
+                       reference: bool = False) -> int:
     from .cli import BUCKET, PHASE85_SOURCE_SHA256, run_job, utc_now
     from .ingestion import validate_source_path
     if job_id!=PILOT_JOB:raise ValueError("Only the authorised marking pilot is eligible")
@@ -148,24 +155,35 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
     if job["status"]!="needs_review" or job["stage"]!="phase5_canonicalized" or job.get("source_sha256")!=PHASE85_SOURCE_SHA256:
         raise ValueError("Pilot marking revalidation state differs")
     prefix=f"{job['user_id']}/{job_id}/internal"
-    revision = "phase85d" if admission else "phase85c" if guideline else "phase85b"
-    operation = "admission_revalidation" if admission else "guideline_revalidation" if guideline else "marking_revalidation"
-    version = "admission-revalidation-v1" if admission else "guideline-revalidation-v1" if guideline else VERSION
+    if reference:
+        revision, operation, version = "phase85e", "reference_revalidation", "reference-revalidation-v1"
+    elif admission:
+        revision, operation, version = "phase85d", "admission_revalidation", "admission-revalidation-v1"
+    elif guideline:
+        revision, operation, version = "phase85c", "guideline_revalidation", "guideline-revalidation-v1"
+    else:
+        revision, operation, version = "phase85b", "marking_revalidation", VERSION
     archive=f"{prefix}/revisions/{revision}-{run_id}-{attempt}"
     rows={table:db._request_json("GET",f"/rest/v1/{table}?job_id=eq.{job_id}&select=*") for table in ["corrections","exceptions","job_events"]}
     if rows["corrections"]:raise ValueError("Teacher corrections require a different lifecycle")
     names = [
         "ingestion.json","normalized.json","structure.json","semantic.json","canonical.json","validation.json",
         "visual/evidence.json","visual/evidence.checkpoint.json"]
-    if guideline or admission:
+    if guideline or admission or reference:
         names += ["marking_interpretation.json", "recognition_revalidation.json"]
-    if admission:
+    if admission or reference:
         names += ["guideline_verification.json"]
     originals={name:db.download_object(BUCKET,f"{prefix}/{name}") for name in names}
     visual=json.loads(originals["visual/evidence.json"])
     if not visual.get("coordinate_revalidation") or visual.get("job_id")!=job_id:
         raise ValueError("Accepted coordinate revalidation history is required")
-    if admission:
+    if reference:
+        if (job.get("attempt_count") != 8 or visual.get("reference_revalidation") or
+                visual.get("admission_revalidation", {}).get("version") != "admission-revalidation-v1"):
+            raise ValueError("An unrevised Phase 8.5D admission generation is required")
+        before_ledger = reconcile_ledger(db)
+        print("Reference credit before " + json.dumps(before_ledger, sort_keys=True))
+    elif admission:
         if (visual.get("guideline_revalidation", {}).get("version") != "guideline-revalidation-v1"
                 or not visual.get("marking_revalidation") or visual.get("admission_revalidation")):
             raise ValueError("An unrevised Phase 8.5C guideline generation is required")
@@ -182,7 +200,11 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
         raise ValueError("Marking revalidation already published")
     source=db.download_object(BUCKET,validate_source_path(job))
     if hashlib.sha256(source).hexdigest()!=PHASE85_SOURCE_SHA256 or len(source)!=1_007_519:raise ValueError("Immutable source differs")
-    if admission:
+    if reference:
+        from .reference_replay import TRIAL_RUN, load_trial
+        preview = preview_admission(job, source, originals, reference_results=load_trial(db, job, source))
+        print("Reference read-only preview " + json.dumps(preview, sort_keys=True))
+    elif admission:
         print("Admission read-only preview " + json.dumps(preview_admission(job, source, originals), sort_keys=True))
     for name,data in originals.items():db.upload_object(BUCKET,f"{archive}/{name}",data,content_type="application/json",upsert=False)
     db.upload_json(BUCKET,f"{archive}/audit.json",{"job":job,**rows,"sha256":{n:hashlib.sha256(d).hexdigest() for n,d in originals.items()}},upsert=False)
@@ -194,7 +216,10 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
         "archive_path":archive,"github_run_id":run_id,"actor":os.environ.get("GITHUB_ACTOR"),"version":version})
     try:
         if db._request_json("GET",f"/rest/v1/corrections?job_id=eq.{job_id}&select=id"):raise ValueError("Concurrent teacher correction")
-        if admission:
+        if reference:
+            rebuilt = {**visual, "reference_revalidation": {"version": version, "github_run_id": run_id,
+                                                           "trial_run_id": TRIAL_RUN}}
+        elif admission:
             rebuilt = {**visual, "admission_revalidation": {"version": version, "github_run_id": run_id}}
         elif guideline:
             rebuilt = {**visual, "guideline_revalidation": {"version": version, "github_run_id": run_id}}
@@ -206,7 +231,7 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
             rebuilt=refresh_readings(visual,source,json.loads(originals["normalized.json"]),interpreter,cached=cached,
                 checkpoint=lambda r:db.upload_json(BUCKET,checkpoint_path,r),
                 crop_store=lambda ref,data,mime:db.upload_object(BUCKET,f"{job['user_id']}/{job_id}/{ref}",data,content_type=mime))
-        outcome=run_job(job_id,replay_visual=rebuilt,db=db, **({"admission_replay": True} if admission else {}))
+        outcome=run_job(job_id,replay_visual=rebuilt,db=db, **({"admission_replay": True} if admission or reference else {}))
     except Exception as error:
         current=db.get_job(job_id)
         if current["status"]=="dispatched":
@@ -216,9 +241,9 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
     final=db.get_job(job_id)
     db.add_event(final,operation + "_complete",operation,{
         "archive_path":archive,"version":version,"status":final["status"],"stage":final["stage"]})
-    if admission:
+    if admission or reference:
         after_ledger = reconcile_ledger(db)
-        print("Admission credit after " + json.dumps(after_ledger, sort_keys=True))
+        print(("Reference" if reference else "Admission") + " credit after " + json.dumps(after_ledger, sort_keys=True))
         if after_ledger != before_ledger:
             raise ValueError("Credit ledger changed during zero-inference admission replay")
     elif guideline:
@@ -227,8 +252,10 @@ def revalidate_marking(job_id: str, db=None, *, guideline: bool = False, admissi
 
 
 if __name__=="__main__":
-    if len(sys.argv) not in {2, 3} or len(sys.argv) == 3 and sys.argv[2] not in {"--verify-guideline", "--replay-admission"}:
+    if len(sys.argv) not in {2, 3} or len(sys.argv) == 3 and sys.argv[2] not in {
+        "--verify-guideline", "--replay-admission", "--replay-reference",
+    }:
         raise SystemExit("Expected the authorised pilot job ID")
     option = sys.argv[2] if len(sys.argv) == 3 else None
     raise SystemExit(revalidate_marking(sys.argv[1], guideline=option == "--verify-guideline",
-                                       admission=option == "--replay-admission"))
+                                       admission=option == "--replay-admission", reference=option == "--replay-reference"))

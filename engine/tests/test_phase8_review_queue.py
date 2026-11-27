@@ -70,6 +70,17 @@ def test_mathematics_only_finding_groups_with_one_same_page_conflict():
     assert _evaluate([conflict, marking, independent])["actionable"] == ["deterministic", "independent"]
 
 
+def test_verified_working_waits_for_its_own_numbering_occurrence():
+    numbering = {"id": "parent", "category": "question_parent_heading_mismatch", "affected_id": "7.2",
+                 "suggestions": [{"source_question_id": "7.2", "heading_question_id": "12",
+                                  "source_page": 5, "source_block_index": 3, "character_offset": 40}]}
+    pending = {"id": "same_occurrence", "category": "marking_interpretation_review", "affected_id": "7.2",
+               "suggestions": [{"source_page": 5, "source_block_index": 3, "depends_on_source_numbering": True}]}
+    independent = {**pending, "id": "different_page",
+                   "suggestions": [{"source_page": 4, "source_block_index": 3, "depends_on_source_numbering": True}]}
+    assert _evaluate([numbering, pending, independent])["actionable"] == ["different_page", "parent"]
+
+
 def test_previous_next_and_skip_rotate_only_actionable_items():
     exceptions = [
         {"id": "parent", "category": "question_total_mismatch", "affected_id": "7"},

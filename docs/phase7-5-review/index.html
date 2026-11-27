@@ -471,6 +471,10 @@ function numberingHeading(item){
 }
 function isDependent(ex,list,staged=[]){
  const stagedTargets=stagedTargetSet(staged),stagedQuestions=stagedQuestionIds(staged),unresolved=(Array.isArray(list)?list:[]).filter(item=>!exceptionCoveredByTargets(item,stagedTargets));
+ if(ex.category==='marking_interpretation_review'&&ex.suggestions?.some(s=>s.depends_on_source_numbering)){
+   return unresolved.some(item=>item.affected_id===ex.affected_id&&numberingHeading(item)&&ex.suggestions.some(s=>
+    s.depends_on_source_numbering&&numberingHeading(item).page===s.source_page&&numberingHeading(item).block===s.source_block_index));
+ }
  if(['item_total_mismatch','mark_arithmetic_mismatch'].includes(ex.category)){
    return unresolved.some(o=>o.id!==ex.id&&o.category==='marking_interpretation_review'&&normalizedQuestionId(o.affected_id)===normalizedQuestionId(ex.affected_id));
  }
@@ -502,6 +506,7 @@ function groupRelatedReviewDecisions(ordered){
   for(const item of items)groupedRows.add(item.id);
   groups.set(primary.id,{...primary,decision_group:{key,kind,...context,findings:items.map(item=>({
    id:item.id,category:item.category,question:item.affected_id,message:item.message,
+   verified_working:(item.suggestions||[]).flatMap(s=>s.verified_working||[]),
   }))}});
  };
  for(const {context} of headingRows){
@@ -842,6 +847,15 @@ function renderExplanation(ex,step){
   heading.textContent='Supporting findings';
   for(const finding of group.findings){const row=document.createElement('li');row.textContent=finding.message;list.append(row)}
   details.append(heading,list);$('#explain').append(details);
+ }
+ if(group?.kind==='numbering'){
+  const verified=group.findings.flatMap(finding=>finding.verified_working||[]);
+  if(verified.length){
+   const heading=document.createElement('b'),working=document.createElement('pre');
+   heading.textContent='Verified working pending numbering';
+   working.textContent=verified.join('\n');
+   $('#explain').append(heading,working);
+  }
  }
  const context=reviewDependencyContext(ex,currentActive),host=$('#parentContext');
  if(!context.parents.length){host.classList.add('hide');host.innerHTML='';return}

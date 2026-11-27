@@ -268,6 +268,35 @@ def test_valid_visual_latex_reaches_canonical_without_literal_backslash_warning(
     assert blocks[0]["math"]["source_text"] == "x = 1/2"
 
 
+def test_wrapped_visual_math_without_a_normalized_field_keeps_the_equation():
+    response = _response()
+    response["evidence"][0]["transcription"] = r"$\sigma = 12,4$"
+    response["evidence"][0]["normalized_math"] = None
+    validated = validate_visual_response(response, {
+        "page": 1,
+        "asset_path": "internal/visual/regions/page-0001-q3_1.png",
+    })
+    question = fuse_visual_evidence(_structure(), validated)["questions"][0]
+    segments = _content_segments(question, [{"text": "printed fallback"}])
+    issues = []
+    blocks = _blocks_from_segments("3.1", "A", segments, issues)
+    assert issues == []
+    assert len(blocks) == 1
+    assert blocks[0]["math"]["canonical_latex"] == r"\sigma = 12,4"
+    assert blocks[0]["math"]["source_text"] == r"$\sigma = 12,4$"
+
+
+def test_wrapped_visual_math_with_an_unsupported_command_stays_in_review():
+    issues = []
+    blocks = _blocks_from_segments("3.1", "A", [{
+        "text": r"$\unknown{12}$",
+        "visual_evidence": {"confidence": .99},
+    }], issues)
+    assert not blocks
+    assert [issue["category"] for issue in issues] == ["visual_math_notation_ambiguous"]
+    assert r"\unknown" in issues[0]["message"]
+
+
 def test_null_visual_normalized_math_remains_reviewable_without_invention():
     response = _response(confidence=0.55)
     response["evidence"][0]["normalized_math"] = None

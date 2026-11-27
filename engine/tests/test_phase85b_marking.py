@@ -236,7 +236,9 @@ def test_distinct_marking_lifecycle_preserves_coordinate_history_and_archives_be
 def test_teacher_proposal_control_only_prepares_a_local_editable_draft():
     from pathlib import Path
     page=(Path(__file__).resolve().parents[2]/'docs/phase7-5-review/index.html').read_text(encoding='utf8')
-    section=page.split("ex.category==='marking_interpretation_review'",1)[1].split("}else if(!grouped&&ex.category==='ambiguous_mark_semantics'",1)[0]
+    section=page.split("if(!grouped&&ex.category==='marking_interpretation_review'){",1)[1].split(
+        "}else if(!grouped&&ex.category==='ambiguous_mark_semantics'",1
+    )[0]
     assert 'Prepare editable marking draft' in section
     assert 'not submitted or confirmed' in section
     assert 'textContent' in section
