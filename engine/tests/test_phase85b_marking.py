@@ -252,7 +252,7 @@ def test_editable_marking_draft_retains_a_linked_one_mark_conclusion_condition()
     if not node:
         pytest.skip("Node.js is required to exercise the review-page draft")
     page = (Path(__file__).resolve().parents[2] / "docs/phase7-5-review/index.html").read_text(encoding="utf-8")
-    helper = page[page.index("function markingDraftText("):page.index("async function renderChoices(")]
+    helper = page[page.index("function conclusionDeductionFits("):page.index("// BEGIN TEACHER DECISION MODEL")]
     program = helper + """
 const awards = [
   {count: 1, code: 'M', descriptor: 'Calculate probability', solution_evidence_ids: ['probability']},

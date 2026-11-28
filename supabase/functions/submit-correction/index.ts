@@ -3,7 +3,7 @@ import { withSupabase } from "npm:@supabase/server@^1";
 import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
 import { correctionPredecessorMatchesSource, validateSourceRestoration } from "../_shared/source-restoration.mjs";
 import { immutableSourceStateForQuestionOccurrence } from "../_shared/immutable-source-state.mjs";
-import { familyNumberingSelection, matchingNumberingMember, numberingConflict, numberingMembers } from "../_shared/numbering-review.mjs";
+import { familyNumberingSelection, matchingNumberingMember, numberingConflict, numberingMembers, questionMatchesNumberingSource } from "../_shared/numbering-review.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -788,13 +788,17 @@ export default {
         } else return Response.json({ error: "invalid_correction_revision_action" }, { status: 400 });
       } else if (familyNumbering && typeof familyNumbering === "object") {
         const structure = await loadStructure(ctx, job.user_id, jobId);
+        const { data: confirmed, error: correctionsError } = await ctx.supabaseAdmin.from("corrections")
+          .select("id,proposed_patch").eq("job_id", jobId).eq("confirmation_status", "confirmed");
+        if (correctionsError) return Response.json({ error: "prior_correction_lookup_failed" }, { status: 502 });
         const { data: active, error: activeError } = await ctx.supabaseAdmin.from("exceptions")
           .select("id,category,affected_id,suggestions").eq("job_id", jobId)
           .eq("category", "question_parent_heading_mismatch").eq("status", "open");
         if (activeError) return Response.json({ error: "numbering_review_lookup_failed" }, { status: 502 });
-        const selected = familyNumberingSelection(exception, active ?? [], structure?.questions ?? [],
-          (familyNumbering as Record<string, unknown>).members);
-        if (!selected) return Response.json({ error: "invalid_numbering_family" }, { status: 400 });
+        const selection = familyNumberingSelection(exception, active ?? [], structure?.questions ?? [],
+          (familyNumbering as Record<string, unknown>).members, confirmed ?? []);
+        const selected = selection.selections;
+        if (!selected) return Response.json({ error: selection.error, question_id: selection.question_id }, { status: 400 });
         const members = await Promise.all(selected.map(async ({ exceptionId, source, target, question }) => ({
           exception_id: exceptionId, affected_id: source.printed, target_id: target, source_block_index: source.block,
           source_locator: {
@@ -812,9 +816,6 @@ export default {
           affected_id: exception.affected_id, numbering_members: members,
           correction_scope: "numbering_only", reinterpretation_method: "structured_family_numbering",
         };
-        const { data: confirmed, error: correctionsError } = await ctx.supabaseAdmin.from("corrections")
-          .select("id,proposed_patch").eq("job_id", jobId).eq("confirmation_status", "confirmed");
-        if (correctionsError) return Response.json({ error: "prior_correction_lookup_failed" }, { status: 502 });
         const replaced = new Set((confirmed ?? []).map((row: any) => row.proposed_patch?.supersedes_correction_id));
         if ((confirmed ?? []).some((row: any) => !replaced.has(row.id) && numberingConflict(proposedPatch, row.proposed_patch))) {
           return Response.json({ error: "numbering_identifier_conflict" }, { status: 409 });
@@ -842,31 +843,43 @@ export default {
         const structure = await loadStructure(ctx, job.user_id, jobId);
         const locator = member.source_locator;
         const questions = Array.isArray(structure?.questions) ? structure.questions : [];
-        const rows = questions.filter((q: any) =>
-          (q.question_id === currentId || q.question_id === targetId) &&
-          String(q.source_question_id ?? q.question_id) === currentId && q.source_page === locator.source_page &&
-          q.source_block_index === sourceBlock && q.source_character_offset === locator.source_character_offset &&
-          String(q.source_heading_major) === String(locator.parent_heading));
+        const rows = questions.filter((q: any) => questionMatchesNumberingSource(q, {
+          printed: currentId, page: locator.source_page, block: sourceBlock,
+          offset: locator.source_character_offset, heading: String(locator.parent_heading),
+        }, targetId));
         if (rows.length !== 1 || (rows[0].source_line_hash ?? await normalizedSourceLineHash(rows[0].source_line)) !== locator.source_line_hash) {
           return Response.json({ error: "numbered_marking_source_missing" }, { status: 409 });
-        }
-        const parsed = parseMarkingScheme(String(value.marking_text ?? ""), ordinaryMathSemanticProfile(rows[0], {}));
-        if (!parsed || !Number.isInteger(rows[0].printed_marks) || parsed.total !== rows[0].printed_marks) {
-          return Response.json({ error: "invalid_numbered_marking_total" }, { status: 400 });
         }
         const previous = [...(confirmed ?? [])].reverse().find((row: any) =>
           row.proposed_patch?.numbering_correction_id === priorId && row.proposed_patch?.target_id === targetId &&
           !(confirmed ?? []).some((other: any) => other.proposed_patch?.supersedes_correction_id === row.id));
+        const marking = String(value.marking_text ?? "").trim();
+        const questionText = typeof value.question_text === "string" ? value.question_text.trim() : "";
+        const lines = Array.isArray(value.solution_lines)
+          ? value.solution_lines.filter(line => typeof line === "string").map(line => line.trim()).filter(Boolean) : [];
+        if ((!marking && !questionText && !lines.length) || questionText.length > 2000 ||
+            lines.length > 80 || lines.some(line => line.length > 1000)) {
+          return Response.json({ error: "invalid_content_correction" }, { status: 400 });
+        }
+        const parsed = marking ? parseMarkingScheme(marking, ordinaryMathSemanticProfile(rows[0], {})) : null;
+        if (marking && (!parsed || !Number.isInteger(rows[0].printed_marks) || parsed.total !== rows[0].printed_marks)) {
+          return Response.json({ error: "invalid_numbered_marking_total" }, { status: 400 });
+        }
+        const old = previous?.proposed_patch;
         proposedPatch = {
           schema_version: "1.0", operation: "replace_item_content", category: "teacher_initiated_item_edit",
           source_exception_category: exception.category, affected_id: targetId, target_id: targetId,
           source_block_index: sourceBlock, source_locator: locator, numbering_correction_id: priorId,
           reconciliation_scope: "teacher_initiated_item", reinterpretation_method: "structured_numbered_marking",
-          question_text: null, solution_lines: [], printed_marks: parsed.total, expected_total: parsed.total,
-          mark_points: parsed.points, mark_calculation_mode: parsed.mode,
+          question_text: questionText || old?.question_text || null,
+          solution_lines: lines.length ? lines : old?.solution_lines ?? [],
+          ...(parsed ? { printed_marks: parsed.total, expected_total: parsed.total,
+            mark_points: parsed.points, mark_calculation_mode: parsed.mode }
+            : old?.mark_points?.length ? { printed_marks: old.printed_marks, expected_total: old.expected_total,
+              mark_points: old.mark_points, mark_calculation_mode: old.mark_calculation_mode } : {}),
           ...(previous ? { supersedes_correction_id: previous.id, supersession_reason: "teacher_amended_previous_change" } : {}),
         };
-        displayText = `Use the supplied ${parsed.total}-mark scheme for Question ${targetId}. The saved numbering change is kept.`;
+        displayText = `Update ${parsed ? `the ${parsed.total}-mark scheme${questionText || lines.length ? " and memo content" : ""}` : "the memo content"} for Question ${targetId}. The saved numbering change is kept.`;
         exceptionStatus = "awaiting_confirmation";
       } else if (numbering && typeof numbering === "object") {
         const value = numbering as Record<string, unknown>;

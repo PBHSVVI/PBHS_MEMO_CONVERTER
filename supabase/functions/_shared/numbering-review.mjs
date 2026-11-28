@@ -16,31 +16,71 @@ export function numberingContext(exception) {
     page: source.source_page, block: source.source_block_index, offset: source.character_offset };
 }
 
-export function familyNumberingSelection(anchor, exceptions, questions, requested) {
+export function questionMatchesNumberingSource(question, source, target = source.printed) {
+  return question && (question.question_id === source.printed || question.question_id === target)
+    && (question.source_question_id ?? question.question_id) === source.printed
+    && question.source_page === source.page && question.source_block_index === source.block
+    && question.source_character_offset === source.offset && String(question.source_heading_major) === source.heading;
+}
+
+export function familyNumberingSelection(anchor, exceptions, questions, requested, confirmed = []) {
   const root = numberingContext(anchor);
-  if (!root || !Array.isArray(requested) || !requested.length || requested.length > 30) return null;
+  const fail = (error, question_id) => ({ error, question_id });
+  if (!root || !Array.isArray(requested) || !requested.length || requested.length > 30) {
+    return fail("invalid_numbering_family");
+  }
+  const inFamily = (s) => s && s.heading === root.heading && s.page === root.page && s.block === root.block
+    && String(s.printed).split(".")[0] === root.printed.split(".")[0];
+  const replaced = new Set(confirmed.map(row => row.proposed_patch?.supersedes_correction_id));
+  const saved = confirmed.filter(row => !replaced.has(row.id)).flatMap(row =>
+    numberingMembers(row.proposed_patch).flatMap(member => {
+      const locator = member.source_locator;
+      const source = { printed: member.affected_id, page: locator?.source_page, block: member.source_block_index,
+        offset: locator?.source_character_offset, heading: String(locator?.parent_heading ?? "") };
+      return inFamily(source) ? [{ source, target: member.target_id, locator }] : [];
+    }));
+  const sameSource = (a, b) => a.printed === b.printed && a.offset === b.offset;
   const expected = exceptions.flatMap(row => {
     const s = numberingContext(row);
-    return s && s.heading === root.heading && s.page === root.page && s.block === root.block &&
-      s.printed.split(".")[0] === root.printed.split(".")[0] ? [{ row, source: s }] : [];
-  });
-  if (expected.length !== requested.length || !expected.some(item => item.row.id === anchor.id)) return null;
+    return inFamily(s) && !saved.some(item => sameSource(item.source, s)) ? [{ row, source: s }] : [];
+  }).sort((a, b) => a.source.offset - b.source.offset);
+  if (expected.length !== requested.length || !expected.some(item => item.row.id === anchor.id)) {
+    return fail("numbering_family_incomplete");
+  }
   const selections = [];
   for (const {row, source} of expected) {
     const mapped = requested.filter(item => item?.exception_id === row.id);
     const target = String(mapped[0]?.target_id ?? "");
-    const matches = questions.filter(q => q?.question_id === source.printed && q.source_page === source.page &&
-      q.source_block_index === source.block && q.source_character_offset === source.offset &&
-      String(q.source_heading_major) === source.heading);
-    if (mapped.length !== 1 || matches.length !== 1 || !QUESTION.test(target) ||
-        target.split(".")[0] !== source.heading || target.split(".").length !== source.printed.split(".").length ||
-        questions.some(q => q?.question_id === target) || selections.some(item => item.target === target)) return null;
+    if (mapped.length !== 1) return fail("numbering_family_incomplete");
+    const matches = questions.filter(q => questionMatchesNumberingSource(q, source));
+    if (matches.length !== 1) return fail("numbering_family_source_changed", source.printed);
     selections.push({ exceptionId: row.id, source, target, question: matches[0] });
   }
-  // If the parent is part of this change, its children must stay below it.
-  if (selections.some(child => selections.some(parent =>
-    child.source.printed.startsWith(parent.source.printed + ".") && !child.target.startsWith(parent.target + ".")))) return null;
-  return selections;
+  for (const item of saved) {
+    const matches = questions.filter(q => questionMatchesNumberingSource(q, item.source, item.target));
+    if (matches.length !== 1 || (matches[0].source_line_hash && matches[0].source_line_hash !== item.locator.source_line_hash)) {
+      return fail("numbering_family_source_changed", item.source.printed);
+    }
+    item.question = matches[0];
+  }
+  const family = [...selections, ...saved];
+  for (const item of family) {
+    const { target, source } = item;
+    if (!QUESTION.test(target ?? "") || target.split(".")[0] !== root.heading ||
+        target.split(".").length !== source.printed.split(".").length) {
+      return fail("numbering_family_invalid_target", source.printed);
+    }
+    if (family.some(other => other !== item && (other.target === target || sameSource(other.source, source))) ||
+        questions.some(q => q !== item.question && q.question_id === target)) {
+      return fail("numbering_identifier_conflict", target);
+    }
+    const printedParent = source.printed.split(".").slice(0, -1).join(".");
+    const parent = family.find(other => other.source.printed === printedParent);
+    if (parent && !target.startsWith(parent.target + ".")) {
+      return fail("numbering_family_invalid_parent", target);
+    }
+  }
+  return { selections };
 }
 
 export function matchingNumberingMember(patch, currentId, targetId, sourceBlock) {

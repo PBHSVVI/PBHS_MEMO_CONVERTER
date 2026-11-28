@@ -19,19 +19,35 @@ const remaining = [
   { exception_id: child.id, target_id: "6.2.1" },
 ];
 const saved = { operation: "rename_question_identifier", affected_id: "4.1", target_id: "6.1",
-  source_block_index: 3, source_locator: { source_page: 5 } };
+  source_block_index: 3, source_locator: { source_page: 5, parent_heading: "6", source_character_offset: 70 } };
 
 test("the complete remaining family resolves by occurrence and leaves a prior rename alone", () => {
-  const selections = familyNumberingSelection(parent, [parent, child], questions, remaining);
+  const { selections } = familyNumberingSelection(parent, [parent, child], questions, remaining);
   assert.deepEqual(selections.map(row => [row.source.printed, row.question.source_page, row.target]),
     [["4.2", 5, "6.2"], ["4.2.1", 5, "6.2.1"]]);
   const patch = { operation: "rename_question_family", numbering_members:
     selections.map(item => ({ affected_id: item.source.printed, target_id: item.target, source_block_index: item.source.block })) };
   assert.equal(numberingConflict(patch, saved), false);
   assert.equal(numberingConflict(patch, { ...saved, target_id: "6.2" }), true);
-  assert.equal(familyNumberingSelection(parent, [parent, child], questions, remaining.slice(0, 1)), null);
+  assert.equal(familyNumberingSelection(parent, [parent, child], questions, remaining.slice(0, 1)).error, "numbering_family_incomplete");
   assert.equal(familyNumberingSelection(parent, [parent, child], questions,
-    [remaining[0], { ...remaining[1], target_id: "6.7.1" }]), null);
+    [remaining[0], { ...remaining[1], target_id: "6.7.1" }]).error, "numbering_family_invalid_parent");
+});
+
+test("saved or applied parent is validated even when its exception is still open", () => {
+  const savedParent = { ...saved, affected_id: "4.2", target_id: "6.7",
+    source_locator: { ...saved.source_locator, source_character_offset: 100 } };
+  const requested = [{ ...remaining[1], target_id: "6.7.1" }];
+  for (const applied of [false, true]) {
+    const rows = questions.map(q => applied && q.question_id === "4.2" && q.source_page === 5
+      ? { ...q, source_question_id: q.question_id, question_id: "6.7" } : q);
+    const confirmed = [{ id: "saved", proposed_patch: savedParent, applied_at: applied ? "2026-11-28" : null }];
+    assert.equal(familyNumberingSelection(child, [parent, child], rows, requested, confirmed).selections.length, 1);
+    assert.equal(familyNumberingSelection(child, [parent, child], rows, remaining.slice(1), confirmed).error,
+      "numbering_family_invalid_parent");
+    assert.equal(familyNumberingSelection(child, [parent, child], [...rows, { question_id: "6.7.1" }], requested, confirmed).error,
+      "numbering_identifier_conflict");
+  }
 });
 
 test("marking follows the saved rename only when the source and destination match exactly", () => {

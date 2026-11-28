@@ -52,7 +52,7 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
 .decisionTable{width:100%;border-collapse:collapse;text-align:left;margin:10px 0 14px}.decisionTable th,.decisionTable td{padding:8px;border-bottom:1px solid var(--line)}.decisionTable th{font-size:.9rem;color:var(--pbhs-muted)}.decisionTable input{max-width:7rem}
 .decisionMarks{padding-left:1.2rem;margin:.35rem 0 1rem}.decisionMarks li{margin:.38rem 0}.decisionLead{line-height:1.5;color:var(--pbhs-muted)}
 .decisionActions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.decisionActions button{margin:0}
-.decisionStatus:empty{display:none}.decisionStatus{margin-top:14px}.review-open #authPanel{display:none}
+.decisionStatus:empty,.actionFeedback:empty{display:none}.decisionStatus{margin-top:14px}.actionFeedback{flex-basis:100%;margin:8px 0;overflow-wrap:anywhere}.review-open #authPanel{display:none}
 #choices:not(.hide){scroll-margin:12px}.reviewAction:not(.show-legacy-tools) #choices>.reviewOrderLabel,.reviewAction:not(.show-legacy-tools) #choices>.toolLabel,.reviewAction:not(.show-legacy-tools) #correctionTool,.reviewAction:not(.show-legacy-tools) #suggestionBlock{display:none}
 .reviewAction:not(.show-legacy-tools) #choices.show-suggestions #suggestionBlock{display:block}.feedback-inline{padding:7px 0;color:var(--red);font-weight:700}.feedback-inline:empty{display:none}
 @media(max-width:900px){.reviewGrid{grid-template-columns:minmax(0,1fr);gap:12px}.reviewEvidence,.reviewAction{order:initial}#focusViewport{max-height:395px}}
@@ -237,7 +237,7 @@ function requestedReviewJob(search){return validJobId(new URLSearchParams(search
 // END JOB SELECTION MODEL
 let jobId=requestedReviewJob(location.search);
 $('#job').value=jobId;
-let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],currentStaged=[],currentConfirmed=[],reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]},queueLocked=false,sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,visualEvidenceCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='',monitorPromise=null,processingStartedAt=null,processingTimer=null,processingPollWake=null,failedCorrection=null,manualEditTarget='';
+let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],currentStaged=[],currentConfirmed=[],reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]},queueLocked=false,sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,visualEvidenceCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='',monitorPromise=null,processingStartedAt=null,processingTimer=null,processingPollWake=null,failedCorrection=null,manualEditTarget='',manualEditQuestion=null;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
 function status(m,k=''){
@@ -248,7 +248,7 @@ function status(m,k=''){
 }
 function selectJob(){
  const selected=validJobId($('#job').value);if(!selected)throw new Error('Enter a valid review Job ID. The page no longer falls back to the completed acceptance job.');
- if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];currentStaged=[];currentConfirmed=[];reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]};queueLocked=false;sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;visualEvidenceCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey='';manualEditTarget=''}
+ if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];currentStaged=[];currentConfirmed=[];reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]};queueLocked=false;sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;visualEvidenceCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey='';manualEditTarget='';manualEditQuestion=null}
  const url=new URL(location.href);url.searchParams.set('job_id',jobId);history.replaceState(null,'',url);
  return jobId;
 }
@@ -265,7 +265,11 @@ async function invoke(name,body){
   invalid_typed_text:'The correction is empty or too long. Keep the complete correction under 4,000 characters.',
   invalid_content_correction:'The content correction is incomplete or targets a different question. Check the question number, replacement text, and marking lines.',
   invalid_content_marking_total:'The marking scheme must add to the printed question total.',
-  invalid_numbering_family:'Check that each new number is valid, unique and under the correct question heading.',
+  invalid_numbering_family:'The numbering list could not be checked. Refresh the review and try again.',
+  numbering_family_incomplete:'The list of remaining questions has changed. Refresh the review before checking the numbers again.',
+  numbering_family_source_changed:`The printed occurrence of Question ${detail?.question_id||''} could not be matched. Refresh and check the source page.`,
+  numbering_family_invalid_target:`Enter a number under the displayed heading for Question ${detail?.question_id||''}, keeping the same number of parts.`,
+  numbering_family_invalid_parent:`Question ${detail?.question_id||''} must start with its corrected parent’s number.`,
   numbering_family_changed:'The saved questions have changed. Refresh the review and check the remaining numbers.',
   numbered_marking_source_missing:'The saved numbering could not be matched to this question. Refresh before reviewing the marks.',
   invalid_numbered_marking_total:'The marking scheme must add to the printed question total.',
@@ -454,6 +458,10 @@ function reviewNumberingMembers(patch){
 function numberingOccurrenceKey(id,page){
  return normalizedQuestionId(id)&&Number.isInteger(page)&&page>0?`numbered:${id}@${page}`:'';
 }
+function numberingSourceKey(id,page,block,offset){
+ const pageKey=numberingOccurrenceKey(id,page);
+ return pageKey&&Number.isInteger(block)&&Number.isInteger(offset)?`${pageKey}:${block}:${offset}`:'';
+}
 function exceptionTargetKeys(ex){
  const suggestions=Array.isArray(ex?.suggestions)?ex.suggestions:[],semantic=suggestions.find(item=>item&&typeof item==='object'&&item.candidate_id),candidate=ex?.category==='ambiguous_mark_semantics'?semanticCandidateTarget(semantic?.candidate_id):'';
  if(candidate)return [candidate];
@@ -464,6 +472,8 @@ function exceptionTargetKeys(ex){
 }
 function exceptionTargetKey(ex){return exceptionTargetKeys(ex)[0]||''}
 function exceptionCoveredByTargets(ex,targets){
+ const heading=numberingHeading(ex);
+ if(heading)return targets.has(numberingSourceKey(heading.printed,heading.page,heading.block,heading.offset));
  const keys=exceptionTargetKeys(ex);
  if(keys.length>0&&keys.every(key=>targets.has(key)))return true;
  const hints=ex?.suggestions||[],category=ex?.category;
@@ -486,6 +496,7 @@ function correctionTargetKeys(correction){
  const members=reviewNumberingMembers(patch);
  if(members.length&&members.every(member=>member.source_locator?.source_page)){
   return members.flatMap(member=>[numberingOccurrenceKey(member.affected_id,member.source_locator.source_page),
+   numberingSourceKey(member.affected_id,member.source_locator.source_page,member.source_block_index,member.source_locator.source_character_offset),
    `renumbering-heading:${String(member.target_id).split('.')[0]}`]).filter(Boolean);
  }
  if(operation==='rename_question_identifier')return [patch?.affected_id||patch?.source_id].map(normalizedQuestionId).filter(Boolean).map(id=>`question:${id}`);
@@ -564,7 +575,7 @@ function groupRelatedReviewDecisions(ordered){
  const add=(key,kind,primary,items,context={})=>{
   for(const item of items)groupedRows.add(item.id);
   groups.set(primary.id,{...primary,decision_group:{key,kind,...context,findings:items.map(item=>({
-   id:item.id,category:item.category,question:item.affected_id,message:item.message,
+   id:item.id,category:item.category,question:item.affected_id,message:item.message,source_offset:numberingHeading(item)?.offset,
    verified_working:(item.suggestions||[]).flatMap(s=>s.verified_working||[]),
   }))}});
  };
@@ -694,11 +705,70 @@ async function ensureStructure(){if(structureCache)return structureCache;structu
 async function ensureVisualEvidence(){if(visualEvidenceCache)return visualEvidenceCache;visualEvidenceCache=await jsonFile(`${user.id}/${jobId}/internal/visual/evidence.json`);return visualEvidenceCache}
 function questionOccurrenceLabel(question,index,total){const page=question?.source_page??question?.page_number??question?.page,heading=question?.source_heading_major??majorQuestionId(question?.question_id),where=page!=null?`page ${page}`:'source location unavailable';return `${question?.question_id||'Question'} — Question ${heading||'?'} — ${where}`}
 function stagedPatchForQuestion(question){return effectiveCorrectionForQuestion(question,currentConfirmed,structureCache?.questions||[])}
-async function renderManualQuestionNavigator(){const structure=await ensureStructure(),questions=Array.isArray(structure?.questions)?structure.questions:[],select=$('#manualQuestionSelect');select.innerHTML=questions.map((question,index)=>{const peers=questions.filter(item=>String(item?.question_id)===String(question?.question_id)),occurrence=peers.findIndex(item=>item===question);return `<option value="${esc(index)}">${esc(questionOccurrenceLabel(question,occurrence,peers.length))}</option>`}).join('');$('#manualQuestionEditor').classList.toggle('hide',!currentException||!questions.length)}
-function selectedManualQuestion(){const questions=Array.isArray(structureCache?.questions)?structureCache.questions:[],index=Number($('#manualQuestionSelect').value);return Number.isInteger(index)?questions[index]||null:null}
-async function openManualMarks(){const question=selectedManualQuestion();if(!question)return;manualEditTarget=String(question.question_id);const correction=stagedPatchForQuestion(question),patch=correction?.proposed_patch||{},points=Array.isArray(patch.mark_points)?patch.mark_points:(question.mark_points||[]),total=patch.expected_total??patch.printed_marks??question.printed_marks??question.computed_shorthand_marks??'',immutableSource=immutableSourceStateForQuestionOccurrence(await ensureNormalized(),question.question_id,question.source_block_index),canRestore=!!correction&&!!immutableSource&&!sourceQuestionHasDirectMarks(immutableSource),host=$('#manualItemEditor');host.dataset.questionId=String(question.question_id);host.dataset.sourceBlockIndex=String(question.source_block_index??'');host.dataset.supersedesCorrectionId=correction?.id||'';host.dataset.teacherInitiated='true';host.dataset.sourceRestorable=canRestore?'true':'false';host.innerHTML=`<b>${correction?'Edit / overwrite correction':'Edit marks'} — Question ${esc(question.question_id)}</b><label>Question total</label><input class="childTotal" type="number" min="${canRestore?0:1}" max="999" value="${esc(total)}"><input class="childCorrectId" type="hidden" value="${esc(question.question_id)}"><label>Marking scheme</label><textarea class="childMarking">${esc(markingSchemeText(points))}</textarea>${canRestore?'<p class="muted">Original memo state: structural question with no direct mark allocation. Restoring it leaves its child questions unchanged and keeps the earlier correction in audit history.</p><button class="secondary restoreSource" type="button">Restore original memo state</button>':''}<div class="saveState unsaved hide">Not saved</div><button class="primary childSubmit">${correction?'Review amended correction':'Review this correction'}</button>`;host.classList.remove('hide');host.querySelectorAll('input,textarea').forEach(control=>control.addEventListener('input',()=>markEditorNotSaved(host)));host.querySelector('.restoreSource')?.addEventListener('click',()=>submitSourceRestoration(host));host.querySelector('.childSubmit').onclick=()=>submitChildRepair(host).catch(error=>{markEditorNotSaved(host);status('Not saved — '+error.message,'error')})}
-function openManualNumbering(){const question=selectedManualQuestion();if(!question)return;manualEditTarget=String(question.question_id);setCorrectionTool('numbering');$('#numberingCurrent').value=question.question_id;$('#numberingCorrect').value='';refreshNumberingOccurrences(question.source_block_index);$('#numberingCorrectionBlock').scrollIntoView({behavior:'smooth',block:'center'})}
-function openManualContent(){const question=selectedManualQuestion();if(!question)return;manualEditTarget=String(question.question_id);setCorrectionTool('content');$('#contentTarget').value=question.question_id;$('#contentCorrectionBlock').scrollIntoView({behavior:'smooth',block:'center'})}
+async function renderManualQuestionNavigator(){
+ const structure=await ensureStructure(),questions=structure?.questions||[],select=$('#manualQuestionSelect');
+ select.innerHTML=questions.map((question,index)=>{
+  const effective=numberingForQuestion(question,currentConfirmed)?.to||question.question_id;
+  return `<option value="${index}">${esc(questionOccurrenceLabel({...question,question_id:effective}))}</option>`;
+ }).join('');
+ const local=questions.findIndex(q=>q.question_id===currentException?.affected_id&&q.source_block_index===currentStep?.sourceBlockIndex);
+ if(local>=0)select.value=String(local);
+ $('#manualQuestionEditor').classList.toggle('hide',!currentException||!questions.length);
+}
+function selectedManualQuestion(){
+ const value=$('#manualQuestionSelect').value,questions=structureCache?.questions||[];
+ return value===''?null:questions[Number(value)]||null;
+}
+function manualMarkDraftKey(question){
+ return draftKey(`manual-marks-${question.source_question_id||question.question_id}-${question.source_page??''}-${question.source_block_index??''}-${question.source_character_offset??''}`);
+}
+async function openManualMarks(){
+ const question=selectedManualQuestion();
+ if(!question)throw Error('Choose the question and source page you want to edit.');
+ manualEditTarget=String(question.question_id);
+ const linked=numberingForQuestion(question,currentConfirmed),effective=linked?.to||question.question_id;
+ const correction=linked?effectiveConfirmedCorrections(currentConfirmed).find(row=>
+  row.proposed_patch?.numbering_correction_id===linked.correction.id&&row.proposed_patch?.target_id===effective)
+  :stagedPatchForQuestion(question);
+ const patch=correction?.proposed_patch||{},points=patch.mark_points||question.mark_points||[];
+ const guide=currentActive.filter(ex=>ex.category==='marking_interpretation_review'&&ex.affected_id===question.question_id)
+  .flatMap(ex=>ex.suggestions||[]).find(h=>h.source_page===question.source_page&&h.source_block_index===question.source_block_index);
+ const total=patch.expected_total??patch.printed_marks??question.printed_marks??question.computed_shorthand_marks??'';
+ const immutableSource=!linked&&correction?immutableSourceStateForQuestionOccurrence(await ensureNormalized(),question.question_id,question.source_block_index):null;
+ const canRestore=!!immutableSource&&!sourceQuestionHasDirectMarks(immutableSource),host=$('#manualItemEditor');
+ const key=manualMarkDraftKey(question);let draft=null;
+ try{draft=JSON.parse(localStorage.getItem(key)||'null')}catch{}
+ host.dataset.questionId=String(question.question_id);host.dataset.sourceBlockIndex=String(question.source_block_index??'');
+ host.dataset.supersedesCorrectionId=correction?.id||'';host.dataset.teacherInitiated='true';host.dataset.sourceRestorable=String(canRestore);
+ host.innerHTML=`<b>Edit marks — Question ${esc(effective)}</b>${linked?'<p>The saved question number stays in place.</p>':''}
+ <label for="manualMarkTotal">Question total</label><input id="manualMarkTotal" class="childTotal" type="number" min="${canRestore?0:1}" max="999" ${linked?'readonly':''} value="${esc(draft?.total??total)}">
+ <input class="childCorrectId" type="hidden" value="${esc(effective)}">
+ <label for="manualMarkScheme">Marking scheme</label><textarea id="manualMarkScheme" class="childMarking">${esc(draft?.marking??(points.length?markingSchemeText(points):proposedMarking(guide)))}</textarea>
+ ${canRestore?'<p class="muted">Restore the source question without a direct mark allocation. Its children and the earlier correction stay in the history.</p><button class="secondary restoreSource" type="button">Restore original memo state</button>':''}
+ <div class="saveState unsaved${draft?'':' hide'}">Not saved</div><button class="primary childSubmit">Review this correction</button>`;
+ host.classList.remove('hide');
+ host.querySelectorAll('input,textarea').forEach(control=>control.addEventListener('input',()=>{
+  localStorage.setItem(key,JSON.stringify({total:host.querySelector('.childTotal').value,marking:host.querySelector('.childMarking').value}));
+  markEditorNotSaved(host);actionFeedback(host.querySelector('.childSubmit'),'Not saved','warn');
+ }));
+ host.querySelector('.restoreSource')?.addEventListener('click',()=>submitSourceRestoration(host));
+ host.querySelector('.childSubmit').onclick=teacherAction(button=>submitChildRepair(host,null,button,question));
+ host.querySelector('.childMarking').focus();
+}
+function openManualNumbering(){
+ const question=selectedManualQuestion();if(!question)throw Error('Choose the printed question first.');
+ manualEditTarget=String(question.question_id);
+ openTeacherEditor('numbering');
+ $('#numberingCurrent').value=question.question_id;$('#numberingCorrect').value='';
+ refreshNumberingOccurrences(question.source_block_index);$('#numberingCorrect').focus();
+}
+function openManualContent(question=selectedManualQuestion()){
+ if(!question)throw Error('Choose the question and source page you want to edit.');
+ manualEditTarget=String(question.question_id);manualEditQuestion=question;
+ const effective=numberingForQuestion(question,currentConfirmed)?.to||question.question_id;
+ openTeacherEditor('content');$('#contentTarget').value=effective;$('#contentTarget').readOnly=true;
+ $('#contentQuestion').focus();
+}
 function sourceBlockFor(ex,structure){
  const id=String(ex?.affected_id||'').split(',')[0],questions=Array.isArray(structure?.questions)?structure.questions:[],hints=ex?.suggestions||[];
  const suggestion=hints.find(item=>Number.isInteger(item?.source_block_index));
@@ -753,7 +823,7 @@ async function renderQuestionWorkspace(ex){
  const sourceRestorable=row=>!!row.staged&&!!row.immutable_source&&!sourceQuestionHasDirectMarks(row.immutable_source),editor=row=>{const canRestore=sourceRestorable(row);return row.inserted||ex.category==='visual_mark_change_review'||(!parentContext&&!boundedItemEditorAllowed(ex,row.question_id))?'':`<div class="childRepairEditor hide" data-question-id="${esc(row.question_id)}" data-source-block-index="${esc(row.source_block_index??'')}" data-supersedes-correction-id="${esc(row.staged_correction_id||'')}" data-source-restorable="${canRestore?'true':'false'}"><b>${row.staged?'Edit / overwrite correction':'Edit'} — Question ${esc(row.question_id)}</b><p class="muted">${row.staged?'The current effective correction is loaded below. Confirming an amendment keeps the earlier version in audit history.':'Change only what is wrong. The complete correction will be shown back before confirmation.'}</p><div class="childRepairFields"><div><label>Current identifier</label><input value="${esc(row.question_id)}" readonly></div><div><label>Correct identifier</label><input class="childCorrectId" value="${esc(row.projected_id)}"></div><div><label>Question total</label><input class="childTotal" type="number" min="${canRestore?0:1}" max="999" step="1" inputmode="numeric" value="${esc(row.staged?row.projected:(row.printed??(row.computed>0?row.computed:'')))}"></div></div><label>Marking scheme</label><textarea class="childMarking" placeholder="1A x-coordinate of M&#10;1A y-coordinate of M">${esc(row.marking_text)}</textarea>${canRestore?'<p class="muted">Original memo state: structural question with no direct mark allocation. Restoring it leaves its child questions unchanged and keeps the earlier correction in audit history.</p><button class="secondary restoreSource" type="button">Restore original memo state</button>':''}<div class="saveState unsaved hide">Not saved</div><button class="primary childSubmit">${row.staged?'Review amended correction':'Review this correction'}</button></div>`};
  const childNumbers=model.rows.map(row=>Number(String(row.projected_id).split('.')[1])).filter(Number.isInteger),suggestedId=childNumbers.length&&Math.min(...childNumbers)>1?`${major}.1`:'';
  host.classList.remove('hide');host.innerHTML=`<div class="reviewEyebrow">Question workspace</div><h3 style="margin:3px 0">Question ${esc(major)}</h3><div class="parentTotals">${model.source_total==null?'':`<div class="parentTotal"><span>Memo subtotal</span><strong>${esc(model.source_total)}</strong></div>`}<div class="parentTotal"><span>Original accounted total</span><strong>${esc(model.computed_total)}</strong></div><div class="parentTotal"><span>Current effective total</span><strong>${esc(model.projected_total)}</strong></div>${difference===''?'':`<div class="parentTotal"><span>Difference</span><strong>${esc(difference)}</strong></div>`}</div><div>${model.rows.map(row=>`<div class="ledgerRow${parentContext&&sameQuestionOrDescendant(row.projected_id,ex.affected_id)?' familyContextRow':''}" data-question-id="${esc(row.question_id)}"><b>Question ${esc(row.question_id)}${row.projected_id!==row.question_id?` → ${esc(row.projected_id)}`:''}</b><div class="contentPreview"><b>Source</b><div>Memo total: ${row.printed==null?'not detected':esc(row.printed)} • Original counted marks: ${esc(row.computed)}</div>${row.source_marking_text?`<pre>${esc(row.source_marking_text)}</pre>`:''}</div>${row.staged?`<div class="contentPreview"><b>Current effective correction</b><div>Total: ${esc(row.projected)}</div>${row.staged_marking_text?`<pre>${esc(row.staged_marking_text)}</pre>`:''}</div>`:''}<div class="ledgerStatus${row.suspicion_reasons.length?' suspicious':''}">${row.inserted||row.staged?(row.correction_applied?'Applied correction':'Saved ✓ — not applied yet'):row.issues.length?row.issues.map(humanCategory).join(', '):row.suspicion_reasons.length?row.suspicion_reasons.join(' • '):'Not changed'}</div>${row.exception_id?`<button class="secondary ledgerReview" data-exception-id="${esc(row.exception_id)}">Review this item</button>`:''}${row.inserted||ex.category==='visual_mark_change_review'||(!parentContext&&!boundedItemEditorAllowed(ex,row.question_id))?'':`<button class="secondary ledgerCorrect" data-question-id="${esc(row.question_id)}">${row.staged?'Edit correction':'Edit'}</button>`}${editor(row)}</div>`).join('')}</div>${model.missing_opportunity?`<div class="ledgerRow missingOpportunity"><div><div class="ledgerStatus suspicious">I may have missed a subquestion</div>${suggestedId?`<div class="muted">Suggested identifier: ${esc(suggestedId)} — please confirm.</div>`:''}</div><div><button class="secondary" id="addMissingChild">Add a missing subquestion</button><button class="secondary looksCorrect">Looks correct</button></div><div id="missingChildEditor" class="childRepairEditor hide"><b>Add a missing child to Question ${esc(major)}</b><p class="muted">Nothing is inserted automatically. Enter the intended identifier, total and complete marking scheme for confirmation.</p><div class="childRepairFields"><div><label>Question identifier</label><input class="missingChildId" value="${esc(suggestedId)}" placeholder="e.g. ${esc(major)}.1"></div><div><label>Question total</label><input class="missingChildTotal" type="number" min="1" max="999" step="1" inputmode="numeric" value="${difference>0?esc(difference):''}"></div></div><label>Marking scheme</label><textarea class="missingChildMarking" placeholder="1A maximum value 2&#10;1A shape of f"></textarea><div class="saveState unsaved hide">Not saved</div><button class="primary missingChildSubmit">Review this addition</button></div></div>`:''}${parentContext?`<div class="workspaceActions"><button class="primary completeParent">Done with Question ${esc(major)} / Recheck Question ${esc(major)}</button><div class="muted">Finishing this parent workspace is separate from saving any individual child.</div></div>`:''}<p class="muted">Saved changes keep their own audit history. Totals use only the newest effective confirmed version.</p>`;
- host.querySelectorAll('.ledgerReview').forEach(button=>button.onclick=()=>navigateReview(button.dataset.exceptionId));host.querySelectorAll('.ledgerCorrect').forEach(button=>button.onclick=()=>button.closest('.ledgerRow')?.querySelector('.childRepairEditor')?.classList.toggle('hide'));host.querySelectorAll('.childRepairEditor input,.childRepairEditor textarea').forEach(control=>control.addEventListener('input',()=>markEditorNotSaved(control.closest('.childRepairEditor'))));host.querySelectorAll('.restoreSource').forEach(button=>button.onclick=()=>submitSourceRestoration(button.closest('.childRepairEditor')));host.querySelectorAll('.childSubmit').forEach(button=>button.onclick=()=>submitChildRepair(button.closest('.childRepairEditor')).catch(error=>{markEditorNotSaved(button.closest('.childRepairEditor'));log('CHILD REPAIR ERROR',{message:error.message});status('Not saved — '+error.message,'error')}));const add=$('#addMissingChild');if(add)add.onclick=()=>$('#missingChildEditor').classList.toggle('hide');const looks=host.querySelector('.looksCorrect');if(looks)looks.onclick=()=>status('Checked and left unchanged. The parent total remains unresolved.','warn');const submit=host.querySelector('.missingChildSubmit');if(submit)submit.onclick=()=>submitMissingChild(submit.closest('.childRepairEditor')).catch(error=>{markEditorNotSaved(submit.closest('.childRepairEditor'));log('MISSING CHILD ERROR',{message:error.message});status('Not saved — '+error.message,'error')});const complete=host.querySelector('.completeParent');if(complete)complete.onclick=()=>completeParentWorkspace(ex,model).catch(error=>status('Could not finish this question workspace: '+error.message,'error'))
+ host.querySelectorAll('.ledgerReview').forEach(button=>button.onclick=()=>navigateReview(button.dataset.exceptionId));host.querySelectorAll('.ledgerCorrect').forEach(button=>button.onclick=()=>button.closest('.ledgerRow')?.querySelector('.childRepairEditor')?.classList.toggle('hide'));host.querySelectorAll('.childRepairEditor input,.childRepairEditor textarea').forEach(control=>control.addEventListener('input',()=>markEditorNotSaved(control.closest('.childRepairEditor'))));host.querySelectorAll('.restoreSource').forEach(button=>button.onclick=()=>submitSourceRestoration(button.closest('.childRepairEditor')));host.querySelectorAll('.childSubmit').forEach(button=>button.onclick=teacherAction(anchor=>submitChildRepair(button.closest('.childRepairEditor'),null,anchor)));const add=$('#addMissingChild');if(add)add.onclick=()=>$('#missingChildEditor').classList.toggle('hide');const looks=host.querySelector('.looksCorrect');if(looks)looks.onclick=()=>status('Checked and left unchanged. The parent total remains unresolved.','warn');const submit=host.querySelector('.missingChildSubmit');if(submit)submit.onclick=()=>submitMissingChild(submit.closest('.childRepairEditor')).catch(error=>{markEditorNotSaved(submit.closest('.childRepairEditor'));log('MISSING CHILD ERROR',{message:error.message});status('Not saved — '+error.message,'error')});const complete=host.querySelector('.completeParent');if(complete)complete.onclick=()=>completeParentWorkspace(ex,model).catch(error=>status('Could not finish this question workspace: '+error.message,'error'))
 }
 function markEditorNotSaved(editor){const state=editor?.querySelector('.saveState');if(state){state.textContent='Not saved';state.classList.remove('hide','saved');state.classList.add('unsaved')}}
 async function completeParentWorkspace(ex,model){
@@ -982,17 +1052,20 @@ function renderVisualMarkChangeCard(ex,model,host){
  card.innerHTML=`<div class="reviewEyebrow">One visual mark-change region${model.source_page?` · page ${esc(model.source_page)}`:''}</div><h3>Handwritten mark change needs confirmation</h3><p><b>Question ${esc(model.affected_question)}</b></p>${model.effective_total==null?'<p>The current effective mark total could not be resolved safely.</p>':`<p>Current effective item: <b>${esc(model.effective_total)} mark${model.effective_total===1?'':'s'}</b></p>`}<p>The visual evidence produced conflicting readings. Observation counts are evidence only; no value is selected automatically.</p><div class="visualObservationList">${candidateRows}</div><div class="semanticChooser visualMarkChoices">${model.candidates.map(item=>`<button class="suggestionBtn visualMarkCandidate" data-value="${esc(item.value)}">Use ${esc(item.value)} mark${item.value===1?'':'s'}${item.value===model.effective_total?' — confirm existing state':''}</button>`).join('')}</div><button class="dangerLite rejectVisualMark">Ignore visual mark change / keep source state</button><button class="secondary manualVisualMark">Review this mark correction</button><div class="childRepairEditor visualMarkEditor hide" data-question-id="${esc(model.affected_question)}" data-source-block-index="${esc(model.source_block_index??'')}"><b>Mark allocation — Question ${esc(model.affected_question)}</b><p class="muted">The current effective item is loaded below. Leaving it unchanged confirms matching visual evidence without rewriting the question. A genuine change still requires a complete marking scheme whose marks add to the total.</p><div class="childRepairFields"><div><label>Question</label><input class="childCorrectId" value="${esc(model.affected_question)}" readonly></div><div><label>Question total</label><input class="childTotal" type="number" min="1" max="999" step="1" inputmode="numeric"></div></div><label>Complete marking scheme</label><textarea class="childMarking" placeholder="1M method&#10;1A answer">${esc(sourcePoints)}</textarea><div class="saveState unsaved hide">Not saved</div><button class="primary childSubmit">Review selected state</button></div><details class="technicalProposal"><summary>Technical details</summary><div>Review unit: <code>${esc(model.unit.review_unit_id)}</code></div><div>Asset: <code>${esc(model.rendered_asset_ref)}</code></div><div>Level: <code>${esc(model.level)}</code></div><div>Source occurrence: <code>${esc(model.source_block_index??'unresolved')}</code></div><div>Member exceptions: <code>${esc(model.member_exception_ids.join(', '))}</code></div><div>Evidence IDs: <code>${esc(model.evidence_ids.join(', ')||'not present in legacy rows')}</code></div></details>`;
  const editor=card.querySelector('.visualMarkEditor'),open=(decision,value=null)=>{editor.dataset.visualDecision=decision;editor.dataset.visualValue=value==null?'':String(value);editor.querySelector('.childTotal').value=String(value??model.effective_total??'');editor.querySelector('.childMarking').value=sourcePoints;editor.classList.remove('hide');editor.querySelector('.childTotal').focus();editor.scrollIntoView({behavior:'smooth',block:'center'})};card.querySelectorAll('.visualMarkCandidate').forEach(button=>button.onclick=()=>{const value=Number(button.dataset.value);if(value===model.effective_total)submitVisualMarkChangeAgreement(model,value).catch(error=>status('Visual mark decision was not saved: '+error.message,'error'));else open('USE',value)});card.querySelector('.manualVisualMark').onclick=()=>open('MANUAL',model.effective_total);card.querySelector('.rejectVisualMark').onclick=()=>submitVisualMarkChangeRejection(model).catch(error=>status('Visual mark decision was not saved: '+error.message,'error'));editor.querySelectorAll('input,textarea').forEach(control=>control.addEventListener('input',()=>markEditorNotSaved(editor)));editor.querySelector('.childSubmit').onclick=()=>submitVisualMarkChangeEditor(editor,model).catch(error=>{markEditorNotSaved(editor);status('Not saved — '+error.message,'error')});host.append(card)
 }
+function conclusionDeductionFits(note,point){
+ const linked=point.solution_evidence_ids||[];
+ return point.count===1&&/\bconclud(?:e|es|ing)|\bconclusion\b/i.test(point.descriptor)
+  &&(note.alternative||0)===(point.alternative||0)&&note.category==='ambiguous'&&note.count==null
+  &&/^[“"']?\s*[−-]\s*1\s+if\s+no\s+conclusion\s*[”"']?$/i.test((note.allocation_quote||'').trim())
+  &&note.allocation_evidence_ids?.length&&note.solution_evidence_ids?.length
+  &&note.solution_evidence_ids.every(id=>linked.includes(id));
+}
 function markingDraftText(points, unresolved){
  const branches=[...new Set(points.map(point=>point.alternative||0))].sort((a,b)=>a-b);
  return branches.map(branch=>{
   const awards=points.filter(point=>(point.alternative||0)===branch);
   return awards.map((point,index)=>{
-   const linked=point.solution_evidence_ids||[];
-   const keepsDeduction=point.count===1&&index===awards.length-1&&/\bconclud(?:e|es|ing)|\bconclusion\b/i.test(point.descriptor)
-    &&unresolved.some(note=>(note.alternative||0)===branch&&note.category==='ambiguous'&&note.count==null
-     &&/^[“"']?\s*[−-]\s*1\s+if\s+no\s+conclusion\s*[”"']?$/i.test((note.allocation_quote||'').trim())
-     &&note.allocation_evidence_ids?.length&&note.solution_evidence_ids?.length
-     &&note.solution_evidence_ids.every(id=>linked.includes(id)));
+   const keepsDeduction=index===awards.length-1&&unresolved.some(note=>conclusionDeductionFits(note,point));
    const descriptor=keepsDeduction&&!/\bno conclusion\b/i.test(point.descriptor)
     ? point.descriptor.replace(/\.?$/,'.')+' Withhold this mark if no conclusion is stated.'
     : point.descriptor;
@@ -1004,13 +1077,17 @@ function markingDraftText(points, unresolved){
 function familyDecision(ex, history){
  const source=numberingHeading(ex);
  if(!source)return null;
- const open=(ex.decision_group?.findings||[{id:ex.id,question:ex.affected_id,category:ex.category}])
-  .filter(item=>item.category==='question_parent_heading_mismatch')
-  .map(item=>({exception_id:item.id,from:item.question,to:source.heading+item.question.slice(item.question.indexOf('.'))}));
  const saved=effectiveConfirmedCorrections(history).flatMap(row=>reviewNumberingMembers(row.proposed_patch)
   .filter(member=>member.source_locator?.source_page===source.page&&member.source_block_index===source.block
-    &&String(member.target_id).split('.')[0]===source.heading&&String(member.affected_id).split('.')[0]===source.printed.split('.')[0])
+    &&String(member.source_locator.parent_heading)===source.heading&&String(member.affected_id).split('.')[0]===source.printed.split('.')[0])
   .map(member=>({from:member.affected_id,to:member.target_id,saved:true,applied:!!row.applied_at,correction:row,member})));
+ const open=(ex.decision_group?.findings||[{id:ex.id,question:ex.affected_id,category:ex.category,source_offset:source.offset}])
+  .filter(item=>item.category==='question_parent_heading_mismatch'
+    &&!saved.some(row=>row.from===item.question&&row.member.source_locator.source_character_offset===item.source_offset))
+  .map(item=>{
+   const parts=item.question.split('.'),parent=saved.find(row=>row.from===parts.slice(0,-1).join('.'));
+   return {exception_id:item.id,from:item.question,to:parent?`${parent.to}.${parts.at(-1)}`:[source.heading,...parts.slice(1)].join('.')};
+  });
  return {source,rows:[...open,...saved].sort((a,b)=>compareQuestionIds(a.from,b.from))};
 }
 function calculationDecision(ex){
@@ -1037,21 +1114,137 @@ function proposedMarking(s){
  const unique=[...new Map(possible.map((point,index)=>[point.criterion_id||index,point])).values()];
  return unique.length?markingDraftText(unique,s?.unconfirmed_criteria||[]):'';
 }
-function reviewMarkingFollowUp(correction, current, replacement, block, markingText){
+function sourcePrompt(question,normalized){
+ const sourceLine=String(question?.source_line||'').trim().replace(/\s+/g,' ');
+ const page=normalized?.content?.pages?.find(item=>item.page===question?.source_page);
+ if(!sourceLine||!page||!Number.isInteger(question?.printed_marks))return '';
+ const lines=String(page.effective_text||page.text||'').split(/\r?\n/).map(line=>line.trim().replace(/\s+/g,' '));
+ const starts=lines.flatMap((line,index)=>line===sourceLine?[index]:[]);
+ if(starts.length!==1)return '';
+ const prompt=[];
+ const total=new RegExp(`\\s*\\(${question.printed_marks}\\)$`);
+ for(const line of lines.slice(starts[0])){
+  if(!line||prompt.length&&/^\d+(?:\.\d+)+\s|^QUESTION\s+\d/i.test(line))break;
+  prompt.push(line.replace(total,''));
+  if(total.test(line))return prompt.join('\n').replace(/^\d+(?:\.\d+)*\s+/,'');
+ }
+ return '';
+}
+function probabilityAmendment(prompt,lines){
+ // Reconcile the givens and answer to the printed prompt, including fractions flattened by PDF extraction.
+ if(lines.length!==1)return null;
+ const fraction='\\\\frac\\{(\\d+)\\}\\{(\\d+)\\}';
+ const math=new RegExp(`^P\\(A\\\\cap B\\)=${fraction}\\+${fraction}-${fraction}(?:=\\\\frac\\{[\\d+-]+\\}\\{\\d+\\})?=${fraction}$`);
+ const working=lines[0].match(math);
+ if(!working)return null;
+ const [a,b,c,d,n,k,x,y]=working.slice(1).map(Number);
+ if(![a,b,c,d,n,k,x,y].every(value=>Number.isSafeInteger(value)&&value>=0&&value<=999)||!b||!d||!k||!y)return null;
+ const match=prompt.normalize('NFKC').replace(/\s+/g,'').match(/^If(P\(A\)=\d+\/\d+|\(\)\d+PA=)[;,](P\(B\)=\d+\/\d+|\(\)\d+PB=),?andP\(A∪B\)=(\d+\/?\d+),determineP\(A∩B\)\.$/i);
+ if(!match||![`P(A)=${a}/${b}`,`()${a}${b}PA=`].includes(match[1])
+   ||![`P(B)=${c}/${d}`,`()${c}${d}PB=`].includes(match[2]))return null;
+ const printed=match[3].endsWith('/'+k)?match[3].slice(0,-String(k).length-1)
+  :match[3].endsWith(String(k))?match[3].slice(0,-String(k).length):'';
+ const original=Number(printed),sum=a*d+c*b,denominator=b*d;
+ if(!printed||!Number.isSafeInteger(original)||original>k||original*denominator<=sum*k
+   ||n>k||n*denominator>sum*k||n*b<a*k||n*d<c*k||(sum*k-n*denominator)*y!==x*denominator*k)return null;
+ return {questionText:`If P(A) = ${a}/${b}, P(B) = ${c}/${d} and P(A∪B) = ${n}/${k}, determine P(A∩B).`,
+  original:`P(A∪B) = ${original}/${k}`,amended:`P(A∪B) = ${n}/${k}`,consequence:`P(A∩B) = ${x}/${y}`};
+}
+function verifiedEqualityAmendment(message,lines){
+ const issue=String(message||'').match(/relation between (\d+)\/(\d+) and (\d+)\/(\d+) appears to be >, not =/i);
+ const working=lines.length===1?lines[0].match(/=\\frac\{(\d+)\}\{(\d+)\}=\\frac\{(\d+)\}\{(\d+)\}=(0\.\d+)$/):null;
+ if(!issue||!working||issue.slice(1).some((value,index)=>value!==working[index+1]))return null;
+ const [a,b,c,d]=issue.slice(1).map(Number),decimal=working[5].slice(2);
+ if(!b||!d||a*d!==c*b||c*10**decimal.length!==d*Number(decimal))return null;
+ return {original:`${a}/${b} > ${c}/${d}`,amended:`${a}/${b} = ${c}/${d}`,consequence:working[5]};
+}
+function markingProposal(ex,suggestion,question,normalized,marking,lines,calc){
+ if(!suggestion?.guideline_verification||!question||!marking)return {missing:'Enter the complete marking scheme for this occurrence.'};
+ const prompt=sourcePrompt(question,normalized);
+ const make=(questionText,solutionLines)=>({target:question.question_id,question,questionText,solutionLines,markingText:marking});
+ const unresolved=(suggestion.unconfirmed_criteria||[]).filter(point=>
+  point.category==='ambiguous'&&/\bCA\b|(?:−|-)\s*\d+/i.test(point.allocation_quote||''));
+ if(unresolved.length){
+  const last=marking.split('\n').at(-1);
+  const criteria=[...(suggestion.accepted_criteria||[]),...(suggestion.constructed_criteria||[]),
+   ...(suggestion.unconfirmed_criteria||[]).filter(point=>point.category==='proposed')];
+  const conclusion=criteria.find(point=>last?.includes(point.descriptor)&&last.includes('Withhold this mark'));
+  if(unresolved.length!==1||!conclusion||!conclusionDeductionFits(unresolved[0],conclusion))
+   return {missing:'Use Edit suggestion to state when to award the conditional marks or apply the deduction.'};
+ }
+ let total;
+ try{total=parseStructuredMarking(marking,{profile:ordinaryMathShorthandProfile(question,{})}).total}catch(error){return {missing:error.message}}
+ if(!Number.isInteger(question.printed_marks)||total!==question.printed_marks)
+  return {missing:`Complete the marking scheme for the printed ${question.printed_marks??'question total'} before approving it.`};
+ if(calc?.twoOrders){
+  return {choices:[
+   {label:`Count both orders · ${calc.result}`,values:make('',[calc.working])},
+   {label:`Count one order · ${calc.shown}`,values:make('',[calc.input.replace(/\\times\s*2(?=\s*})/,'')])},
+  ]};
+ }
+ if(calc)return {values:make('',[calc.working])};
+ if(ex.category!=='marking_interpretation_review')return {};
+ if(suggestion.guideline_provider_decision==='source_issue'){
+  const amendment=probabilityAmendment(prompt,lines);
+  if(amendment)return {amendment,values:make(amendment.questionText,lines)};
+  const equality=verifiedEqualityAmendment(ex.message,lines);
+  if(equality)return {amendment:equality,values:make('',lines)};
+  return {missing:/boys.*girl/i.test(ex.message||'')
+   ?'The survey describes boys and the question asks about a girl. Use Edit suggestion to confirm the intended wording.'
+   :'Use Edit suggestion to specify the intended question wording or correct the working. The source does not establish a complete replacement.'};
+ }
+ if(/no calculation|requested variables|source marking instruction/i.test(ex.message||''))
+  return {missing:'Use Edit suggestion to resolve the source wording or marking instruction before checking the change.'};
+ if(/which occurrence|identifier is repeated/i.test(ex.message||'')&&(!prompt||!lines.length))
+  return {missing:'The complete question wording and working are needed to approve this occurrence. Use Edit suggestion to supply the missing part.'};
+ return {values:make(prompt,lines)};
+}
+function reviewMarkingFollowUp(correction, current, replacement, block, markingText, questionText='', solutionLines=[]){
  const patch=correction?.proposed_patch;
  const member=reviewNumberingMembers(patch).find(m=>m.affected_id===current&&m.target_id===replacement&&m.source_block_index===block&&m.source_locator?.source_page);
- return member&&markingText?{numbering_correction_id:correction.id,current_id:current,target_id:replacement,
-  source_block_index:block,marking_text:markingText}:null;
+ return member&&(markingText||questionText||solutionLines.length)?{numbering_correction_id:correction.id,current_id:current,target_id:replacement,
+  source_block_index:block,marking_text:markingText,...(questionText?{question_text:questionText}:{}),
+  ...(solutionLines.length?{solution_lines:solutionLines}:{})}:null;
+}
+function numberingForQuestion(question,history){
+ const matches=effectiveConfirmedCorrections(history).flatMap(correction=>reviewNumberingMembers(correction.proposed_patch)
+  .filter(member=>{
+   const locator=member.source_locator;
+   return locator&&member.affected_id===(question.source_question_id||question.question_id)
+    &&[member.affected_id,member.target_id].includes(question.question_id)
+    &&question.source_page===locator.source_page&&question.source_block_index===member.source_block_index
+    &&question.source_character_offset===locator.source_character_offset&&String(question.source_heading_major)===String(locator.parent_heading)
+    &&(!question.source_line_hash||question.source_line_hash===locator.source_line_hash);
+  }).map(member=>({from:member.affected_id,to:member.target_id,correction,member})));
+ return matches.length===1?matches[0]:null;
 }
 // END TEACHER DECISION MODEL
-function teacherAction(action){
- return async()=>{try{await action()}catch(error){status(error.message||'Your change could not be checked. Try again.','error')}};
+function actionFeedback(button,message,kind=''){
+ if(!button?.isConnected)return;
+ let feedback=button.nextElementSibling;
+ if(!feedback?.classList.contains('actionFeedback')){
+  feedback=document.createElement('div');feedback.setAttribute('role','status');button.after(feedback);
+ }
+ feedback.className='status actionFeedback'+(kind?' '+kind:'');feedback.textContent=message;
 }
-function openTeacherEditor(tool,{working='',marking='',showSuggestions=false}={}){
+function teacherAction(action){
+ return async event=>{
+  const button=event?.currentTarget;
+  actionFeedback(button,'');
+  try{await action(button)}
+  catch(error){
+   const message=error.message||'Your change could not be checked. Try again.';
+   log('REVIEW ACTION ERROR',{message,code:error.code});
+   actionFeedback(button,message,'error');status(message,'error');
+  }
+ };
+}
+function openTeacherEditor(tool,{questionText='',working='',marking='',showSuggestions=false}={}){
  const host=$('#choices'),panel=$('.reviewAction');
  panel.classList.remove('show-legacy-tools');host.classList.remove('hide');host.classList.toggle('show-suggestions',showSuggestions);
  setCorrectionTool(tool);
  if(tool==='content'){
+  if(!$('#contentQuestion').value)$('#contentQuestion').value=questionText;
   if(!$('#contentSolution').value)$('#contentSolution').value=working;
   if(!$('#contentMarking').value)$('#contentMarking').value=marking;
  }
@@ -1062,69 +1255,90 @@ function familyNumberingTable(model,editing=false){
   `<tr><td>${esc(row.from)}</td><td>${editing&&!row.saved?`<input data-numbering-member="${esc(row.exception_id)}" aria-label="Correct number for ${esc(row.from)}" inputmode="decimal" value="${esc(row.to)}">`:esc(row.to)}</td><td>${row.applied?'Applied':row.saved?'Saved':'To review'}</td></tr>`
  ).join('')}</tbody></table>`;
 }
-function showNumberedMarking(model,structure){
+function showNumberedMarking(model,structure,prefill=null){
  const host=$('#numberedMarkEditor'),member=model.member,question=(structure?.questions||[]).find(q=>
-  q.source_block_index===member.source_block_index&&q.source_page===member.source_locator.source_page
-  &&String(q.source_question_id||q.question_id)===model.from);
+  numberingForQuestion(q,currentConfirmed)?.member===member);
+ if(!question){status('The saved question could not be found on its original page. Refresh to continue.','warn');return}
  const key=draftKey(`marks-for-${model.correction.id}-${model.to}`);
  const saved=[...effectiveConfirmedCorrections(currentConfirmed)].reverse().find(row=>row.proposed_patch?.numbering_correction_id===model.correction.id&&row.proposed_patch?.target_id===model.to);
  const pending=currentActive.find(ex=>ex.category==='marking_interpretation_review'&&String(ex.affected_id)===model.from
   &&ex.suggestions?.some(s=>s.source_page===member.source_locator.source_page&&s.source_block_index===member.source_block_index));
- const draft=localStorage.getItem(key)??(saved?markingSchemeText(saved.proposed_patch.mark_points):proposedMarking(pending?.suggestions?.[0]));
+ const draft=prefill??localStorage.getItem(key)??(saved?markingSchemeText(saved.proposed_patch.mark_points):proposedMarking(pending?.suggestions?.[0]));
  host.innerHTML=`<label for="numberedMarkText">Question ${esc(model.to)} marking scheme${question?.printed_marks?` · ${esc(question.printed_marks)} marks`:''}</label><textarea id="numberedMarkText">${esc(draft)}</textarea><p>The saved question number stays in place.</p><button class="primary" id="reviewNumberedMarks">Review marking change</button>`;
  $('#numberedMarkText').oninput=()=>{localStorage.setItem(key,$('#numberedMarkText').value);status('Not saved','warn')};
- $('#reviewNumberedMarks').onclick=teacherAction(async()=>{
+ $('#reviewNumberedMarks').onclick=teacherAction(async button=>{
   const marking=$('#numberedMarkText').value.trim(),payload=reviewMarkingFollowUp(model.correction,model.from,model.to,member.source_block_index,marking);
   if(!payload)throw Error('Enter the complete marking scheme first.');
   if(parseStructuredMarking(marking,{profile:ordinaryMathShorthandProfile(question,{})}).total!==question?.printed_marks)
    throw Error(`The marking scheme must add to ${question?.printed_marks??'the printed number of'} marks.`);
-  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${model.to} — marking scheme\n${marking}`,numbered_marking:payload});
+  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${model.to} — marking scheme\n${marking}`,numbered_marking:payload},button);
  });
  $('#numberedMarkText').focus();
 }
-function renderTeacherDecision(ex,structure){
+function renderTeacherDecision(ex,structure,normalized){
  const host=$('#decisionCard'),family=familyDecision(ex,currentConfirmed),calc=calculationDecision(ex);
  const semanticProgress=semanticConflictProgress(ex,currentActive,currentStaged);
  const companion=ex.decision_group?.findings?.find(item=>item.category==='marking_interpretation_review');
  const suggestion=ex.suggestions?.find(item=>item.guideline_verification)||currentActive.find(item=>item.id===companion?.id)?.suggestions?.[0];
- const question=(structure?.questions||[]).find(q=>q.question_id===ex.affected_id&&(currentStep?.sourceBlockIndex==null||q.source_block_index===currentStep.sourceBlockIndex));
+ const points=(structure?.questions||[]).filter(q=>q.question_id===ex.affected_id
+  &&(suggestion?.source_page==null||q.source_page===suggestion.source_page)
+  &&((suggestion?.source_block_index??currentStep?.sourceBlockIndex)==null||q.source_block_index===(suggestion?.source_block_index??currentStep.sourceBlockIndex)));
+ const question=points.length===1?points[0]:null;
  const marking=proposedMarking(suggestion),verifiedFamily=(ex.decision_group?.findings||[]).flatMap(item=>item.verified_working||[]);
  const lines=verifiedFamily.length?verifiedFamily:suggestion?.converted_working?.length?suggestion.converted_working:(question?.visual_solution_segments||[]).map(s=>s.text);
  const working=(calc?[calc.input]:lines).filter(Boolean);
- const marksNeedDecision=(suggestion?.unconfirmed_criteria||[]).some(p=>p.category==='ambiguous'&&/\bCA\b|(?:−|-)\s*\d+/i.test(p.allocation_quote||'')&&!marking.includes('Withhold this mark'));
- const openSourceIssue=suggestion?.guideline_provider_decision==='source_issue'||/no calculation|requested variables|numbering|which occurrence|source marking instruction/i.test(ex.message||'');
+ const proposal=(suggestion||calc)?markingProposal(ex,suggestion,question,normalized,marking,lines,calc):{};
  const plain=family?`Some numbers on page ${family.source.page} are printed under the wrong question heading. Check the numbers below.`
   :calc?'The result written in the memo disagrees with its calculation.'
-  :ex.category==='marking_interpretation_review'?(openSourceIssue||marksNeedDecision?String(ex.message||'Check what the source means before saving marks.').split(/(?<=\.)\s+/).slice(0,2).join(' '):'Check how the marks should be awarded.')
+  :proposal.amendment?.questionText?'The printed probability conflicts with the amended working. Check which value the question should use.'
+  :proposal.amendment?'The comparison in the memo should be an equality. Check the proposed working.'
+  :ex.category==='marking_interpretation_review'?'Check the working and how the marks should be awarded.'
   :ex.category==='question_total_mismatch'?'The marks for this question do not add up to the subtotal printed in the memo.':humanCategory(ex.category);
- const canAccept=!!family||!!(calc&&marking&&!calc.twoOrders)||!!(marking&&!openSourceIssue&&!marksNeedDecision&&ex.category==='marking_interpretation_review');
- const saved=family?.rows.find(row=>row.saved&&!row.applied&&Number.isInteger(row.member.source_block_index)
-  &&(structure.questions||[]).some(q=>q.question_id===row.from&&q.source_page===family.source.page&&q.printed_marks>0));
+ const canAccept=!!family||!!proposal.values;
+ const saved=family?.rows.find(row=>row.saved&&(structure.questions||[]).some(q=>
+  q.printed_marks>0&&numberingForQuestion(q,currentConfirmed)?.member===row.member));
  const draftId=draftKey(`numbering-${ex.id}`);
  let familyDraft={};try{familyDraft=JSON.parse(localStorage.getItem(draftId)||'null')?.family||{}}catch{}
- const draftFamily=family?{...family,rows:family.rows.map(row=>row.saved?row:{...row,to:familyDraft[row.exception_id]||row.to})}:null;
+ const draftFamily=family?{...family,rows:family.rows.map(row=>row.saved?row:{...row,to:familyDraft[row.exception_id]??row.to})}:null;
  host.innerHTML=`<p class="decisionLead">${esc(plain)}</p>${semanticProgress?`<p>Marking point ${semanticProgress.index} of ${semanticProgress.total}</p>`:''}${working.length?`<b>${calc?'Original working':'Current converted working'}</b><div class="decisionWorking">${working.map(readableWorking).map(esc).join('<br>')}</div>`:''}
  ${family?`<div id="numberingTable">${familyNumberingTable(draftFamily)}</div>`:''}
+ ${proposal.amendment?`<div class="decisionWorking"><b>Printed</b> ${esc(proposal.amendment.original)}<br><b>Amended</b> ${esc(proposal.amendment.amended)}<br><b>With the amendment</b> ${esc(proposal.amendment.consequence)}</div>`:''}
+ ${proposal.values?.questionText&&!proposal.amendment?`<details><summary>Question wording</summary><div class="decisionWorking">${esc(proposal.values.questionText).replaceAll('\n','<br>')}</div></details>`:''}
  ${calc?`<b>Suggested corrected working</b><div class="decisionWorking">${esc(readableWorking(calc.working))}</div><p>${calc.twoOrders?`Both orders give ${esc(calc.result)}. If the letters must appear in only one order, remove the factor of 2 and use ${esc(calc.shown)}. Check the wording before choosing.`:`The expression evaluates to ${esc(calc.result)}.`}</p>`:''}
  ${marking?`<b>Suggested marking scheme</b><ul class="decisionMarks">${marking.split('\n').map(line=>`<li>${esc(line)}</li>`).join('')}</ul>`:''}
- <div class="decisionActions">${canAccept?'<button id="acceptDecision" class="primary">Accept suggestion</button>':''}<button id="editDecision" class="${canAccept?'secondary':'primary'}">${family||marking||calc?'Edit suggestion':'Make a correction'}</button><button id="reviewLater" class="secondary">Review later</button></div>
+ ${proposal.missing?`<p>${esc(proposal.missing)}</p>`:''}
+ <div class="decisionActions">${canAccept?'<button id="acceptDecision" class="primary">Accept suggestion</button>':''}${(proposal.choices||[]).map((choice,i)=>`<button class="primary decisionAlternative" data-choice="${i}">${esc(choice.label)}</button>`).join('')}<button id="editDecision" class="${canAccept||proposal.choices?'secondary':'primary'}">${family||marking||calc?'Edit suggestion':'Make a correction'}</button><button id="reviewLater" class="secondary">Review later</button></div>
  ${saved?'<button id="editNumberedMarking" class="secondary">Edit marks for the saved question</button><div id="numberedMarkEditor"></div>':''}`;
- const familySubmit=async(editing=false)=>{
-  const members=draftFamily.rows.filter(row=>!row.saved).map(row=>({exception_id:row.exception_id,target_id:editing?host.querySelector(`[data-numbering-member="${row.exception_id}"]`).value.trim():row.to}));
-  if(members.some(member=>!normalizedQuestionId(member.target_id)||member.target_id.split('.')[0]!==family.source.heading)
-   ||new Set(members.map(member=>member.target_id)).size!==members.length)throw Error(`Use a different valid number under Question ${family.source.heading} for each item.`);
-  await submitAndInterpret({job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:`Update question numbering on page ${family.source.page}`,family_numbering:{members}});
+ const familySubmit=async(button,editing=false)=>{
+  const rows=draftFamily.rows.map(row=>({...row,to:editing&&!row.saved?host.querySelector(`[data-numbering-member="${row.exception_id}"]`).value.trim():row.to}));
+  for(const row of rows){
+   if(!normalizedQuestionId(row.to)||row.to.split('.')[0]!==family.source.heading||row.to.split('.').length!==row.from.split('.').length)
+    throw Error(`Enter a valid number under Question ${family.source.heading} for the item printed as ${row.from}.`);
+   if(rows.some(other=>other!==row&&other.to===row.to))throw Error(`Question ${row.to} is already used in this list. Give each item a different number.`);
+   const parent=rows.find(other=>other.from===row.from.split('.').slice(0,-1).join('.'));
+   if(parent&&!row.to.startsWith(parent.to+'.'))throw Error(`The new number for ${row.from} must start with ${parent.to}.`);
+  }
+  const members=rows.filter(row=>!row.saved).map(row=>({exception_id:row.exception_id,target_id:row.to}));
+  await submitAndInterpret({job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:`Update question numbering on page ${family.source.page}`,family_numbering:{members}},button);
  };
- if($('#acceptDecision'))$('#acceptDecision').onclick=teacherAction(async()=>{
-  if(family)await familySubmit();else await submitContent({target:ex.affected_id,solutionLines:calc?[calc.working]:[],markingText:marking});
+ if($('#acceptDecision'))$('#acceptDecision').onclick=teacherAction(async button=>{
+  if(family)await familySubmit(button);else await submitContent(proposal.values,button);
+ });
+ host.querySelectorAll('.decisionAlternative').forEach(button=>{
+  button.onclick=teacherAction(anchor=>submitContent(proposal.choices[Number(button.dataset.choice)].values,anchor));
  });
  $('#editDecision').onclick=teacherAction(async()=>{
   if(family){
    $('#numberingTable').innerHTML=familyNumberingTable(draftFamily,true);
-   const submit=$('#acceptDecision');submit.textContent='Review numbering changes';submit.onclick=teacherAction(()=>familySubmit(true));
+   const submit=$('#acceptDecision');submit.textContent='Review numbering changes';submit.onclick=teacherAction(button=>familySubmit(button,true));
    $('#numberingTable').oninput=()=>{const values=Object.fromEntries([...host.querySelectorAll('[data-numbering-member]')].map(input=>[input.dataset.numberingMember,input.value]));localStorage.setItem(draftId,JSON.stringify({family:values}));status('Not saved','warn')};
    $('#numberingTable').querySelector('input')?.focus();
-  }else if(marking||calc){openTeacherEditor('content',{working:calc?.working||'',marking});$('#contentMarking').focus()}
+  }else if(marking||calc){
+   manualEditQuestion=question;
+   const questionText=proposal.values?.questionText??(proposal.missing?sourcePrompt(question,normalized):'');
+   openTeacherEditor('content',{questionText,working:(proposal.values?.solutionLines||lines).join('\n'),marking});
+   $('#contentMarking').focus();
+  }
   else {
    const tool=$('#correctionTool').value;
    const hasBoundedChoices=['ambiguous_mark_semantics','visual_evidence_association_uncertain','visual_mark_change_review','unlabeled_mark_bearing_question'].includes(ex.category);
@@ -1132,7 +1346,7 @@ function renderTeacherDecision(ex,structure){
   }
  });
  $('#reviewLater').onclick=teacherAction(skipCurrentReview);
- if(saved){$('#editNumberedMarking').textContent=`Edit marks for Question ${saved.to}`;$('#editNumberedMarking').onclick=()=>showNumberedMarking(saved,structure)}
+ if(saved){$('#editNumberedMarking').textContent=`Edit marks for Question ${saved.to}`;$('#editNumberedMarking').onclick=teacherAction(()=>showNumberedMarking(saved,structure))}
 }
 async function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#numberingCurrent').value=normalizedQuestionId(ex?.affected_id);$('#numberingCorrect').value='';$('#photoInput').value='';$('#fileInput').value='';
@@ -1166,8 +1380,9 @@ async function renderChoices(ex){
  $('#suggestionBlock').classList.toggle('hide',rendered===0);$('#suggestionHeading').textContent=ex.category==='marking_interpretation_review'?'Review unconfirmed marking criteria':semantic?'Resolve the marking-code conflict':visualMarkChange?'Resolve the visual mark change':'Choose a supplied interpretation';if(!grouped&&!semantic&&!visualMarkChange&&!applicationFailure)configureCorrectionTools(ex,rendered);restoreDraft(ex);
 }
 async function showException(ex){
- currentException=ex;manualEditTarget='';selectQueueItem(ex.id);
+ currentException=ex;manualEditTarget='';manualEditQuestion=null;selectQueueItem(ex.id);
  const structure=await ensureStructure();
+ $('#contentTarget').readOnly=false;$('#manualItemEditor').classList.add('hide');
  currentStep={...specFor(ex),sourceBlockIndex:sourceBlockFor(ex,structure)};
  focusKey='';renderExplanation(ex,currentStep);
  await renderChoices(ex);await renderManualQuestionNavigator();refreshNumberingOccurrences();
@@ -1175,7 +1390,7 @@ async function showException(ex){
  $('#choices').classList.add('hide');$('#decisionCard').classList.toggle('hide',recovered);
  $('.reviewAction').classList.remove('show-legacy-tools');$('#advancedReview').open=false;
  $('#proposalPanel').classList.add('hide');
- if(!recovered)renderTeacherDecision(ex,structure);
+ if(!recovered)renderTeacherDecision(ex,structure,await ensureNormalized());
  await renderQuestionWorkspace(ex);await updateBatchPanel();
  $('#review').classList.remove('hide');$('#processingPanel').classList.add('hide');$('#authPanel').classList.remove('hide');
  renderQueueNavigation();
@@ -1279,21 +1494,32 @@ function showProposal(corr){
  const semanticTechnical=model.semantic_choice?`<div>Candidate: <code>${esc(model.semantic_choice.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.semantic_choice.selected_semantic)}</code></div>${model.semantic_choice.confidence_score==null?'':`<div>Automated confidence: <code>${esc(model.semantic_choice.confidence_score)}</code></div>`}${model.semantic_choice.provider?`<div>Provider path: <code>${esc(model.semantic_choice.provider)}</code></div>`:''}`:'';
  $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` • source ${esc(model.target_id)}`:''}${model.replacement_id?` • replacement ${esc(model.replacement_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}${model.association_choice?`<div>Review unit: <code>${esc(model.association_choice.review_unit_id)}</code></div><div>Asset: <code>${esc(model.association_choice.asset)}</code></div>`:''}${model.visual_mark_choice?`<div>Review unit: <code>${esc(model.visual_mark_choice.review_unit_id)}</code></div><div>Member exceptions: <code>${esc(model.visual_mark_choice.member_exception_ids.join(', '))}</code></div><div>Asset: <code>${esc(model.visual_mark_choice.asset)}</code></div>`:''}${semanticTechnical}</details>`;
  $('#confirm').textContent='Confirm and save';$('#editProposal').textContent='Edit change';$('#cancelProposal').classList.remove('hide');
- status('Check the change below before saving it.','success')
+ actionFeedback($('#confirm'),'');
+ status('Ready to confirm. Check the change below before saving it.','success');
+ const preview=$('#proposalText');preview.tabIndex=-1;preview.focus({preventScroll:true});preview.scrollIntoView({block:'start'});
 }
 let correctionInFlight=false;
-async function submitAndInterpret(body){
+async function submitAndInterpret(body,button=null){
  if(correctionInFlight)return;
  correctionInFlight=true;
- status('Checking your change…');
+ status('Checking your change…');actionFeedback(button,'Checking your change…');
  setBusy(true);try{
   const saved=await pendingCorrection();
   if(saved){
-   status('A saved correction attempt already exists. Confirm or cancel it before submitting another correction.','warn');
-   await resumePending();return;
+   await openBlockingCorrection();return;
   }
-  const submittedAt=new Date();const result=await invoke('submit-correction',body);localStorage.removeItem(draftKey(body.exception_id));const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
- }finally{correctionInFlight=false;setBusy(false)}}
+  const submittedAt=new Date();const result=await invoke('submit-correction',body);const cid=result.correction?.id;if(!cid)throw new Error('The change could not be opened. Resume review to check whether it is pending.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
+ }catch(error){
+  if(error.code==='pending_correction_exists'){await openBlockingCorrection();return;}
+  throw error;
+ }finally{actionFeedback(button,'');correctionInFlight=false;setBusy(false)}}
+async function openBlockingCorrection(){
+ if(!await resumePending())throw Error('The pending change was closed. Try again to check your change.');
+ const message='Finish the pending change first. You can confirm it, edit it, or cancel it. Your current draft is kept.';
+ const panel=currentCorrection?.proposed_patch?$('#proposalPanel'):$('#recoveryPanel');
+ actionFeedback(panel.querySelector('button'),message,'warn');status(message,'warn');
+ panel.scrollIntoView({block:'start'});
+}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
 async function submitVisualAssociationDecision(ex,model,decision,targetId,selectedEvidenceIds=[]){const unit=model?.unit||{},target=String(targetId||'').trim(),classification=String(model?.classification||unit.unit_classification||'normal'),suspicious=['mixed','runaway_model_output'].includes(classification),allIds=Array.isArray(unit.evidence_ids)?unit.evidence_ids.map(String):[],selected=distinctValues(selectedEvidenceIds);if(!['ACCEPT','REASSIGN','REJECT'].includes(decision)){status('Choose one bounded visual association decision.','warn');return}if(decision!=='REJECT'&&!normalizedQuestionId(target)){status('Choose one current parsed question.','warn');return}if(!allIds.length){status('This visual evidence cannot be matched safely. No teacher action is available for this historical item.','warn');return}if(decision!=='REJECT'&&!selected.length){status(suspicious?'Select at least one useful observation before accepting or reassigning.':'The visual evidence selection is empty.','warn');return}if(selected.some(id=>!allIds.includes(id))){status('The selected visual evidence no longer matches this source region. Refresh before continuing.','warn');return}const finalIds=decision==='REJECT'?allIds:selected,selectionMode=decision==='REJECT'||!suspicious?'whole_unit':'explicit_subset',action=decision==='REJECT'?'Reject this whole visual source region as noise or unusable memo evidence.':decision==='ACCEPT'?`Accept ${finalIds.length} selected visual observation${finalIds.length===1?'':'s'} for Question ${target}.`:`Reassign ${finalIds.length} selected visual observation${finalIds.length===1?'':'s'} to Question ${target}.`;await submitAndInterpret({job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:action,visual_association_resolution:{decision,review_unit_id:unit.review_unit_id,evidence_ids:finalIds,review_unit_evidence_ids:allIds,selection_mode:selectionMode,unit_classification:classification,rendered_asset_ref:unit.rendered_asset_ref,source_page:unit.page,original_owned_question_ref:unit.owned_question_ref||'',association_status:unit.association_status,target_id:target}})}
 async function submitSemanticChoice(index,model,choice,selectedCode=null){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index,semantic_resolution:{candidate_id:model.candidate_id,choice,...(selectedCode?{selected_code:selectedCode}:{})}})}
@@ -1331,14 +1557,34 @@ async function submitAllocations(){
  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,allocation_resolution:{allocations}})
 }
 function contentCorrectionEnvelope(target,questionText,solutionLines,markingText){return `[[PBHS_CONTENT_CORRECTION_V1]]\nTARGET: ${target}\nQUESTION:\n${questionText}\nANSWER:\n${solutionLines.join('\n')}\nMARKING:\n${markingText}\n[[END_PBHS_CONTENT_CORRECTION_V1]]`}
-async function submitContent(values=null){
- const target=String(values?.target??$('#contentTarget').value).trim(),questionText=String(values?.questionText??$('#contentQuestion').value).trim(),solutionLines=values?.solutionLines??$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),markingText=String(values?.markingText??$('#contentMarking').value).trim();
- if(!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(target)){status('Enter one valid question number, for example 11.2.1.','warn');return}
- if(!questionText&&!solutionLines.length&&!markingText){status('Enter the wording, working, or marking scheme you want to change.','warn');return}
- let markPoints=[];try{const structure=await ensureStructure(),question=(structure.questions||[]).find(item=>String(item.question_id)===target),profile=ordinaryMathShorthandProfile(question,{});markPoints=markingText?parseStructuredMarking(markingText,{profile}).points:[]}catch(e){status(e.message,'warn');return}
+async function submitContent(values=null,button=null){
+ const target=String(values?.target??$('#contentTarget').value).trim();
+ const questionText=String(values?.questionText??$('#contentQuestion').value).trim();
+ const solutionLines=values?.solutionLines??$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+ const markingText=String(values?.markingText??$('#contentMarking').value).trim();
+ if(!normalizedQuestionId(target))throw Error('Enter one valid question number, for example 11.2.1.');
+ if(!questionText&&!solutionLines.length&&!markingText)throw Error('Enter the wording, working, or marking scheme you want to change.');
+ const structure=await ensureStructure();
+ const picked=values?.question??manualEditQuestion;
+ const selected=picked&&(picked.question_id===target||numberingForQuestion(picked,currentConfirmed)?.to===target)?picked:null;
+ const matches=(structure.questions||[]).filter(q=>q.question_id===target);
+ const scoped=matches.filter(q=>q.source_block_index===currentStep?.sourceBlockIndex);
+ const question=selected||(matches.length===1?matches[0]:scoped.length===1?scoped[0]:null);
+ if(!question)throw Error('Choose the question on its source page before submitting the correction.');
  const typedText=contentCorrectionEnvelope(target,questionText,solutionLines,markingText);
- if(typedText.length>4000){status('The complete content correction is too long. Keep it under 4,000 characters.','warn');return}
- await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,content_correction:{target_id:target,source_block_index:currentStep?.sourceBlockIndex??null,question_text:questionText,solution_lines:solutionLines,mark_points:markPoints,teacher_initiated:manualEditTarget===target}})
+ if(typedText.length>4000)throw Error('The complete content correction is too long. Keep it under 4,000 characters.');
+ const scope={job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText};
+ const linked=numberingForQuestion(question,currentConfirmed);
+ if(linked&&linked.to===target){
+  const payload=reviewMarkingFollowUp(linked.correction,linked.from,linked.to,question.source_block_index,markingText,questionText,solutionLines);
+  await submitAndInterpret({...scope,numbered_marking:payload},button);
+  return;
+ }
+ const markPoints=markingText?parseStructuredMarking(markingText,{profile:ordinaryMathShorthandProfile(question,{})}).points:[];
+ await submitAndInterpret({...scope,content_correction:{
+  target_id:target,source_block_index:question.source_block_index??null,question_text:questionText,
+  solution_lines:solutionLines,mark_points:markPoints,teacher_initiated:manualEditTarget===question.question_id&&!!manualEditTarget,
+ }},button);
 }
 function childRepairEnvelope(target,replacement,total,markingText){return `[[PBHS_CHILD_REPAIR_V1]]\nCURRENT: ${target}\nCORRECT: ${replacement}\nTOTAL: ${total??''}\nMARKING:\n${markingText}\n[[END_PBHS_CHILD_REPAIR_V1]]`}
 function missingChildEnvelope(parent,question,total,markingText){return `[[PBHS_MISSING_CHILD_V1]]\nPARENT: ${parent}\nQUESTION: ${question}\nTOTAL: ${total}\nMARKING:\n${markingText}\n[[END_PBHS_MISSING_CHILD_V1]]`}
@@ -1354,37 +1600,40 @@ function submitSourceRestoration(editor){
  const total=editor.querySelector('.childTotal'),marking=editor.querySelector('.childMarking');if(total)total.value='';if(marking)marking.value='';
  submitChildRepair(editor).catch(error=>{markEditorNotSaved(editor);status('Not saved — '+error.message,'error')});
 }
-async function submitChildRepair(editor,visualMarkChangeResolution=null){
- if(!editor){status('This bounded item editor is unavailable for the current review.','warn');return}
- const target=String(editor.dataset.questionId||'').trim(),teacherInitiated=editor.dataset.teacherInitiated==='true';if(!teacherInitiated&&!boundedItemEditorAllowed(currentException,target)){status('This review needs the dedicated correction editor shown above.','warn');return}
+async function submitChildRepair(editor,visualMarkChangeResolution=null,button=null,questionOverride=null){
+ if(!editor){throw Error('This bounded item editor is unavailable for the current review.')}
+ const target=String(editor.dataset.questionId||'').trim(),teacherInitiated=editor.dataset.teacherInitiated==='true';if(!teacherInitiated&&!boundedItemEditorAllowed(currentException,target)){throw Error('This review needs the dedicated correction editor shown above.')}
  const replacement=editor.querySelector('.childCorrectId').value.trim(),totalText=editor.querySelector('.childTotal').value.trim(),markingText=editor.querySelector('.childMarking').value.trim(),idPattern=/^\d{1,2}(?:\.\d{1,2}){0,2}$/;
- if(!idPattern.test(target)||!idPattern.test(replacement)){status('Enter valid question numbers.','warn');return}
- const saved=effectiveConfirmedCorrections(currentConfirmed),previous=saved.find(row=>row.id===editor.dataset.supersedesCorrectionId);
- const numberChange=saved.find(row=>row.id===(previous?.proposed_patch?.numbering_correction_id||previous?.id)&&reviewNumberingMembers(row.proposed_patch).length);
- if(numberChange){
-  const block=Number(editor.dataset.sourceBlockIndex),payload=reviewMarkingFollowUp(numberChange,target,replacement,block,markingText);
-  if(!payload){status('Keep the saved number and enter its marking scheme. Use Numbering if you need to change the number again.','warn');return}
-  const structure=await ensureStructure(),question=(structure.questions||[]).find(q=>q.question_id===target&&q.source_block_index===block);
-  try{
-   const parsed=parseStructuredMarking(markingText,{profile:ordinaryMathShorthandProfile(question,{})});
-   if(parsed.total!==Number(totalText)||parsed.total!==question?.printed_marks)throw Error(`The marking scheme must add to the printed ${question?.printed_marks??''} marks.`);
-  }catch(error){status(error.message,'warn');return}
-  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${replacement} — marking scheme\n${markingText}`,numbered_marking:payload});
+ if(!idPattern.test(target)||!idPattern.test(replacement)){throw Error('Enter valid question numbers.')}
+ const block=editor.dataset.sourceBlockIndex===''?null:Number(editor.dataset.sourceBlockIndex);
+ const structure=await ensureStructure();
+ const candidates=(structure.questions||[]).filter(q=>q.question_id===target&&(block===null||q.source_block_index===block));
+ const question=questionOverride||(candidates.length===1?candidates[0]:null);
+ if(!question)throw Error('Choose one occurrence of this question on its source page before editing marks.');
+ const linked=numberingForQuestion(question,currentConfirmed);
+ if(linked){
+  const effective=replacement===question.question_id?linked.to:replacement;
+  const payload=reviewMarkingFollowUp(linked.correction,linked.from,effective,block,markingText);
+  if(!payload){throw Error('Keep the saved number and enter its marking scheme. Use Numbering if you need to change the number again.')}
+  const parsed=parseStructuredMarking(markingText,{profile:ordinaryMathShorthandProfile(question,{})});
+  if(parsed.total!==Number(totalText)||parsed.total!==question.printed_marks)
+   throw Error(`The marking scheme must add to the printed ${question.printed_marks??''} marks.`);
+  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${effective} — marking scheme\n${markingText}`,numbered_marking:payload},button);
   return;
  }
- if(majorQuestionId(target)!==majorQuestionId(replacement)){status('Use the numbering decision to move a question to a different heading.','warn');return}
- const structure=await ensureStructure(),duplicate=(structure.questions||[]).some(item=>String(item.question_id)===replacement&&String(item.question_id)!==target);if(duplicate){status(`Question ${replacement} already exists. Choose a different identifier.`,'warn');return}
+ if(majorQuestionId(target)!==majorQuestionId(replacement)){throw Error('Use the numbering decision to move a question to a different heading.')}
+ const duplicate=(structure.questions||[]).some(item=>String(item.question_id)===replacement&&String(item.question_id)!==target);if(duplicate){throw Error(`Question ${replacement} already exists. Choose a different identifier.`)}
  const supersedesCorrectionId=editor.dataset.supersedesCorrectionId||null,sourceRestorable=editor.dataset.sourceRestorable==='true',restorationRequested=!!supersedesCorrectionId&&replacement===target&&!markingText&&(totalText===''||totalText==='0');
- if(restorationRequested&&!sourceRestorable){status('This source question has a direct mark allocation and cannot be cleared. Restore its source marks instead.','warn');return}
+ if(restorationRequested&&!sourceRestorable){throw Error('This source question has a direct mark allocation and cannot be cleared. Restore its source marks instead.')}
  let total=null,markPoints=[];
- if(!restorationRequested&&(totalText||markingText)){if(!totalText||!markingText){status('To change marks, enter both the question total and the complete marking scheme.','warn');return}total=Number(totalText);if(!Number.isInteger(total)||total<1||total>999){status('Enter a whole-number total from 1 to 999.','warn');return}try{const question=(structure.questions||[]).find(item=>String(item.question_id)===target),profile=ordinaryMathShorthandProfile(question,{}),parsed=parseStructuredMarking(markingText,{profile});if(parsed.total!==total){status(`The marking scheme totals ${parsed.total}, but the entered total is ${total}.`,'warn');return}markPoints=parsed.points}catch(error){status(error.message,'warn');return}}
- if(replacement===target&&!markPoints.length&&!restorationRequested){status('Change the identifier, enter a marking scheme, or do both.','warn');return}
- const typedText=childRepairEnvelope(target,replacement,total,markingText);if(typedText.length>4000){status('The complete child correction is too long. Keep it under 4,000 characters.','warn');return}
- await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,child_repair:{target_id:target,replacement_id:replacement,printed_marks:restorationRequested?(totalText==='0'?0:null):total,marking_text:markingText,source_block_index:editor.dataset.sourceBlockIndex===''?null:Number(editor.dataset.sourceBlockIndex),supersedes_correction_id:supersedesCorrectionId,restore_source_state:restorationRequested,teacher_initiated:teacherInitiated},...(visualMarkChangeResolution?{visual_mark_change_resolution:visualMarkChangeResolution}:{})})
+ if(!restorationRequested&&(totalText||markingText)){if(!totalText||!markingText){throw Error('To change marks, enter both the question total and the complete marking scheme.')}total=Number(totalText);if(!Number.isInteger(total)||total<1||total>999){throw Error('Enter a whole-number total from 1 to 999.')}try{const profile=ordinaryMathShorthandProfile(question,{}),parsed=parseStructuredMarking(markingText,{profile});if(parsed.total!==total){throw Error(`The marking scheme totals ${parsed.total}, but the entered total is ${total}.`)}markPoints=parsed.points}catch(error){throw Error(error.message)}}
+ if(replacement===target&&!markPoints.length&&!restorationRequested){throw Error('Change the identifier, enter a marking scheme, or do both.')}
+ const typedText=childRepairEnvelope(target,replacement,total,markingText);if(typedText.length>4000){throw Error('The complete child correction is too long. Keep it under 4,000 characters.')}
+ await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,child_repair:{target_id:target,replacement_id:replacement,printed_marks:restorationRequested?(totalText==='0'?0:null):total,marking_text:markingText,source_block_index:editor.dataset.sourceBlockIndex===''?null:Number(editor.dataset.sourceBlockIndex),supersedes_correction_id:supersedesCorrectionId,restore_source_state:restorationRequested,teacher_initiated:teacherInitiated},...(visualMarkChangeResolution?{visual_mark_change_resolution:visualMarkChangeResolution}:{})},button)
 }
 function safeName(name){return String(name||'evidence.bin').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-120)||'evidence.bin'}
 async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status('Choose a file first.','warn');return}setBusy(true);try{const cid=crypto.randomUUID(),path=`${user.id}/${jobId}/corrections/${cid}/${safeName(f.name)}`;status('Uploading correction evidence…');const up=await sb.storage.from('memo-files').upload(path,f,{upsert:false,contentType:f.type||undefined});if(up.error)throw up.error;await submitAndInterpret({job_id:jobId,exception_id:currentException.id,correction_id:cid,input_kind:kind,storage_path:path})}finally{setBusy(false)}}
-function setBusy(v){for(const id of ['acceptDecision','editDecision','reviewLater','editNumberedMarking','reviewNumberedMarks','submitTyped','submitNumbering','submitContent','submitAllocations','submitPhoto','submitFile','confirm','applyBatch','start','retryInterpretation','editResubmit','cancelCorrection','editProposal','cancelProposal']){const el=$('#'+id);if(el)el.disabled=v}document.querySelectorAll('.childSubmit,.missingChildSubmit,.completeParent,.visualMarkCandidate,.rejectVisualMark,.manualVisualMark').forEach(button=>button.disabled=v)}
+function setBusy(v){for(const id of ['acceptDecision','editDecision','reviewLater','editNumberedMarking','reviewNumberedMarks','submitTyped','submitNumbering','submitContent','submitAllocations','submitPhoto','submitFile','confirm','applyBatch','start','retryInterpretation','editResubmit','cancelCorrection','editProposal','cancelProposal']){const el=$('#'+id);if(el)el.disabled=v}document.querySelectorAll('.decisionAlternative,.childSubmit,.missingChildSubmit,.completeParent,.visualMarkCandidate,.rejectVisualMark,.manualVisualMark').forEach(button=>button.disabled=v)}
 
 // BEGIN PROCESSING POLL MODEL
 const MAX_PROCESSING_POLL_MS=6000;
@@ -1466,7 +1715,7 @@ $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message
 $('#submitNumbering').onclick=()=>submitNumbering().catch(e=>{log('NUMBERING ERROR',{message:e.message});status('Numbering correction failed: '+e.message,'error')});
 $('#numberingOccurrence').onchange=()=>{const occurrence=selectedNumberingOccurrence();if(occurrence)currentStep.sourceBlockIndex=Number(occurrence.source_block_index);focusKey='';renderFocusedEvidence().catch(e=>status('Focused source evidence could not be refreshed: '+e.message,'warn'))};
 $('#numberingCurrent').oninput=()=>{refreshNumberingOccurrences();focusKey=''};
-$('#submitContent').onclick=()=>submitContent().catch(e=>{log('CONTENT CORRECTION ERROR',{message:e.message});status('Content correction failed: '+e.message,'error')});
+$('#submitContent').onclick=teacherAction(button=>submitContent(null,button));
 $('#submitPhoto').onclick=()=>submitFileFrom($('#photoInput'),'photo').catch(e=>{log('PHOTO ERROR',{message:e.message});status('Photo correction failed: '+e.message,'error')});
 $('#submitFile').onclick=()=>{const f=$('#fileInput').files?.[0],kind=f?.type?.startsWith('image/')?'photo':'upload';submitFileFrom($('#fileInput'),kind).catch(e=>{log('FILE ERROR',{message:e.message});status('File correction failed: '+e.message,'error')})};
 
@@ -1481,7 +1730,20 @@ async function editCurrentProposal(){
  }
  await rejectAndReopen('');
  if(model.operation==='rename_question_family'){$('#editDecision')?.click();return}
- if(patch.numbering_correction_id){$('#editNumberedMarking')?.click();return}
+ if(patch.numbering_correction_id){
+  const structure=await ensureStructure(),questions=structure.questions||[];
+  const question=questions.find(q=>{
+   const linked=numberingForQuestion(q,currentConfirmed);
+   return linked?.correction.id===patch.numbering_correction_id&&linked.to===model.target_id;
+  });
+  if(!question)throw Error('The saved question could not be found on its original page. Refresh to continue.');
+  openManualContent(question);
+  $('#contentQuestion').value=model.question_text||'';
+  $('#contentSolution').value=model.solution_lines.join('\n');
+  $('#contentMarking').value=markingSchemeText(patch.mark_points);
+  saveDraft();
+  return;
+ }
  if(model.operation==='rename_question_identifier'){
   openTeacherEditor('numbering');$('#numberingCurrent').value=model.target_id||'';
   $('#numberingCorrect').value=model.replacement_id||'';refreshNumberingOccurrences(model.source_block_index);return;
@@ -1512,16 +1774,37 @@ function confirmedEffectiveStagingState(correction,staged){
  return {ok:true,restoration:false,target:String(patch.target_id||patch.affected_id||'')};
 }
 // END CONFIRMED STAGING VERIFICATION MODEL
+function clearSavedNumberingDraft(correction){
+ const patch=correction.proposed_patch||{};
+ if(patch.operation==='rename_question_family'){
+  const key=draftKey(`numbering-${correction.exception_id}`);
+  let values;try{values=JSON.parse(localStorage.getItem(key)||'null')?.family}catch{}
+  if(values&&patch.numbering_members.every(member=>values[member.exception_id]?.trim()===member.target_id))localStorage.removeItem(key);
+ }
+ if(!patch.numbering_correction_id||!patch.mark_points?.length)return;
+ const question=(structureCache?.questions||[]).find(q=>{
+  const linked=numberingForQuestion(q,currentConfirmed);
+  return linked?.correction.id===patch.numbering_correction_id&&linked.to===patch.target_id;
+ });
+ if(!question)return;
+ const shortKey=draftKey(`marks-for-${patch.numbering_correction_id}-${patch.target_id}`);
+ const manualKey=manualMarkDraftKey(question),marking=markingSchemeText(patch.mark_points).trim();
+ if(localStorage.getItem(shortKey)?.trim()===marking)localStorage.removeItem(shortKey);
+ let manual;try{manual=JSON.parse(localStorage.getItem(manualKey)||'null')}catch{}
+ if(manual?.marking?.trim()===marking&&Number(manual.total)===patch.expected_total)localStorage.removeItem(manualKey);
+}
 async function confirmCurrent(){
  if(!currentCorrection||correctionInFlight)return;
  correctionInFlight=true;
  status('Saving your change…');
+ actionFeedback($('#confirm'),'Saving your change…');
  setBusy(true);
  try{
   const correction=currentCorrection,patch=correction.proposed_patch||{},scope=String(patch.reconciliation_scope||patch.correction_scope||''),workspaceScoped=['suspicious_child','missing_child','bounded_item_editor','numbering_only','teacher_initiated_item'].includes(scope),target=String(patch.target_id||patch.affected_id||''),workspaceParent=currentException?.category==='question_total_mismatch'&&workspaceScoped&&majorQuestionId(target)===majorQuestionId(currentException.affected_id)?currentException:(workspaceScoped?currentActive.find(item=>item.category==='question_total_mismatch'&&isDescendantId(target,item.affected_id))||null:null);
   if(!workspaceParent)sessionStorage.setItem(lastDecisionKey(),JSON.stringify({exception_id:currentException?.id,candidate_id:patch.candidate_id||null}));
   const r=await invoke('confirm-correction',{correction_id:correction.id,defer_revalidation:true});
   if(!r?.staged||r?.correction?.id!==correction.id||r?.correction?.confirmation_status!=='confirmed')throw new Error('The backend did not return a durable confirmed correction.');
+  clearSavedNumberingDraft(correction);
   log('TEACHER CONFIRMED AND STAGED',r);
   currentCorrection=null;queueLocked=false;
   await loadReviewState();
@@ -1537,7 +1820,7 @@ async function confirmCurrent(){
   }
   if(reviewQueue.selected_id){const next=reviewQueue.items.find(item=>item.id===reviewQueue.selected_id);if(next)await showException(next)}else await showBatchReady();
   if(verification.restoration)status(`Saved ✓ — Question ${verification.target} restored to the original memo state.`,'success');
- }catch(e){log('CONFIRM ERROR',{message:e.message});status('Not saved — '+e.message,'error')}
+ }catch(e){log('CONFIRM ERROR',{message:e.message});actionFeedback($('#confirm'),'Not saved — '+e.message,'error');status('Not saved — '+e.message,'error')}
  finally{correctionInFlight=false;setBusy(false)}
 }
 async function applyStagedBatch(){setBusy(true);try{sessionStorage.removeItem(parentCompletionKey());const r=await invoke('resume-correction',{job_id:jobId});log('STAGED BATCH DISPATCHED',r);processingStartedAt=Date.now();updateProcessingPanel({status:'dispatched',stage:'phase7_redispatch'});monitorProcessing()}catch(e){log('BATCH APPLY ERROR',{message:e.message});status('Could not start the check: '+e.message,'error')}finally{setBusy(false)}}
@@ -1555,9 +1838,9 @@ $('#issueJump').onchange=event=>navigateReview(event.target.value).catch(e=>stat
 $('#questionJump').onchange=event=>navigateReview(event.target.value).catch(e=>status('Could not open that question: '+e.message,'error'));
 $('#correctionTool').onchange=event=>setCorrectionTool(event.target.value);
 $('#numberingCurrent').addEventListener('input',()=>refreshNumberingOccurrences());
-$('#manualMarks').onclick=()=>openManualMarks().catch(error=>status('The original memo state could not be loaded. Refresh and try again.','error'));
-$('#manualNumbering').onclick=()=>openManualNumbering();
-$('#manualContent').onclick=()=>openManualContent();
+$('#manualMarks').onclick=teacherAction(()=>openManualMarks());
+$('#manualNumbering').onclick=teacherAction(()=>openManualNumbering());
+$('#manualContent').onclick=teacherAction(()=>openManualContent());
 $('#choices').addEventListener('input',()=>{saveDraft();status('Not saved','warn')});
 (async()=>{try{const s=(await sb.auth.getSession()).data.session;if(s){user=s.user;$('#supportAction').classList.remove('hide');$('#start').textContent='Resume review';if(jobId){const j=await currentJob();if(['processing','dispatched','correction_confirmed'].includes(j.status)){processingStartedAt=Date.now();monitorProcessing()}else status('Saved sign-in and review Job ID found. Resume when ready.','success')}else status('Saved sign-in found. Enter the Job ID for the memo you want to review.','success')}else if(!jobId)status('Enter the Job ID for the memo you want to review. The accepted baseline is no longer selected automatically.')}catch{}})();
 </script>

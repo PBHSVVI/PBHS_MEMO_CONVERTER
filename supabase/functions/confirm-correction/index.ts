@@ -157,6 +157,13 @@ export default {
           other, linkedSource, questionTarget, questionSourceIndex,
         )) return false;
         const otherQuestionTarget = String(other.target_id ?? other.affected_id ?? "");
+        // The anchor label is not a content target. A family may move a
+        // page-five occurrence while a page-three amendment keeps that label.
+        if (isFamily || other.operation === "rename_question_family") {
+          return isFamily
+            ? numberingMembers(patch).some(member => member.target_id === otherQuestionTarget)
+            : numberingMembers(other).some(member => member.target_id === questionTarget);
+        }
         const otherSourceIndex = other.source_block_index == null ? null : Number(other.source_block_index);
         const sameQuestionTarget = !["resolve_visual_evidence_association", "resolve_visual_mark_change"].includes(String(patch.operation ?? "")) &&
           other.operation !== "resolve_visual_evidence_association" &&
