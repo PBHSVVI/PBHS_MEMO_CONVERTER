@@ -1336,6 +1336,7 @@ def _apply_set_question_subtotal(
     correction_id: str,
     category: str,
     patch: dict[str, Any],
+    affected_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     target_id = str(patch.get("target_id") or "").strip()
     if not re.fullmatch(r"\d{1,2}", target_id):
@@ -1345,6 +1346,14 @@ def _apply_set_question_subtotal(
             f"Confirmed correction {correction_id} does not identify one major question.",
         )
     target_major = int(target_id)
+    parent_reconciliation = category == "question_total_mismatch"
+    if parent_reconciliation and (
+        target_id != affected_id or patch.get("reinterpretation_method") != "deterministic_parent_ledger"
+    ):
+        return None, _issue(
+            "correction_operation_invalid", affected_id,
+            f"Confirmed correction {correction_id} does not match a reviewed parent subtotal.",
+        )
     try:
         value = int(patch.get("subtotal"))
     except Exception:
@@ -1354,6 +1363,14 @@ def _apply_set_question_subtotal(
             "correction_mark_total_invalid",
             target_id,
             f"Confirmed correction {correction_id} has an invalid question subtotal.",
+        )
+    if parent_reconciliation and (
+        type(patch.get("subtotal")) is not int or type(patch.get("effective_child_total")) is not int
+        or patch["effective_child_total"] != value
+    ):
+        return None, _issue(
+            "correction_mark_total_invalid", target_id,
+            f"Confirmed correction {correction_id} does not match its validated child total.",
         )
 
     major_question_rows = [
@@ -1368,9 +1385,15 @@ def _apply_set_question_subtotal(
             f"Confirmed correction {correction_id} cannot resolve Question {target_id}.",
         )
     source_index = min(
-        int(question.get("source_block_index", 10**9))
-        for question in major_question_rows
+        (question["source_block_index"] for question in major_question_rows
+         if type(question.get("source_block_index")) is int),
+        default=None,
     )
+    if source_index is None:
+        return None, _issue(
+            "correction_evidence_unresolved", target_id,
+            f"Confirmed correction {correction_id} cannot resolve a source-backed subtotal.",
+        )
 
     existing = [
         item
@@ -1383,26 +1406,28 @@ def _apply_set_question_subtotal(
     existing_sum = sum(int(item.get("value") or 0) for item in existing)
     new_sum = current_sum - existing_sum + value
 
-    if existing:
-        structure["subtotals"] = [
-            item
-            for item in structure.get("subtotals", [])
-            if item not in existing
-        ]
-    structure.setdefault("subtotals", []).append({
-        "value": value,
-        "after_question": target_id,
-        "block_index": source_index,
-        "correction_overlay": {
-            "correction_id": correction_id,
-            "operation": "set_question_subtotal",
-        },
-    })
-    structure["subtotals"].sort(
-        key=lambda item: int(item.get("block_index", 10**9))
-    )
+    retain_observation = parent_reconciliation and len(existing) == 1 and existing_sum == value
+    if not retain_observation:
+        if existing:
+            structure["subtotals"] = [
+                item for item in structure.get("subtotals", []) if item not in existing
+            ]
+        structure.setdefault("subtotals", []).append({
+            "value": value,
+            "after_question": target_id,
+            "block_index": source_index,
+            "correction_overlay": {
+                "correction_id": correction_id,
+                "operation": "set_question_subtotal",
+            },
+        })
+        structure["subtotals"].sort(
+            key=lambda item: int(item.get("block_index", 10**9))
+        )
     observed_total = (structure.get("summary") or {}).get("observed_document_total")
-    if observed_total is None or new_sum == int(observed_total):
+    if parent_reconciliation:
+        _remove_exception(structure, category, target_id)
+    elif observed_total is None or new_sum == int(observed_total):
         _remove_exception(structure, category, None)
     else:
         for exception in structure.get("exceptions", []):
@@ -1416,7 +1441,7 @@ def _apply_set_question_subtotal(
         "correction_id": correction_id,
         "operation": "set_question_subtotal",
         "category": category,
-        "affected_id": None,
+        "affected_id": affected_id,
         "target_id": target_id,
         "subtotal": value,
         "source_block_index": source_index,
@@ -1613,12 +1638,13 @@ def apply_phase7_5_patch(
         )
         return applied, issue, True
 
-    if category == "subtotal_sum_unexpected" and operation == "set_question_subtotal":
+    if category in {"subtotal_sum_unexpected", "question_total_mismatch"} and operation == "set_question_subtotal":
         applied, issue = _apply_set_question_subtotal(
             structure,
             correction_id=correction_id,
             category=category,
             patch=patch,
+            affected_id=affected,
         )
         return applied, issue, True
 

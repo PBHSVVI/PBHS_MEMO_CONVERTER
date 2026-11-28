@@ -228,7 +228,7 @@ CORRECTION_OPERATION_CATEGORIES = {
     }),
     "promote_unlabeled_question": frozenset({"unlabeled_mark_bearing_question"}),
     "insert_missing_major_question": frozenset({"major_question_gap"}),
-    "set_question_subtotal": frozenset({"subtotal_sum_unexpected"}),
+    "set_question_subtotal": frozenset({"subtotal_sum_unexpected", "question_total_mismatch"}),
 }
 
 

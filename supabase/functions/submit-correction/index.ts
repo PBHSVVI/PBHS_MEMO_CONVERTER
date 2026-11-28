@@ -940,13 +940,13 @@ export default {
         displayText = `Rename Question ${currentId}${occurrence} → Question ${correctId}`;
         exceptionStatus = "awaiting_confirmation";
       } else if (parentResolution && typeof parentResolution === "object") {
-        if (exception.category !== "question_total_mismatch" || !QUESTION_ID_RE.test(String(exception.affected_id ?? ""))) {
+        if (exception.category !== "question_total_mismatch" || !/^\d{1,2}$/.test(String(exception.affected_id ?? ""))) {
           return Response.json({ error: "parent_reconciliation_category_mismatch" }, { status: 400 });
         }
         const value = parentResolution as Record<string, unknown>;
         const submittedEffectiveTotal = Number(value.effective_total ?? value.computed_total);
         const message = String(exception.message ?? "");
-        if (value.choice !== "source_wrong" || !Number.isInteger(submittedEffectiveTotal) || submittedEffectiveTotal < 0 || submittedEffectiveTotal > 999) {
+        if (value.choice !== "source_wrong" || !Number.isInteger(submittedEffectiveTotal) || submittedEffectiveTotal < 1 || submittedEffectiveTotal > 999) {
           return Response.json({ error: "invalid_parent_reconciliation" }, { status: 400 });
         }
         const structure = await loadStructure(ctx, job.user_id, jobId);

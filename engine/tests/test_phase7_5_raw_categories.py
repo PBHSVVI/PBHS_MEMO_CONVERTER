@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from engine.src.memo_engine.corrections import apply_confirmed_corrections
 from engine.src.memo_engine.phase7_5 import (
     apply_phase7_5_patch,
     enrich_structure_phase7_5,
@@ -277,6 +280,30 @@ def test_item_total_teacher_override_accepts_plain_language():
     assert proposal["reinterpretation_method"] == "deterministic_teacher_item_total"
     assert evidence["teacher_item_total"] == 3
     assert "3 marks" in display
+
+
+@pytest.mark.parametrize("validated_total", [7, 6])
+def test_staged_parent_subtotal_replays_and_preserves_matching_source(validated_total):
+    source = {"value": 7, "after_question": "12", "block_index": 6, "source_page": 3}
+    parent = {"category": "question_total_mismatch", "affected_id": "12", "message": "Check Question 12"}
+    other = {"category": "subtotal_sum_unexpected", "affected_id": None, "message": "Check paper total"}
+    structure = {
+        "questions": [_q("12.1", 5, printed=7, computed=7)],
+        "subtotals": [source.copy()], "exceptions": [parent.copy(), other.copy()],
+    }
+    correction = {"id": "saved-parent", "confirmation_status": "confirmed", "proposed_patch": {
+        **parent, "operation": "set_question_subtotal", "target_id": "12", "subtotal": 7,
+        "effective_child_total": validated_total, "reinterpretation_method": "deterministic_parent_ledger",
+    }}
+    result, applied, issues = apply_confirmed_corrections(structure, {}, [correction])
+    assert result["subtotals"] == [source]
+    if validated_total == 7:
+        assert len(applied) == 1 and not issues
+        assert applied[0]["affected_id"] == "12"
+        assert result["exceptions"] == [other]
+    else:
+        assert not applied and issues[0]["category"] == "correction_mark_total_invalid"
+        assert result["exceptions"] == [parent, other, *issues]
 
 
 def test_item_total_teacher_override_accepts_parenthesised_total():
