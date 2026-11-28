@@ -196,7 +196,7 @@ def test_pdf_focus_requires_reliable_association_before_page_fallback():
     value = {"ex": {"affected_id": "9.9"}, "structure": {"questions": []}, "normalized": {"content": {"pages": []}}}
     assert _node(program, value) is None
     html = PAGE.read_text(encoding="utf-8")
-    assert "No reliable question crop or source-page association was found" in html
+    assert "The document opens here because no question crop was available." in html
     assert 'id="toggleFull"' in html
     assert "function renderFullMemo()" in html
 

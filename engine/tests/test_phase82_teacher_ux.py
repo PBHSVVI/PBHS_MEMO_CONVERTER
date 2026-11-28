@@ -24,21 +24,25 @@ def _html() -> str:
     return REVIEW_PAGE.read_text(encoding="utf-8")
 
 
-def test_compact_review_information_order_and_navigation_hooks() -> None:
+def test_teacher_decision_layout_and_advanced_navigation_hooks() -> None:
     html = _html()
     for label in (
-        "1 · What's wrong / why the system is asking",
-        "2 · Source evidence",
-        "3 · Suggested interpretation / discrepancy",
-        "4 · Editing tool",
-        "5 · Save &amp; next",
+        "Original memo",
+        "Current converted working",
+        "Accept suggestion",
+        "Edit suggestion",
+        "Review later",
+        "Please confirm your change",
     ):
         assert label in html
+    assert html.index('class="reviewEvidence"') < html.index('id="decisionCard"')
+    assert '<details id="advancedReview" class="advancedReview">' in html
+    assert html.index('id="decisionCard"') < html.index('id="advancedReview"') < html.index('id="issueJump"')
     assert 'id="issueJump"' in html
     assert 'aria-label="Jump to unresolved issue"' in html
     assert 'id="questionJump"' in html
     assert 'aria-label="Jump to question"' in html
-    assert "Review ${position} / ${count}" in html
+    assert "Review ${position} of ${count}" in html
     assert "$('#issueJump').onchange" in html
     assert "$('#questionJump').onchange" in html
 
