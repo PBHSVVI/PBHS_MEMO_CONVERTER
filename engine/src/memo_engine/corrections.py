@@ -849,8 +849,18 @@ def apply_confirmed_corrections(
             if len(matched) != 1 or patch.get("supersedes_correction_id") == prior_id:
                 issue = _issue("correction_evidence_unresolved", target_id, "The saved numbering for this marking scheme could not be applied.")
             else:
+                review_category = category
+                if (
+                    patch.get("source_exception_category") == "mathematical_consistency_conflict"
+                    and patch.get("reinterpretation_method") == "structured_numbered_marking"
+                    and patch.get("solution_lines")
+                ):
+                    # Use the same exact-occurrence cleanup as a working
+                    # correction entered before numbering. Marks alone leave
+                    # the mathematical review for the teacher.
+                    review_category = "mathematical_consistency_conflict"
                 applied_item, issue, _ = apply_phase7_5_patch(
-                    result, normalized, correction_id=correction_id, category=category,
+                    result, normalized, correction_id=correction_id, category=review_category,
                     affected_id=affected_id, operation=operation, patch=patch,
                 )
                 if applied_item:

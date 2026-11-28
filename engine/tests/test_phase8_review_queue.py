@@ -147,7 +147,7 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
-    assert "reconcileReviewQueue(list,saved,staged,parentCompletionTargetSet())" in html
+    assert "reconcileReviewQueue(list,saved,staged,parentCompletionTargetSet(),currentProjection)" in html
     assert "advanced?'Saved'" in html
     assert "lastDecisionKey()" in html
 
@@ -217,7 +217,7 @@ def test_progress_uses_server_backed_staged_subtraction_and_remaining_workload()
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert ".eq('confirmation_status','confirmed').is('applied_at',null)" in html
     assert "loadReviewState()" in html
-    assert "remaining=actionableReviewQueue(currentActive,staged,parentCompletionTargetSet()).length" in html
+    assert "remaining=actionableReviewQueue(currentActive,staged,parentCompletionTargetSet(),currentProjection).length" in html
     assert "Review ${position} of ${count}" in html
     assert "${staged.length} saved" in html
     assert "total=stagedDecisionCount+count" not in html

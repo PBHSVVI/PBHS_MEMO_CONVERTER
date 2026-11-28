@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { callEdge, makeFixture, jobId, uuid } from "./review-flow.fixture.mjs";
+import { callEdge, makeFixture, makeOccurrenceFixture, jobId, uuid } from "./review-flow.fixture.mjs";
 
 const page = readFileSync(new URL("../../../docs/phase7-5-review/index.html", import.meta.url), "utf8");
 const extract = (from, to) => page.slice(page.indexOf(from), page.indexOf(to, page.indexOf(from)));
@@ -16,6 +16,8 @@ const models = [
   extract("function childRepairEnvelope", "function missingChildEnvelope"),
   extract("async function submitChildRepair", "function safeName"),
   extract("function majorQuestionId", "async function stagedCorrections"),
+  extract("// BEGIN CHILD REPAIR MODEL", "// END CHILD REPAIR MODEL"),
+  extract("// BEGIN VISUAL EVIDENCE FOCUS MODEL", "// END VISUAL EVIDENCE FOCUS MODEL"),
 ].join("\n");
 
 function reviewModel(fixture, exception) {
@@ -24,11 +26,13 @@ function reviewModel(fixture, exception) {
     currentConfirmed, currentStep: {}, currentException: exception, jobId, manualEditQuestion: null, manualEditTarget: "",
     ensureStructure: async () => fixture.structure,
     submitAndInterpret: body => callEdge(fixture, "submit-correction", body),
-    boundedItemEditorAllowed: () => true,
+    boundedItemEditorAllowed: () => true, knownSpecs: {},
   });
   const model = vm.runInContext(models + `
     ({ actionableReviewQueue, familyDecision, proposedMarking, markingProposal, submitContent,
-       submitChildRepair, teacherShowBackModel, numberingForQuestion, verifiedEqualityAmendment })
+       submitChildRepair, teacherShowBackModel, numberingForQuestion, verifiedEqualityAmendment,
+       projectQuestionOccurrences, projectReviewExceptions, reviewQuestionId, sourcePageForException,
+       effectiveParentOverlay, parentQuestionFamilyContext, calculationDecision })
   `, context);
   return model;
 }
@@ -153,4 +157,74 @@ test("manual marking follows the saved occurrence, handles invalid input and pre
   assert.equal(content.proposed_patch.supersedes_correction_id, saved.id);
   assert.equal(content.proposed_patch.numbering_correction_id, rename.id);
   assert.deepEqual(fixture.rows.corrections[0], rename);
+});
+
+test("page-three content, page-five numbering and linked marks project one identity across the queue and totals", async () => {
+  const fixture = makeOccurrenceFixture(), { cardsEx, flagReview, parentEx, flags, math } = fixture;
+  const { structure, normalized, rows } = fixture;
+  const scope = ex => ({ job_id: jobId, exception_id: ex.id, input_kind: "typed", typed_text: "Confirm this source occurrence" });
+  const cards = reviewModel(fixture, cardsEx);
+  const s = cardsEx.suggestions[0], q = structure.questions[1];
+  await cards.submitContent(cards.markingProposal(cardsEx, s, q, normalized, cards.proposedMarking(s), s.converted_working, null).values);
+  const savedCards = await submitted(fixture);
+  const individual = await callEdge(fixture, "submit-correction", { ...scope(flagReview), numbering_correction: {
+    current_id: "4.1", correct_id: "6.1", source_block_index: flags.source_block_index,
+  } });
+  assert.equal(individual.status, 201);
+  const rename = await submitted(fixture);
+  const pendingMarks = await callEdge(fixture, "submit-correction", { ...scope(parentEx), numbered_marking: {
+    numbering_correction_id: rename.id, current_id: "4.1", target_id: "6.1", source_block_index: 3,
+    marking_text: "1M Permutations\n1A Result",
+  } });
+  assert.equal(pendingMarks.status, 201);
+  const savedMarks = await submitted(fixture);
+  const browser = reviewModel(fixture, parentEx), initial = structuredClone(structure);
+  const projected = () => {
+    const occurrences = browser.projectQuestionOccurrences(structure, rows.corrections);
+    const active = browser.projectReviewExceptions(rows.exceptions.filter(row => row.status === "open"),
+      structure, occurrences, rows.corrections, rows.corrections);
+    const queue = browser.actionableReviewQueue(active, rows.corrections, new Set(), occurrences);
+    const sourceView = { ...structure, questions: occurrences.map(row => ({
+      ...row.question, question_id: row.effective_id, source_question_id: row.printed_id,
+    })) };
+    return { occurrences, active, queue, sourceView };
+  };
+  const group = projected().queue.find(row => row.decision_group?.kind === "numbering");
+  const family = browser.familyDecision(group, rows.corrections);
+  const members = Array.from(family.rows.filter(row => !row.saved), row => ({ exception_id: row.exception_id, target_id: row.to }));
+  const remaining = await callEdge(fixture, "submit-correction", { ...scope(parentEx), family_numbering: { members } });
+  assert.equal(remaining.status, 201);
+  const savedFamily = await submitted(fixture);
+
+  const { active, queue, sourceView } = projected();
+  assert.deepEqual(structure, initial);
+  assert.deepEqual(Array.from(queue, browser.reviewQuestionId), ["6.2.2"]);
+  const ex = queue[0];
+  assert.equal(ex.id, math.id);
+  assert.equal(ex.affected_id, "4.2.2");
+  assert.equal(browser.sourcePageForException(ex, sourceView, normalized), 5);
+  const model = id => browser.effectiveParentOverlay(structure, active, rows.corrections, id, rows.corrections);
+  assert.equal(model("4").effective_staged_total, 9);
+  assert.equal(model("4").difference, 0);
+  assert.equal(model("6").effective_staged_total, 3);
+  assert.equal(model("6").difference, 3);
+  const page4 = browser.parentQuestionFamilyContext(fixture.p4, sourceView, normalized);
+  assert.deepEqual(Array.from(page4.pages), [3]);
+  assert.ok(!page4.members.some(row => row.source_page === 5));
+  assert.deepEqual(Array.from(projected().queue, browser.reviewQuestionId), ["6.2.2"]);
+  assert.deepEqual(rows.corrections.map(row => row.id), [savedCards.id, rename.id, savedMarks.id, savedFamily.id]);
+
+  const mathBrowser = reviewModel(fixture, ex), markingHint = fixture.companion.suggestions[0];
+  const proposal = mathBrowser.markingProposal(ex, markingHint, ex.review_occurrence.question, normalized,
+    mathBrowser.proposedMarking(markingHint), markingHint.converted_working, mathBrowser.calculationDecision(ex));
+  await mathBrowser.submitContent(proposal.choices[0].values);
+  const preview = mathBrowser.teacherShowBackModel(rows.corrections.at(-1));
+  assert.equal(preview.target_id, "6.2.2");
+  assert.match(preview.solution_lines[0], /=360$/);
+  assert.equal(preview.source_block_index, 3);
+  assert.equal(rows.corrections.at(-1).proposed_patch.numbering_correction_id, savedFamily.id);
+  await submitted(fixture);
+  const after = projected();
+  assert.equal(after.active.find(row => row.id === fixture.p6.id).review_subtotal.difference, 0);
+  assert.equal(after.queue.length, 0);
 });

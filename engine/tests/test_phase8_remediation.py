@@ -29,7 +29,7 @@ def _node(program: str, value: object) -> object:
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js required")
-    run = subprocess.run([node, "--input-type=module", "-e", program, json.dumps(value)], check=True, capture_output=True, text=True)
+    run = subprocess.run([node, "--input-type=module", "-", json.dumps(value)], input=program, check=True, capture_output=True, text=True)
     return json.loads(run.stdout)
 
 
@@ -42,7 +42,7 @@ def test_queue_uses_natural_numeric_question_order():
         {"id": "d", "category": "item_total_mismatch", "affected_id": "1.1.2"},
         {"id": "e", "category": "item_total_mismatch", "affected_id": "1.1.1"},
     ]
-    result = _node(model + "\nconst s=reconcileReviewQueue(JSON.parse(process.argv[1]),{});console.log(JSON.stringify(s.items.map(x=>x.affected_id)));", items)
+    result = _node(model + "\nconst s=reconcileReviewQueue(JSON.parse(process.argv[2]),{});console.log(JSON.stringify(s.items.map(x=>x.affected_id)));", items)
     assert result == ["1.1.1", "1.1.2", "2", "10.1", "10.2"]
 
 
@@ -53,7 +53,7 @@ def test_dependency_still_overrides_natural_order():
         {"id": "child", "category": "item_total_mismatch", "affected_id": "3.1"},
         {"id": "later", "category": "item_total_mismatch", "affected_id": "4.1"},
     ]
-    result = _node(model + "\nconsole.log(JSON.stringify(actionableReviewQueue(JSON.parse(process.argv[1])).map(x=>x.id)));", items)
+    result = _node(model + "\nconsole.log(JSON.stringify(actionableReviewQueue(JSON.parse(process.argv[2])).map(x=>x.id)));", items)
     assert result == ["child", "later"]
 
 
@@ -67,7 +67,7 @@ def test_skip_survives_recreated_exception_uuid_by_logical_key():
         {"id": "new", "category": "item_total_mismatch", "affected_id": "5.1.1"},
         {"id": "other-new", "category": "item_total_mismatch", "affected_id": "5.1.2"},
     ]
-    program = model + "\nconst a=JSON.parse(process.argv[1]);let s=reconcileReviewQueue(a.first,{});s=skipReviewQueue(s);s=reconcileReviewQueue(a.recreated,s);console.log(JSON.stringify({order:s.items.map(x=>x.id),skipped:s.skipped_keys}));"
+    program = model + "\nconst a=JSON.parse(process.argv[2]);let s=reconcileReviewQueue(a.first,{});s=skipReviewQueue(s);s=reconcileReviewQueue(a.recreated,s);console.log(JSON.stringify({order:s.items.map(x=>x.id),skipped:s.skipped_keys}));"
     result = _node(program, {"first": first, "recreated": recreated})
     assert result["order"] == ["other-new", "new"]
     assert result["skipped"] == ["item_total_mismatch|5.1.1||"]
@@ -80,7 +80,7 @@ def test_source_focus_rejects_q3_q6_numeric_collisions():
         {"cells": ["6", "Geometry result", "[20]"], "combined": "6 Geometry result [20]"},
         {"cells": ["3.1", "Solve", "(4)"], "combined": "3.1 Solve (4)"},
     ]
-    program = "const textMatches=(a,b)=>String(a).includes(String(b));\n" + source + "\nconst b=JSON.parse(process.argv[1]);console.log(JSON.stringify({q6:b.map(x=>sourceBlockMatches(x,'6',false,true)),q31:b.map(x=>sourceBlockMatches(x,'3.1',false,true))}));"
+    program = "const textMatches=(a,b)=>String(a).includes(String(b));\n" + source + "\nconst b=JSON.parse(process.argv[2]);console.log(JSON.stringify({q6:b.map(x=>sourceBlockMatches(x,'6',false,true)),q31:b.map(x=>sourceBlockMatches(x,'3.1',false,true))}));"
     result = _node(program, blocks)
     assert result == {"q6": [False, True, False], "q31": [False, False, True]}
 
@@ -108,15 +108,14 @@ def test_structural_question_region_precedes_global_token_fallback():
         "function renderFullMemo", 1
     )[0]
     assert "Number.isInteger(currentStep?.sourceBlockIndex)?visibleQuestionRegion" in focused
-    assert "made=structural||visibleCloneAround(currentStep)" in focused
+    assert "made=structural||(!renamed&&(visibleCloneAround(currentStep)" in focused
 
 
 def test_pdf_focus_uses_direct_then_exact_visual_evidence_and_solution_crops():
     model = _section("VISUAL EVIDENCE FOCUS MODEL")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + model
-        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+        _section("REVIEW DEPENDENCY MODEL") + "\n" + model
+        + "\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
     )
     value = {
         "ex": {"affected_id": "4.2.1", "suggestions": [{"rendered_asset_ref": "internal/visual/regions/direct.png"}]},
@@ -136,9 +135,8 @@ def test_pdf_focus_uses_direct_then_exact_visual_evidence_and_solution_crops():
 def test_pdf_focus_uses_exact_visual_solution_when_no_exception_crop_exists():
     model = _section("VISUAL EVIDENCE FOCUS MODEL")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + model
-        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+        _section("REVIEW DEPENDENCY MODEL") + "\n" + model
+        + "\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
     )
     value = {
         "ex": {"affected_id": "5.2.1", "suggestions": []},
@@ -153,9 +151,8 @@ def test_pdf_focus_uses_exact_visual_solution_when_no_exception_crop_exists():
 def test_pdf_focus_safely_uses_parent_crop_but_not_sibling_crop():
     model = _section("VISUAL EVIDENCE FOCUS MODEL")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + model
-        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
+        _section("REVIEW DEPENDENCY MODEL") + "\n" + model
+        + "\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify(visualEvidenceCandidates(v.ex,v.structure).map(x=>x.asset)));"
     )
     value = {
         "ex": {"affected_id": "4.2.1"},
@@ -170,9 +167,8 @@ def test_pdf_focus_safely_uses_parent_crop_but_not_sibling_crop():
 def test_pdf_focus_uses_known_source_page_and_never_defaults_to_page_one():
     model = _section("VISUAL EVIDENCE FOCUS MODEL")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + model
-        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
+        _section("REVIEW DEPENDENCY MODEL") + "\n" + model
+        + "\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
     )
     value = {
         "ex": {"affected_id": "5.2.1"},
@@ -189,9 +185,8 @@ def test_pdf_focus_uses_known_source_page_and_never_defaults_to_page_one():
 def test_pdf_focus_requires_reliable_association_before_page_fallback():
     model = _section("VISUAL EVIDENCE FOCUS MODEL")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + model
-        + "\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
+        _section("REVIEW DEPENDENCY MODEL") + "\n" + model
+        + "\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify(sourcePageForException(v.ex,v.structure,v.normalized)));"
     )
     value = {"ex": {"affected_id": "9.9"}, "structure": {"questions": []}, "normalized": {"content": {"pages": []}}}
     assert _node(program, value) is None
@@ -206,7 +201,7 @@ def test_geometry_conflict_uses_content_editor_without_ledger_edit_controls():
     program = (
         "function majorQuestionId(value){const m=String(value||'').match(/^\\\\d+/);"
         "return m?m[0]:''}\n" + model
-        + "\nconst cases=JSON.parse(process.argv[1]);"
+        + "\nconst cases=JSON.parse(process.argv[2]);"
         + "\nconsole.log(JSON.stringify(cases.map(x=>boundedItemEditorAllowed(x.ex,x.target))));"
     )
     cases = [
@@ -265,13 +260,11 @@ def test_question_workspace_and_staged_batch_preserve_individual_corrections():
 
 def _child_ledger(value: object) -> object:
     model = _section("CHILD REPAIR MODEL")
-    helpers = """
-function majorQuestionId(value){const match=String(value||'').match(/^\\d+/);return match?match[0]:''}
-function compareQuestionIds(a,b){const aa=String(a).split('.').map(Number),bb=String(b).split('.').map(Number),n=Math.max(aa.length,bb.length);for(let i=0;i<n;i++){const d=(aa[i]??-1)-(bb[i]??-1);if(d)return d}return 0}
-function isDependent(){return false}
-function parentDiscrepancyDetails(parent){const values=String(parent.message||'').match(/\\d+/g)||[];return {source_total:values.at(-2)||null,converter_total:values.at(-1)||null}}
+    helpers = r"""
+const knownSpecs={};
+function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
 """
-    program = helpers + model + "\nconst x=JSON.parse(process.argv[1]);console.log(JSON.stringify(questionLedgerModel(x.structure,x.exceptions,x.staged,x.major)));"
+    program = helpers + _section("REVIEW DEPENDENCY MODEL") + model + "\nconst x=JSON.parse(process.argv[2]);console.log(JSON.stringify(questionLedgerModel(x.structure,x.exceptions,x.staged,x.major)));"
     return _node(program, value)
 
 

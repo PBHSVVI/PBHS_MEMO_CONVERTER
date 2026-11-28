@@ -21,7 +21,13 @@ def _model() -> str:
         re.S,
     )
     assert match
-    return match.group(1)
+    dependency = re.search(
+        r"// BEGIN REVIEW DEPENDENCY MODEL\s*(.*?)\s*// END REVIEW DEPENDENCY MODEL",
+        source,
+        re.S,
+    )
+    assert dependency
+    return dependency.group(1) + "\n" + match.group(1)
 
 
 def _node(expression: str, value: object) -> object:
@@ -29,12 +35,12 @@ def _node(expression: str, value: object) -> object:
     if not node:
         pytest.skip("Node.js required")
     program = (
-        "function compareQuestionIds(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true})}\n"
-        + _model()
-        + f"\nconst v=JSON.parse(process.argv[1]);console.log(JSON.stringify({expression}));"
+        _model()
+        + f"\nconst v=JSON.parse(process.argv[2]);console.log(JSON.stringify({expression}));"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", program, json.dumps(value)],
+        [node, "--input-type=module", "-", json.dumps(value)],
+        input=program,
         check=True,
         capture_output=True,
         text=True,

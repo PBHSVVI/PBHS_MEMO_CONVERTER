@@ -87,6 +87,38 @@ export function makeFixture() {
   return { rows, structure, normalized, probabilityEx, cardsEx, parentEx, flags, confirmation };
 }
 
+export function makeOccurrenceFixture() {
+  const fixture = makeFixture(), { rows, structure, flags } = fixture;
+  rows.corrections = [];
+  rows.exceptions = rows.exceptions.filter(row => row.id !== fixture.probabilityEx.id);
+  const flagReview = rows.exceptions.find(row => row.id === uuid(12));
+  flagReview.status = "open";
+  const probability = structure.questions[0];
+  probability.computed_shorthand_marks = 4;
+  probability.mark_points = [criterion("A", "Verified answer"), { ...criterion("M", "Verified method"), count: 3 }];
+  const next = question("4.1.2", 3, 35, 1, "4.1.2 Give the result. (1)");
+  next.computed_shorthand_marks = 1;
+  structure.questions.push(next);
+  const first = structure.questions.find(row => row.question_id === "4.2.1");
+  first.computed_shorthand_marks = 1;
+  const second = structure.questions.find(row => row.question_id === "4.2.2");
+  const factorial = String.raw`\frac{6!\times 2}{2!2!}=180`;
+  const math = review(16, second, "mathematical_consistency_conflict", [{
+    displayed_expression: factorial, calculated_left: "360", displayed_right: "180",
+    evaluation_mode: "exact", operator: "=", source_refs: [{ page: 5 }],
+  }], "The displayed factorial calculation disagrees.");
+  const companion = marking(17, second, "source_issue", [factorial],
+    [{ ...criterion("M", "Count the arrangements"), count: 2 }, criterion("A", "Evaluate the result")], "Confirm the intended working.");
+  companion.suggestions[0].guideline_math_conflict_only = true;
+  companion.suggestions[0].source_occurrence = "4.2.2@5:240";
+  const p4 = review(18, { question_id: "4" }, "question_total_mismatch", [], "Question 4 observed subtotal 9 does not equal computed 5.");
+  const p6 = review(19, { question_id: "6" }, "question_total_mismatch", [], "Question 6 observed subtotal 6 does not equal computed 0.");
+  rows.exceptions.push(math, companion, p4, p6);
+  structure.subtotals = [{ after_question: "4", value: 9, block_index: 1 }, { after_question: "6", value: 6, block_index: 3 }];
+  flags.reference_verification = { pending_marks: 2 };
+  return { ...fixture, flagReview, math, companion, p4, p6 };
+}
+
 export function fixtureDatabase(fixture, owner) {
   return {
     from(table) {

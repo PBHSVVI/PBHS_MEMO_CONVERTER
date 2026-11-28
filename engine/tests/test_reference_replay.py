@@ -166,3 +166,41 @@ def test_group_numbering_is_atomic_and_follow_up_keeps_verified_working():
     assert [p["descriptor"] for p in after["mark_points"]] == ["Teacher method", "Teacher answer"]
     assert [line["canonical_latex"] for line in after["visual_solution_segments"]] == ["7", "9"]
     assert all(row["effective"] and row["applied"] for row in final["correction_overlay"]["history"])
+
+
+@pytest.mark.parametrize("solution_lines", [[], ["6! / (2! × 2!) = 180"]])
+def test_numbered_calculation_review_is_resolved_only_by_working_for_its_source(solution_lines):
+    structure, question, _ = sample()
+    question.update(path=[3, 1], source_heading_major="12", source_character_offset=100,
+                    source_line="3.1 Calculate this.")
+    earlier = {**question, "source_page": 1, "source_block_index": 2, "source_heading_major": "3"}
+    structure["questions"].insert(0, earlier)
+    hint = structure["exceptions"][0]["suggestions"][0]
+    hint.update(source_occurrence="3.1@2:100", guideline_math_conflict_only=True)
+    earlier_review = {"category": "marking_interpretation_review", "affected_id": "3.1",
+                      "suggestions": [{**hint, "source_page": 1, "source_block_index": 2, "source_occurrence": "3.1@1:100"}]}
+    structure["exceptions"].append(earlier_review)
+    locator = {"schema_version": "1.0", "parent_heading": "12", "source_page": 2,
+               "source_question_id": "3.1", "source_character_offset": 100,
+               "source_line_hash": source_line_hash(question["source_line"])}
+    rename = {"id": "number", "confirmation_status": "confirmed", "proposed_patch": {
+        "operation": "rename_question_identifier", "category": "question_parent_heading_mismatch",
+        "affected_id": "3.1", "target_id": "12.1", "source_block_index": 7, "source_locator": locator,
+    }}
+    amendment = {"id": "working", "confirmation_status": "confirmed", "proposed_patch": {
+        "operation": "replace_item_content", "category": "teacher_initiated_item_edit",
+        "source_exception_category": "mathematical_consistency_conflict", "affected_id": "12.1", "target_id": "12.1",
+        "numbering_correction_id": "number", "source_block_index": 7, "source_locator": locator,
+        "reconciliation_scope": "teacher_initiated_item", "reinterpretation_method": "structured_numbered_marking",
+        "solution_lines": solution_lines, "printed_marks": 2, "mark_points": [
+            {"count": 1, "code": "M", "descriptor": "Method"},
+            {"count": 1, "code": "A", "descriptor": "Answer"},
+        ],
+    }}
+    final, applied, issues = apply_confirmed_corrections(structure, {}, [rename, amendment])
+    assert not issues and len(applied) == 2
+    assert final["questions"][0] == earlier
+    assert earlier_review in final["exceptions"]
+    assert any(row["affected_id"] == "12.1" for row in final["exceptions"]) is not bool(solution_lines)
+    if solution_lines:
+        assert final["questions"][1]["content_override"]["solution_lines"] == solution_lines

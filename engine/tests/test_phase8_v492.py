@@ -25,18 +25,16 @@ def _node(program: str, value: object) -> object:
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js required")
-    run = subprocess.run([node, "--input-type=module", "-e", program, json.dumps(value)], check=True, capture_output=True, text=True)
+    run = subprocess.run([node, "--input-type=module", "-", json.dumps(value)], input=program, check=True, capture_output=True, text=True)
     return json.loads(run.stdout)
 
 
 def _child_ledger(value: object) -> object:
     helpers = r'''
+const knownSpecs={};
 function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
-function compareQuestionIds(a,b){const aa=String(a).split('.').map(Number),bb=String(b).split('.').map(Number),n=Math.max(aa.length,bb.length);for(let i=0;i<n;i++){const d=(aa[i]??-1)-(bb[i]??-1);if(d)return d}return 0}
-function isDependent(){return false}
-function parentDiscrepancyDetails(parent){const values=String(parent.message||'').match(/\d+/g)||[];return {source_total:values.at(-2)||null,converter_total:values.at(-1)||null}}
 '''
-    program = helpers + _section("CHILD REPAIR MODEL") + "\nconst x=JSON.parse(process.argv[1]);console.log(JSON.stringify(questionLedgerModel(x.structure,x.exceptions,x.staged,x.major)));"
+    program = helpers + _section("REVIEW DEPENDENCY MODEL") + _section("CHILD REPAIR MODEL") + "\nconst x=JSON.parse(process.argv[2]);console.log(JSON.stringify(questionLedgerModel(x.structure,x.exceptions,x.staged,x.major)));"
     return _node(program, value)
 
 
@@ -129,6 +127,6 @@ def test_q6_source_region_excludes_q5_and_includes_twenty_subtotal():
     ]
     structure = {"questions": [{"question_id": "6.2", "source_block_index": 3}, {"question_id": "6.3", "source_block_index": 4}, {"question_id": "6.4", "source_block_index": 5}]}
     helpers = "function majorQuestionId(v){return String(v).split('.')[0]}\nfunction textMatches(a,b){return String(a).includes(String(b))}\n"
-    result = _node(helpers + _section("SOURCE FOCUS MODEL") + "\nconst x=JSON.parse(process.argv[1]);console.log(JSON.stringify(questionRegionBounds(x.blocks,x.structure,'6')));", {"blocks": blocks, "structure": structure})
+    result = _node(helpers + _section("SOURCE FOCUS MODEL") + "\nconst x=JSON.parse(process.argv[2]);console.log(JSON.stringify(questionRegionBounds(x.blocks,x.structure,'6')));", {"blocks": blocks, "structure": structure})
     assert result["start"] == 2 and result["end"] == 6
     assert "exact child alignment requires review" in result["label"]
