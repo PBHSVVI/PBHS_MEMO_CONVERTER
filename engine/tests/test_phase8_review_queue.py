@@ -81,6 +81,23 @@ def test_verified_working_waits_for_its_own_numbering_occurrence():
     assert _evaluate([numbering, pending, independent])["actionable"] == ["different_page", "parent"]
 
 
+def test_saved_numbering_defers_only_the_verified_items_dependent_flags():
+    staged = [{"id": "number", "proposed_patch": {"operation": "rename_question_identifier",
+               "affected_id": "7.2", "target_id": "12.2", "source_block_index": 3,
+               "source_locator": {"source_page": 5}}}]
+    rows = [
+        {"id": "draft", "category": "marking_interpretation_review", "affected_id": "7.2",
+         "suggestions": [{"source_page": 5, "source_block_index": 3, "depends_on_source_numbering": True,
+                          "rendered_asset_ref": "page-5"}]},
+        {"id": "total", "category": "item_total_mismatch", "affected_id": "7.2"},
+        {"id": "same_crop", "category": "visual_evidence_uncertain", "affected_id": "7.2",
+         "suggestions": [{"page": 5, "rendered_asset_ref": "page-5"}]},
+        {"id": "different_crop", "category": "visual_evidence_uncertain", "affected_id": "7.2",
+         "suggestions": [{"page": 3, "rendered_asset_ref": "page-3"}]},
+    ]
+    assert _evaluate(rows, staged)["actionable"] == ["different_crop"]
+
+
 def test_previous_next_and_skip_rotate_only_actionable_items():
     exceptions = [
         {"id": "parent", "category": "question_total_mismatch", "affected_id": "7"},

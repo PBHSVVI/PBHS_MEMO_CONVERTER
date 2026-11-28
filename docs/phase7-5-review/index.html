@@ -591,7 +591,27 @@ function groupRelatedReviewDecisions(ordered){
  }
  return ordered.flatMap(item=>groups.has(item.id)?[groups.get(item.id)]:groupedRows.has(item.id)?[]:[item]);
 }
-function actionableReviewQueue(list,staged=[],parentDone=new Set()){const source=(Array.isArray(list)?list:[]).filter(item=>!item?.non_actionable),targets=stagedTargetSet(staged),unstaged=source.filter(item=>!exceptionCoveredByTargets(item,targets)&&!parentDone.has(exceptionTargetKey(item))),ordered=unstaged.filter(item=>!isDependent(item,unstaged,staged)).sort(compareReviewItems),grouped=groupRelatedReviewDecisions(ordered);return [...new Map(grouped.map(item=>[logicalReviewKey(item),item])).values()]}
+function waitsForSavedNumbering(item,list,targets){
+ const totals=['item_total_mismatch','mark_arithmetic_mismatch'].includes(item.category);
+ const visual=['visual_evidence_uncertain','visual_math_notation_uncertain'].includes(item.category);
+ if(!totals&&!visual)return false;
+ const same=list.filter(row=>row.affected_id===item.affected_id);
+ const drafts=same.filter(row=>row.category==='marking_interpretation_review');
+ const pending=drafts.flatMap(row=>row.suggestions||[]).filter(s=>s.depends_on_source_numbering
+  &&targets.has(numberingOccurrenceKey(item.affected_id,s.source_page)));
+ if(pending.length!==1)return false;
+ if(totals)return drafts.length===1&&!same.some(row=>row.category==='duplicate_question_identifier');
+ const evidence=item.suggestions||[];
+ return evidence.length>0&&evidence.every(s=>Number(s.page??s.source_page)===pending[0].source_page
+  &&s.rendered_asset_ref===pending[0].rendered_asset_ref);
+}
+function actionableReviewQueue(list,staged=[],parentDone=new Set()){
+ const source=(Array.isArray(list)?list:[]).filter(item=>!item?.non_actionable),targets=stagedTargetSet(staged);
+ const unstaged=source.filter(item=>!exceptionCoveredByTargets(item,targets)
+  &&!waitsForSavedNumbering(item,source,targets)&&!parentDone.has(exceptionTargetKey(item)));
+ const ordered=unstaged.filter(item=>!isDependent(item,unstaged,staged)).sort(compareReviewItems);
+ return [...new Map(groupRelatedReviewDecisions(ordered).map(item=>[logicalReviewKey(item),item])).values()];
+}
 function reconcileReviewQueue(list,state={},staged=[],parentDone=new Set()){
  const actionable=actionableReviewQueue(list,staged,parentDone),byKey=new Map(actionable.map(item=>[logicalReviewKey(item),item])),logicalKeys=[...new Set(actionable.map(logicalReviewKey))],skipped=[...new Set((Array.isArray(state.skipped_keys)?state.skipped_keys:[]).filter(key=>byKey.has(key)))],normal=logicalKeys.filter(key=>!skipped.includes(key)),keys=[...normal,...skipped],requested=String(state.selected_key||''),selected_key=keys.includes(requested)?requested:(keys[0]||null),items=keys.map(key=>byKey.get(key));
  return {keys,skipped_keys:skipped,selected_key,ids:items.map(item=>item.id),selected_id:byKey.get(selected_key)?.id||null,items};
