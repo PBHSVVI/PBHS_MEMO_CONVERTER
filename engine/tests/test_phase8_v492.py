@@ -111,7 +111,7 @@ def test_missing_child_is_confirmation_gated_and_staged_conflicts_are_bounded():
     html = PAGE.read_text(encoding="utf-8")
     submit = (ROOT / "supabase/functions/submit-correction/index.ts").read_text(encoding="utf-8")
     confirm = (ROOT / "supabase/functions/confirm-correction/index.ts").read_text(encoding="utf-8")
-    assert "Review this addition" in html and "SHOW-BACK — not applied yet" in html
+    assert "Review this addition" in html and "Please confirm your change" in html
     assert 'operation: "insert_missing_child_question"' in submit
     assert 'exceptionStatus = "awaiting_confirmation"' in submit
     assert 'missing_child_identifier_conflict' in submit

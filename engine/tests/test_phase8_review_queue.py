@@ -131,7 +131,7 @@ def test_page_preserves_drafts_and_blocks_navigation_while_correction_is_pending
 def test_resume_reconciles_removed_confirmed_item_and_reports_advance():
     html = REVIEW_PAGE.read_text(encoding="utf-8")
     assert "reconcileReviewQueue(list,saved,staged,parentCompletionTargetSet())" in html
-    assert "Saved ✓ — advanced to" in html
+    assert "advanced?'Saved'" in html
     assert "lastDecisionKey()" in html
 
 

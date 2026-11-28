@@ -3,6 +3,7 @@ import { withSupabase } from "npm:@supabase/server@^1";
 import { classifyVisualReviewUnit, ensureVisualEvidenceIds } from "../_shared/visual-evidence.mjs";
 import { correctionPredecessorMatchesSource, validateSourceRestoration } from "../_shared/source-restoration.mjs";
 import { immutableSourceStateForQuestionOccurrence } from "../_shared/immutable-source-state.mjs";
+import { familyNumberingSelection, matchingNumberingMember, numberingConflict, numberingMembers } from "../_shared/numbering-review.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(["suggestion", "typed", "photo", "upload"]);
@@ -244,10 +245,13 @@ function effectiveChildTotal(
   corrections,
   parentId,
 ) {
-  const patches = effectiveConfirmedCorrections(corrections).map((row) => ({
-    ...(row.proposed_patch && typeof row.proposed_patch === "object" ? row.proposed_patch : {}),
-    _correction_id: row.id,
-  }));
+  const patches = effectiveConfirmedCorrections(corrections).flatMap((row) => {
+    const patch = row.proposed_patch ?? {};
+    const members = patch.operation === "rename_question_family"
+      ? patch.numbering_members.map((member) => ({ ...member, operation: "rename_question_identifier" }))
+      : [patch];
+    return members.map((member) => ({ ...member, _correction_id: row.id }));
+  });
   const questions = Array.isArray(structure.questions) ? structure.questions : [];
   let total = 0;
   for (const rawQuestion of questions) {
@@ -257,6 +261,10 @@ function effectiveChildTotal(
     const sourceIndex = Number(question.source_block_index);
     const patch = [...patches].reverse().find((item) => {
       if (item.source_block_index != null && Number(item.source_block_index) !== sourceIndex) return false;
+      if (item.numbering_correction_id) {
+        return item.source_locator?.source_question_id === String(question.source_question_id ?? questionId) &&
+          item.source_locator?.source_page === question.source_page;
+      }
       if (item.operation === "rename_question_identifier") {
         return String(item.affected_id ?? item.source_id ?? "") === questionId;
       }
@@ -269,12 +277,16 @@ function effectiveChildTotal(
       if (candidate && typeof candidate === "object") { allocation = candidate; break; }
     }
     const projectedId = String(
-      patch?.operation === "rename_question_identifier"
+      patch?.operation === "rename_question_identifier" || patch?.numbering_correction_id
         ? patch.target_id
         : patch?.replacement_id ?? questionId,
     );
     if (!projectedId.startsWith(`${parentId}.`)) continue;
-    const projected = Number(patch?.expected_total ?? patch?.printed_marks ?? allocation?.printed_marks ?? numericQuestionTotal(question));
+    const verifiedNumbered = patch?.operation === "rename_question_identifier" &&
+      String(question.source_heading_major) === String(patch.target_id).split(".")[0]
+      ? question.reference_verification?.pending_marks : null;
+    const projected = Number(patch?.expected_total ?? patch?.printed_marks ?? allocation?.printed_marks ??
+      verifiedNumbered ?? numericQuestionTotal(question));
     if (!Number.isInteger(projected) || projected < 0 || projected > 999) throw new Error("invalid_effective_child_total");
     total += projected;
   }
@@ -576,6 +588,8 @@ export default {
       const correctionRevision = body.correction_revision;
       const content = body.content_correction;
       const numbering = body.numbering_correction;
+      const familyNumbering = body.family_numbering;
+      const numberedMarking = body.numbered_marking;
       const visualAssociation = body.visual_association_resolution;
       const visualMarkChange = body.visual_mark_change_resolution;
       if (visualMarkChange && typeof visualMarkChange === "object" && !childRepair) {
@@ -772,6 +786,88 @@ export default {
           displayText = `Replace the previous request with: add Question ${questionId} to Question ${parentId} using the supplied ${parsed.total}-mark scheme. The earlier request remains in the audit history.`;
           exceptionStatus = "awaiting_confirmation";
         } else return Response.json({ error: "invalid_correction_revision_action" }, { status: 400 });
+      } else if (familyNumbering && typeof familyNumbering === "object") {
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const { data: active, error: activeError } = await ctx.supabaseAdmin.from("exceptions")
+          .select("id,category,affected_id,suggestions").eq("job_id", jobId)
+          .eq("category", "question_parent_heading_mismatch").eq("status", "open");
+        if (activeError) return Response.json({ error: "numbering_review_lookup_failed" }, { status: 502 });
+        const selected = familyNumberingSelection(exception, active ?? [], structure?.questions ?? [],
+          (familyNumbering as Record<string, unknown>).members);
+        if (!selected) return Response.json({ error: "invalid_numbering_family" }, { status: 400 });
+        const members = await Promise.all(selected.map(async ({ exceptionId, source, target, question }) => ({
+          exception_id: exceptionId, affected_id: source.printed, target_id: target, source_block_index: source.block,
+          source_locator: {
+            schema_version: "1.0", source_question_id: source.printed, source_page: source.page,
+            parent_heading: source.heading, source_character_offset: source.offset, original_source_block_index: source.block,
+            source_line_hash: /^[0-9a-f]{64}$/.test(String(question.source_line_hash ?? ""))
+              ? question.source_line_hash : await normalizedSourceLineHash(question.source_line),
+          },
+        })));
+        if (members.some(member => !member.source_locator.source_line_hash)) {
+          return Response.json({ error: "invalid_numbering_source_locator" }, { status: 400 });
+        }
+        proposedPatch = {
+          schema_version: "1.0", operation: "rename_question_family", category: exception.category,
+          affected_id: exception.affected_id, numbering_members: members,
+          correction_scope: "numbering_only", reinterpretation_method: "structured_family_numbering",
+        };
+        const { data: confirmed, error: correctionsError } = await ctx.supabaseAdmin.from("corrections")
+          .select("id,proposed_patch").eq("job_id", jobId).eq("confirmation_status", "confirmed");
+        if (correctionsError) return Response.json({ error: "prior_correction_lookup_failed" }, { status: 502 });
+        const replaced = new Set((confirmed ?? []).map((row: any) => row.proposed_patch?.supersedes_correction_id));
+        if ((confirmed ?? []).some((row: any) => !replaced.has(row.id) && numberingConflict(proposedPatch, row.proposed_patch))) {
+          return Response.json({ error: "numbering_identifier_conflict" }, { status: 409 });
+        }
+        displayText = `Update question numbers on page ${selected[0].source.page}. The working and marks stay with their original items.`;
+        exceptionStatus = "awaiting_confirmation";
+      } else if (numberedMarking && typeof numberedMarking === "object") {
+        const value = numberedMarking as Record<string, unknown>;
+        const priorId = String(value.numbering_correction_id ?? "");
+        const currentId = String(value.current_id ?? "");
+        const targetId = String(value.target_id ?? "");
+        const sourceBlock = value.source_block_index;
+        if (!UUID_RE.test(priorId) || !QUESTION_ID_RE.test(currentId) || !QUESTION_ID_RE.test(targetId) ||
+            !Number.isInteger(sourceBlock) || value.supersedes_correction_id) {
+          return Response.json({ error: "numbered_marking_source_missing" }, { status: 400 });
+        }
+        const { data: confirmed, error: correctionsError } = await ctx.supabaseAdmin.from("corrections")
+          .select("id,proposed_patch").eq("job_id", jobId).eq("confirmation_status", "confirmed");
+        if (correctionsError) return Response.json({ error: "prior_correction_lookup_failed" }, { status: 502 });
+        const prior = (confirmed ?? []).find((row: any) => row.id === priorId);
+        const member = matchingNumberingMember(prior?.proposed_patch, currentId, targetId, sourceBlock);
+        if (!member || (confirmed ?? []).some((row: any) => row.proposed_patch?.supersedes_correction_id === priorId)) {
+          return Response.json({ error: "numbered_marking_source_missing" }, { status: 409 });
+        }
+        const structure = await loadStructure(ctx, job.user_id, jobId);
+        const locator = member.source_locator;
+        const questions = Array.isArray(structure?.questions) ? structure.questions : [];
+        const rows = questions.filter((q: any) =>
+          (q.question_id === currentId || q.question_id === targetId) &&
+          String(q.source_question_id ?? q.question_id) === currentId && q.source_page === locator.source_page &&
+          q.source_block_index === sourceBlock && q.source_character_offset === locator.source_character_offset &&
+          String(q.source_heading_major) === String(locator.parent_heading));
+        if (rows.length !== 1 || (rows[0].source_line_hash ?? await normalizedSourceLineHash(rows[0].source_line)) !== locator.source_line_hash) {
+          return Response.json({ error: "numbered_marking_source_missing" }, { status: 409 });
+        }
+        const parsed = parseMarkingScheme(String(value.marking_text ?? ""), ordinaryMathSemanticProfile(rows[0], {}));
+        if (!parsed || !Number.isInteger(rows[0].printed_marks) || parsed.total !== rows[0].printed_marks) {
+          return Response.json({ error: "invalid_numbered_marking_total" }, { status: 400 });
+        }
+        const previous = [...(confirmed ?? [])].reverse().find((row: any) =>
+          row.proposed_patch?.numbering_correction_id === priorId && row.proposed_patch?.target_id === targetId &&
+          !(confirmed ?? []).some((other: any) => other.proposed_patch?.supersedes_correction_id === row.id));
+        proposedPatch = {
+          schema_version: "1.0", operation: "replace_item_content", category: "teacher_initiated_item_edit",
+          source_exception_category: exception.category, affected_id: targetId, target_id: targetId,
+          source_block_index: sourceBlock, source_locator: locator, numbering_correction_id: priorId,
+          reconciliation_scope: "teacher_initiated_item", reinterpretation_method: "structured_numbered_marking",
+          question_text: null, solution_lines: [], printed_marks: parsed.total, expected_total: parsed.total,
+          mark_points: parsed.points, mark_calculation_mode: parsed.mode,
+          ...(previous ? { supersedes_correction_id: previous.id, supersession_reason: "teacher_amended_previous_change" } : {}),
+        };
+        displayText = `Use the supplied ${parsed.total}-mark scheme for Question ${targetId}. The saved numbering change is kept.`;
+        exceptionStatus = "awaiting_confirmation";
       } else if (numbering && typeof numbering === "object") {
         const value = numbering as Record<string, unknown>;
         const currentId = typeof value.current_id === "string" ? value.current_id.trim() : "";
@@ -942,6 +1038,9 @@ export default {
             .select("id,job_id,proposed_patch,confirmation_status,applied_at")
             .eq("id", supersedesCorrectionId).eq("job_id", jobId).maybeSingle();
           priorPatch = prior?.proposed_patch && typeof prior.proposed_patch === "object" ? prior.proposed_patch as Record<string, unknown> : null;
+          if (numberingMembers(priorPatch).length) {
+            return Response.json({ error: "numbered_marking_requires_separate_change" }, { status: 400 });
+          }
           const priorOccurrenceMatches = correctionPredecessorMatchesSource({
             prior,
             targetId,
@@ -1067,7 +1166,10 @@ export default {
         if (!targets || suppliedIds.length !== targets.length || suppliedIds.some((id, index) => id !== targets[index]) || new Set(suppliedIds).size !== targets.length) {
           return Response.json({ error: "invalid_allocation_target_set" }, { status: 400 });
         }
-        const validated = [];
+        const validated: {
+          question_id: string; printed_marks: number; marking_text: string;
+          mark_points: Record<string, unknown>[]; mark_calculation_mode: string;
+        }[] = [];
         for (let index = 0; index < allocations.length; index += 1) {
           const item = allocations[index] as Record<string, unknown>;
           const printedMarks = Number(item.printed_marks);
@@ -1112,7 +1214,12 @@ export default {
         const rawPoints = Array.isArray(value.mark_points) ? value.mark_points : [];
         const structure = await loadStructure(ctx, job.user_id, jobId);
         const questions = Array.isArray(structure?.questions) ? structure.questions : [];
-        const question = questions.find((entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).question_id ?? "") === targetId) as Record<string, unknown> | undefined;
+        const candidates = questions.filter((entry: any) => entry?.question_id === targetId);
+        const applicable = candidates.filter((entry: any) =>
+          candidates.length === 1 || (entry.source_block_index === value.source_block_index &&
+            (teacherInitiated || (exception.suggestions ?? []).some((hint: any) =>
+              hint.source_block_index === entry.source_block_index && hint.source_page === entry.source_page))));
+        const question = applicable.length === 1 ? applicable[0] as Record<string, unknown> : undefined;
         const profile = ordinaryMathSemanticProfile(question, {});
         const markPoints = rawPoints.map((point) => {
           const item = point && typeof point === "object" ? point as Record<string, unknown> : {};
@@ -1131,7 +1238,9 @@ export default {
           !teacherInitiated && typeof exception.affected_id === "string" &&
           QUESTION_ID_RE.test(exception.affected_id) && targetId !== exception.affected_id
         );
-        const invalidContent = (!questionText && !solutionLines.length) || questionText.length > 2000 ||
+        const sourceCorrectionRequired = exception.category === "mathematical_consistency_conflict" ||
+          (Array.isArray(exception.suggestions) && exception.suggestions.some((item: any) => item?.guideline_provider_decision === "source_issue"));
+        const invalidContent = (!questionText && !solutionLines.length && (!markPoints.length || sourceCorrectionRequired)) || questionText.length > 2000 ||
           solutionLines.length > 80 || solutionLines.some((line) => line.length > 1000);
         const invalidMarks = markPoints.some((point) =>
           !Number.isInteger(point.count) || point.count < 1 || point.count > 10 ||
@@ -1146,6 +1255,10 @@ export default {
         const expectedTotal = conditionalAccuracy
           ? Math.max(...markPoints.map((point) => point.count))
           : markPoints.reduce((total, point) => total + point.count, 0);
+        if (!questionText && !solutionLines.length &&
+            (!Number.isInteger(question?.printed_marks) || expectedTotal !== question?.printed_marks)) {
+          return Response.json({ error: "invalid_content_marking_total" }, { status: 400 });
+        }
         proposedPatch = {
           schema_version: "1.0",
           operation: "replace_item_content",

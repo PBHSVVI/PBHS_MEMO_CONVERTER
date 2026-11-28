@@ -379,7 +379,7 @@ def test_child_repair_stays_confirmation_gated_and_auditable():
     assert "row.staged?'Edit correction':'Edit'" in html
     assert "Add a missing subquestion" in html
     assert "Review this correction" in html
-    assert "SHOW-BACK — not applied yet" in html
+    assert "Please confirm your change" in html
     assert 'id="confirm"' in html
     assert 'reconciliation_scope: teacherInitiated ? "teacher_initiated_item" : parentReview ? "suspicious_child" : "bounded_item_editor"' in submit
     assert 'operation: "insert_missing_child_question"' in submit

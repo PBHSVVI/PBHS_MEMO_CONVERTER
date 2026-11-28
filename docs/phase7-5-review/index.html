@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PBHS Memo Converter — Phase 8 Review v4.12.8</title>
+<title>PBHS Mathematics Memo Review</title>
 <link rel="stylesheet" href="../pbhs-design-tokens.css">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js"></script>
@@ -40,17 +40,34 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
 @media(max-width:600px){header{padding:7px 10px}.reviewCrest{width:42px;height:42px}.reviewBrandText h1{font-size:.93rem}.sub{font-size:.7rem}.reviewAction{padding:10px}.queueButtons{display:grid;grid-template-columns:repeat(3,1fr)}.queueButtons button{margin:0}.sourceHead{align-items:flex-start}.sourceTools{width:100%}.sourceTools button{flex:1}.proposal .buttonRow{background:#f3faf6}.proposal .buttonRow button{min-width:0}.reviewGrid{gap:8px}}
 .supportAction{position:fixed;z-index:80;right:14px;bottom:14px;border-color:var(--pbhs-border-strong);box-shadow:0 3px 14px #0003}.supportBackdrop{position:fixed;z-index:1000;inset:0;display:grid;place-items:center;padding:14px;background:#0c1d2d99}.supportDialog{position:relative;width:min(520px,100%);max-height:calc(100vh - 28px);overflow:auto;padding:22px;border-top:4px solid var(--pbhs-gold);background:#fff;box-shadow:0 12px 36px #0004}.supportClose{position:absolute;right:8px;top:8px;width:38px;height:38px;border-radius:50%;background:var(--soft);color:var(--navy)}.supportOptions{display:grid;gap:6px;margin:10px 0 14px;padding:0;border:0}.supportOptions label{margin:0;padding:9px;border:1px solid var(--line);border-radius:7px}.supportOptions input{width:auto}.supportReassurance{font-size:.88rem;color:var(--pbhs-muted)}
 .reviewHeaderRow{display:flex;align-items:center;justify-content:space-between;gap:12px}.homeLink{color:#fff;border:1px solid #ffffff66;border-radius:var(--radius-sm);padding:8px 11px;font-weight:850;text-decoration:none;white-space:nowrap}.homeLink:hover{background:#ffffff18}.saveState{margin:7px 0 0;font-weight:850}.saveState.saved{color:var(--green)}.saveState.unsaved{color:var(--red)}.workspaceActions{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}@media(max-width:600px){.reviewHeaderRow{align-items:flex-start}.homeLink{padding:7px 9px}}
+/* Teacher decision view */
+.reviewSummary{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:16px 0 12px;padding:12px 16px;background:var(--pbhs-surface);border:1px solid var(--line);border-radius:var(--radius-md)}
+.reviewSummary b{color:var(--navy)}.reviewSummary #savedProgress{color:var(--green);font-weight:750}
+.reviewGrid{grid-template-columns:minmax(0,1.18fr) minmax(0,1fr);gap:18px}.reviewAction{position:static;max-height:none;overflow:visible;padding:22px}.reviewAction h2{font-size:1.5rem}
+.sourceTools button{min-height:38px}#focusViewport{padding:0;max-height:560px;min-height:0;background:var(--pbhs-surface)}#focusRender{min-width:0;box-shadow:none;padding:0}.visualCrop{max-height:none}
+.reviewEvidence .sourceCard:has(.focus-docx) #focusViewport,.reviewEvidence .sourceCard:has(.pdfFrame) #focusViewport{min-height:290px}
+.legend,.focus-note,.visualReading,.reviewAction .pauseNote,.reviewAction .reviewOrderLabel,.reviewAction>.reviewEyebrow,.reviewAction>#progress,.reviewAction>#exceptionBox,.reviewAction>#explain{display:none}
+.advancedReview{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}.advancedReview summary{cursor:pointer;color:var(--navy);font-weight:750}.advancedReview>*{margin-bottom:10px}
+.decisionWorking{background:var(--soft);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius-sm);font:inherit;line-height:1.65;margin:.4rem 0 1rem;padding:12px}
+.decisionTable{width:100%;border-collapse:collapse;text-align:left;margin:10px 0 14px}.decisionTable th,.decisionTable td{padding:8px;border-bottom:1px solid var(--line)}.decisionTable th{font-size:.9rem;color:var(--pbhs-muted)}.decisionTable input{max-width:7rem}
+.decisionMarks{padding-left:1.2rem;margin:.35rem 0 1rem}.decisionMarks li{margin:.38rem 0}.decisionLead{line-height:1.5;color:var(--pbhs-muted)}
+.decisionActions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.decisionActions button{margin:0}
+.decisionStatus:empty{display:none}.decisionStatus{margin-top:14px}.review-open #authPanel{display:none}
+#choices:not(.hide){scroll-margin:12px}.reviewAction:not(.show-legacy-tools) #choices>.reviewOrderLabel,.reviewAction:not(.show-legacy-tools) #choices>.toolLabel,.reviewAction:not(.show-legacy-tools) #correctionTool,.reviewAction:not(.show-legacy-tools) #suggestionBlock{display:none}
+.reviewAction:not(.show-legacy-tools) #choices.show-suggestions #suggestionBlock{display:block}.feedback-inline{padding:7px 0;color:var(--red);font-weight:700}.feedback-inline:empty{display:none}
+@media(max-width:900px){.reviewGrid{grid-template-columns:minmax(0,1fr);gap:12px}.reviewEvidence,.reviewAction{order:initial}#focusViewport{max-height:395px}}
+@media(max-width:600px){.reviewAction{padding:14px}.reviewAction h2{font-size:1.3rem}.reviewSummary{margin:10px 0;padding:10px 12px}.decisionTable th,.decisionTable td{padding:6px}.decisionActions button:first-child{flex:1 1 100%}.review-open .supportAction{position:static;display:block;margin:-55px 10px 12px auto;box-shadow:none}.homeLink{flex-shrink:0}}
 </style>
 </head>
 <body>
-<header><div class="reviewHeaderRow"><div class="reviewBrand"><img class="reviewCrest" src="../teacher-app/branding/pbhs-125-crest.png" alt=""><div class="reviewBrandText"><h1>Pretoria Boys High School · Mathematics Memo Review</h1><div class="sub">Ordinary Mathematics • teacher decisions • safe correction recovery</div></div></div><a id="homeLink" class="homeLink" href="../teacher-app/">← Home</a></div></header>
+<header><div class="reviewHeaderRow"><div class="reviewBrand"><img class="reviewCrest" src="../teacher-app/branding/pbhs-125-crest.png" alt=""><div class="reviewBrandText"><h1>Mathematics memo review</h1><div class="sub">Pretoria Boys High School</div></div></div><a id="homeLink" class="homeLink" href="../teacher-app/">← Home</a></div></header>
 <main>
 <section id="authPanel" class="panel">
-  <h2 style="margin-top:0">RAW memo review</h2>
-  <p>Review state is stored server-side. This page resumes the current live exception rather than relying on a fixed scripted queue.</p>
-  <form id="reviewLogin"><label>Email</label><input id="email" value="ivanvollenhoven@boyshigh.com">
-  <label>Password</label><input id="password" type="password">
-  <label>Job ID</label><input id="job" placeholder="Paste the review job ID from the upload/review page">
+  <h2 style="margin-top:0">Open your memo review</h2>
+  <p>Sign in to continue your saved review.</p>
+  <form id="reviewLogin"><label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="password">Password</label><input id="password" type="password" autocomplete="current-password">
+  <details><summary>Review link details</summary><label for="job">Job ID</label><input id="job" placeholder="Paste the job ID from your workspace"></details>
   <div class="buttonRow"><button id="start" type="submit" class="primary">Start / resume review</button><button id="signout" type="button" class="secondary">Sign out</button></div></form>
   <div id="status" class="status">Ready. Nothing is changed until you deliberately submit and then confirm a correction.</div>
 </section>
@@ -58,12 +75,12 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
 <section id="processingPanel" class="panel processingPanel hide" aria-live="polite"><h2>Checking your memo</h2><p id="processingStage">Reading your memo…</p><p><b>Elapsed:</b> <span id="processingElapsed">0m 00s</span></p><div id="processingSteps" class="processingSteps"></div><p>You can safely leave this page and return later. Your work is saved.</p></section>
 
 <section id="review" class="panel hide">
+<div class="reviewSummary"><b id="queuePosition" class="queuePosition" aria-live="polite"></b><span id="savedProgress" aria-live="polite"></span></div>
 <div class="reviewGrid">
   <div class="reviewEvidence">
-    <div class="reviewOrderLabel">2 · Source evidence</div>
     <div class="sourceCard">
       <div class="sourceHead">
-        <div><b>Focused source evidence</b><div id="sourceLabel" class="muted">Loading source…</div></div>
+        <div><b>Original memo</b><div id="sourceLabel" class="muted">Loading source…</div></div>
         <div class="sourceTools"><button id="refocus" class="secondary">Refocus</button><button id="toggleFull" class="secondary">Show full memo</button></div>
       </div>
       <div class="legend"><span><span class="swatch yellow"></span>context marker</span><span><span class="swatch red"></span>discrepancy / decision point</span></div>
@@ -79,7 +96,6 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
       <div class="muted">Structured fallback from the immutable normalized source.</div>
       <pre id="sourceText">Loading…</pre>
     </details>
-    <div id="questionWorkspace" class="questionWorkspace hide" aria-live="polite"></div>
   </div>
 
   <aside class="reviewAction" aria-label="Current review action">
@@ -89,10 +105,16 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
     <h2 id="stepTitle" style="margin-top:0"></h2>
     <div id="exceptionBox" class="status"></div>
     <div id="explain" class="explain"></div>
+    <div id="decisionCard"></div>
+    <div id="decisionStatus" class="status decisionStatus" role="status"></div>
+
+    <details id="advancedReview" class="advancedReview">
+    <summary>Advanced editing and details</summary>
     <aside id="parentContext" class="parentContext hide" aria-live="polite"></aside>
+    <div id="questionWorkspace" class="questionWorkspace hide" aria-live="polite"></div>
 
     <nav id="queueNav" class="queueNav" aria-label="Actionable review queue">
-      <div class="queueTop"><div id="queuePosition" class="queuePosition" aria-live="polite"></div><span class="muted">Review navigator</span></div>
+      <div class="queueTop"><span class="muted">Jump to another question</span></div>
       <div class="queueButtons"><button id="previousReview" class="secondary">Previous</button><button id="skipReview" class="secondary">Skip for now</button><button id="nextReview" class="secondary">Next</button></div>
       <div class="queueJumpGrid">
         <label for="issueJump">Unresolved issue<select id="issueJump" aria-label="Jump to unresolved issue"></select></label>
@@ -100,7 +122,6 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
       </div>
       <details id="queueDetails" class="queueDetails"><summary>View review queue</summary><div id="queueList" class="queueList"></div></details>
     </nav>
-    <div id="batchPanel" class="batchPanel hide"><b id="stagedCount">Your saved changes are ready.</b><div id="batchHint" class="muted">Continue reviewing. The memo will be rechecked after the final decision.</div><button id="applyBatch" class="confirm hide">Recheck memo</button></div>
 
     <details id="manualQuestionEditor" class="guide hide">
       <summary>Edit any parsed question</summary>
@@ -109,7 +130,7 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
       <div class="buttonRow"><button id="manualMarks" class="secondary">Edit marks</button><button id="manualNumbering" class="secondary">Edit numbering</button><button id="manualContent" class="secondary">Edit content</button></div>
       <div id="manualItemEditor" class="childRepairEditor hide"></div>
     </details>
-
+    <button id="showManualTools" type="button" class="secondary">Show all correction tools</button>
     <details class="guide">
       <summary>Help with corrections</summary>
       <p>Write naturally. Full stops, commas, semicolons and new lines are all acceptable. Include the question number and one clear instruction.</p>
@@ -121,6 +142,9 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
       </ul>
       <p>When the actual question or memo answer is wrong, use the structured editor below. It does not depend on punctuation or AI interpretation.</p>
     </details>
+    </details>
+
+    <div id="batchPanel" class="batchPanel hide"><b id="stagedCount">Your saved changes are ready.</b><div id="batchHint" class="muted">Continue reviewing. The memo will be rechecked after the final decision.</div><button id="applyBatch" class="confirm hide">Recheck memo</button></div>
 
     <div id="choices" class="choices">
       <div class="reviewOrderLabel">3 · Suggested interpretation / discrepancy</div>
@@ -174,8 +198,7 @@ button{border:1px solid transparent;margin:2px;transition:background-color .15s 
 
     <div id="proposalPanel" class="proposal hide">
       <div class="reviewOrderLabel">5 · Save &amp; next</div>
-      <span class="pendingBadge">SHOW-BACK — not applied yet</span>
-      <h3 style="margin:.65rem 0 .35rem">How the system interpreted your correction</h3>
+      <h3 style="margin:.65rem 0 .35rem">Please confirm your change</h3>
       <div id="proposalText"></div>
       <div class="buttonRow"><button id="confirm" class="primary">Save &amp; next</button><button id="editProposal" class="secondary">Edit / resubmit</button><button id="cancelProposal" class="dangerLite">Cancel</button><button id="pause2" class="secondary">Pause review</button></div>
       <div class="muted" style="margin-top:8px">Confirm only if this show-back matches what you intended.</div>
@@ -214,13 +237,18 @@ function requestedReviewJob(search){return validJobId(new URLSearchParams(search
 // END JOB SELECTION MODEL
 let jobId=requestedReviewJob(location.search);
 $('#job').value=jobId;
-let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],currentStaged=[],currentConfirmed=[],stagedDecisionCount=0,reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]},queueLocked=false,sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,visualEvidenceCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='',monitorPromise=null,processingStartedAt=null,processingTimer=null,processingPollWake=null,failedCorrection=null,manualEditTarget='';
+let user=null,currentJobData=null,currentException=null,currentStep=null,currentCorrection=null,currentActive=[],currentStaged=[],currentConfirmed=[],reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]},queueLocked=false,sourceLoaded=false,sourceKind=null,normalizedCache=null,structureCache=null,visualEvidenceCache=null,sourceBlob=null,sourceObjectUrl=null,focusKey='',monitorPromise=null,processingStartedAt=null,processingTimer=null,processingPollWake=null,failedCorrection=null,manualEditTarget='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function log(m,o){logEl.textContent+=`\n\n${new Date().toLocaleTimeString()} — ${m}${o===undefined?'':'\n'+JSON.stringify(o,null,2)}`;logEl.scrollTop=logEl.scrollHeight}
-function status(m,k=''){statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'')}
+function status(m,k=''){
+ const active=!$('#review').classList.contains('hide');
+ document.body.classList.toggle('review-open',active);
+ statusEl.textContent=m;statusEl.className='status'+(k?' '+k:'');
+ const inline=$('#decisionStatus');inline.textContent=active?m:'';inline.className='status decisionStatus'+(k?' '+k:'');
+}
 function selectJob(){
  const selected=validJobId($('#job').value);if(!selected)throw new Error('Enter a valid review Job ID. The page no longer falls back to the completed acceptance job.');
- if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];currentStaged=[];currentConfirmed=[];reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]};stagedDecisionCount=0;queueLocked=false;sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;visualEvidenceCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey='';manualEditTarget=''}
+ if(selected!==jobId){jobId=selected;currentJobData=currentException=currentStep=currentCorrection=null;currentActive=[];currentStaged=[];currentConfirmed=[];reviewQueue={ids:[],keys:[],skipped_keys:[],selected_id:null,selected_key:null,items:[]};queueLocked=false;sourceLoaded=false;sourceKind=null;normalizedCache=null;structureCache=null;visualEvidenceCache=null;sourceBlob=null;if(sourceObjectUrl)URL.revokeObjectURL(sourceObjectUrl);sourceObjectUrl=null;focusKey='';manualEditTarget=''}
  const url=new URL(location.href);url.searchParams.set('job_id',jobId);history.replaceState(null,'',url);
  return jobId;
 }
@@ -236,6 +264,12 @@ async function invoke(name,body){
    pending_correction_exists:'A pending correction already exists. Continue or edit it, or cancel it before starting another correction.',
   invalid_typed_text:'The correction is empty or too long. Keep the complete correction under 4,000 characters.',
   invalid_content_correction:'The content correction is incomplete or targets a different question. Check the question number, replacement text, and marking lines.',
+  invalid_content_marking_total:'The marking scheme must add to the printed question total.',
+  invalid_numbering_family:'Check that each new number is valid, unique and under the correct question heading.',
+  numbering_family_changed:'The saved questions have changed. Refresh the review and check the remaining numbers.',
+  numbered_marking_source_missing:'The saved numbering could not be matched to this question. Refresh before reviewing the marks.',
+  invalid_numbered_marking_total:'The marking scheme must add to the printed question total.',
+  numbered_marking_requires_separate_change:'Use Edit marks for the saved question. This keeps the numbering change.',
   invalid_child_repair:'The child correction is incomplete. Change the identifier, or enter both a total and a complete marking scheme.',
   invalid_child_repair_target:'The selected child or corrected identifier is no longer valid. Refresh the workspace and review the current question structure.',
   child_repair_category_mismatch:'This child editor is no longer linked to an active parent subtotal review. Refresh the workspace.',
@@ -413,6 +447,13 @@ function isDescendantId(childId,parentId){
 }
 function normalizedQuestionId(value){const id=String(value??'').trim();return /^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(id)?id:''}
 function semanticCandidateTarget(value){const id=String(value??'').trim();return /^\d{1,2}(?:_\d{1,2}){0,2}__m\d+$/.test(id)?`semantic:${id}`:''}
+function reviewNumberingMembers(patch){
+ if(patch?.operation==='rename_question_family')return patch.numbering_members||[];
+ return patch?.operation==='rename_question_identifier'?[patch]:[];
+}
+function numberingOccurrenceKey(id,page){
+ return normalizedQuestionId(id)&&Number.isInteger(page)&&page>0?`numbered:${id}@${page}`:'';
+}
 function exceptionTargetKeys(ex){
  const suggestions=Array.isArray(ex?.suggestions)?ex.suggestions:[],semantic=suggestions.find(item=>item&&typeof item==='object'&&item.candidate_id),candidate=ex?.category==='ambiguous_mark_semantics'?semanticCandidateTarget(semantic?.candidate_id):'';
  if(candidate)return [candidate];
@@ -422,13 +463,31 @@ function exceptionTargetKeys(ex){
  return [...new Set(ids.map(id=>`question:${id}`))];
 }
 function exceptionTargetKey(ex){return exceptionTargetKeys(ex)[0]||''}
-function exceptionCoveredByTargets(ex,targets){const keys=exceptionTargetKeys(ex);return keys.length>0&&keys.every(key=>targets.has(key))}
+function exceptionCoveredByTargets(ex,targets){
+ const keys=exceptionTargetKeys(ex);
+ if(keys.length>0&&keys.every(key=>targets.has(key)))return true;
+ const hints=ex?.suggestions||[],category=ex?.category;
+ if(category==='duplicate_question_identifier'){
+  const occurrences=hints[0]?.occurrences||[];
+  return occurrences.length===2&&occurrences.some(item=>targets.has(numberingOccurrenceKey(ex.affected_id,item.source_page)));
+ }
+ if(category==='question_total_mismatch')return targets.has(`renumbering-heading:${ex.affected_id}`);
+ const numberDependent=category==='question_parent_heading_mismatch'||category==='mathematical_consistency_conflict'
+   ||category==='marking_interpretation_review'&&hints.some(item=>item.depends_on_source_numbering||item.guideline_math_conflict_only);
+ const pages=hints.flatMap(item=>[item.source_page,...(item.source_refs||[]).map(ref=>ref.page)]).filter(Number.isInteger);
+ return numberDependent&&pages.length>0&&pages.every(page=>targets.has(numberingOccurrenceKey(ex.affected_id,page)));
+}
 function correctionTargetKeys(correction){
  const patch=correction?.proposed_patch||correction?.patch||correction||{},candidate=semanticCandidateTarget(patch?.candidate_id||patch?.semantic_resolution?.candidate_id);
  if(candidate)return [candidate];
  const operation=String(patch?.operation||''),scope=String(patch?.reconciliation_scope||patch?.correction_scope||'');
  if(operation==='resolve_visual_evidence_association'&&patch?.review_unit_id)return [`visual:${patch.review_unit_id}`];
  if(patch?.visual_mark_change_review_unit_id){const keys=[`visual-mark:${patch.visual_mark_change_review_unit_id}`],id=normalizedQuestionId(patch?.target_id||patch?.affected_id);if(id)keys.push(`question:${id}`);return keys}
+ const members=reviewNumberingMembers(patch);
+ if(members.length&&members.every(member=>member.source_locator?.source_page)){
+  return members.flatMap(member=>[numberingOccurrenceKey(member.affected_id,member.source_locator.source_page),
+   `renumbering-heading:${String(member.target_id).split('.')[0]}`]).filter(Boolean);
+ }
  if(operation==='rename_question_identifier')return [patch?.affected_id||patch?.source_id].map(normalizedQuestionId).filter(Boolean).map(id=>`question:${id}`);
  if(['suspicious_child','missing_child','numbering_only'].includes(scope)||operation==='insert_missing_child_question')return [patch?.target_id||patch?.question_id].map(normalizedQuestionId).filter(Boolean).map(id=>`question:${id}`);
  const ids=[];
@@ -621,14 +680,18 @@ async function openManualMarks(){const question=selectedManualQuestion();if(!que
 function openManualNumbering(){const question=selectedManualQuestion();if(!question)return;manualEditTarget=String(question.question_id);setCorrectionTool('numbering');$('#numberingCurrent').value=question.question_id;$('#numberingCorrect').value='';refreshNumberingOccurrences(question.source_block_index);$('#numberingCorrectionBlock').scrollIntoView({behavior:'smooth',block:'center'})}
 function openManualContent(){const question=selectedManualQuestion();if(!question)return;manualEditTarget=String(question.question_id);setCorrectionTool('content');$('#contentTarget').value=question.question_id;$('#contentCorrectionBlock').scrollIntoView({behavior:'smooth',block:'center'})}
 function sourceBlockFor(ex,structure){
- const id=String(ex?.affected_id||'').split(',')[0],questions=Array.isArray(structure?.questions)?structure.questions:[],exact=questions.find(q=>String(q?.question_id||'')===id),suggestion=(Array.isArray(ex?.suggestions)?ex.suggestions:[]).find(item=>Number.isInteger(Number(item?.source_block_index)));
- const value=exact?.source_block_index??suggestion?.source_block_index;return Number.isInteger(Number(value))?Number(value):null;
+ const id=String(ex?.affected_id||'').split(',')[0],questions=Array.isArray(structure?.questions)?structure.questions:[],hints=ex?.suggestions||[];
+ const suggestion=hints.find(item=>Number.isInteger(item?.source_block_index));
+ if(suggestion)return suggestion.source_block_index;
+ const pages=new Set(hints.flatMap(item=>[item.source_page,...(item.source_refs||[]).map(ref=>ref.page)]).filter(Number.isInteger));
+ const matches=questions.filter(q=>String(q?.question_id||'')===id&&(!pages.size||pages.has(q.source_page)));
+ return matches.length===1&&Number.isInteger(matches[0].source_block_index)?matches[0].source_block_index:null;
 }
 function majorQuestionId(value){const match=String(value||'').match(/^\d+/);return match?match[0]:''}
 async function stagedCorrections(){let query=sb.from('corrections').select('id,exception_id,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at').eq('job_id',jobId).eq('confirmation_status','confirmed').is('applied_at',null).order('confirmed_at',{ascending:true});if(currentJobData?.started_at)query=query.gte('confirmed_at',currentJobData.started_at);const r=await query;if(r.error)throw r.error;return effectiveStagedCorrections(r.data||[])}
 async function confirmedCorrectionHistory(){const r=await sb.from('corrections').select('id,exception_id,display_text,proposed_patch,confirmation_status,confirmed_at,applied_at').eq('job_id',jobId).eq('confirmation_status','confirmed').order('confirmed_at',{ascending:true});if(r.error)throw r.error;return r.data||[]}
 async function loadReviewState(){const [active,staged,confirmed]=await Promise.all([activeExceptions(),stagedCorrections(),confirmedCorrectionHistory()]);currentActive=active;currentStaged=staged;currentConfirmed=confirmed;refreshReviewQueue(active,staged);return {active,staged,confirmed}}
-async function updateBatchPanel(staged=currentStaged){const panel=$('#batchPanel'),remaining=actionableReviewQueue(currentActive,staged,parentCompletionTargetSet()).length,stale=currentActive.filter(item=>item?.visual_review_state==='stale_historical').length,ready=staged.length>0&&remaining===0;stagedDecisionCount=staged.length;panel.classList.toggle('hide',!staged.length);$('#stagedCount').textContent=staged.length===1?'1 change saved':`${staged.length} changes saved`;const staleNote=stale?` ${stale} historical visual item${stale===1?' is':'s are'} retained for audit and require no teacher decision.`:'';$('#batchHint').textContent=(ready?'All current decisions are saved. Recheck the memo once to apply them together.':`Continue reviewing — ${remaining} decision${remaining===1?'':'s'} remaining.`)+staleNote;$('#applyBatch').classList.toggle('hide',!ready);return staged}
+async function updateBatchPanel(staged=currentStaged){const panel=$('#batchPanel'),remaining=actionableReviewQueue(currentActive,staged,parentCompletionTargetSet()).length,stale=currentActive.filter(item=>item?.visual_review_state==='stale_historical').length,ready=staged.length>0&&remaining===0;panel.classList.toggle('hide',!ready);const applied=effectiveConfirmedCorrections(currentConfirmed).filter(row=>row.applied_at).length;$('#savedProgress').textContent=applied?`${staged.length} saved · ${applied} applied`:`${staged.length} saved`;$('#stagedCount').textContent=staged.length===1?'1 change saved':`${staged.length} changes saved`;const staleNote=stale?` ${stale} historical visual item${stale===1?' is':'s are'} retained for audit and require no teacher decision.`:'';$('#batchHint').textContent=(ready?'All current decisions are saved. Recheck the memo once to apply them together.':`Continue reviewing — ${remaining} decision${remaining===1?'':'s'} remaining.`)+staleNote;$('#applyBatch').classList.toggle('hide',!ready);return staged}
 // BEGIN CHILD REPAIR MODEL
 function childSuspicionReasons(rows,row,parentDifference){
  const reasons=[],id=String(row?.question_id||''),ids=new Set(rows.map(item=>String(item?.question_id||''))),descendants=rows.filter(item=>String(item?.question_id||'').startsWith(id+'.')).map(item=>String(item.question_id)),missingFirst=descendants.some(value=>value.startsWith(id+'.2'))&&!ids.has(id+'.1');
@@ -640,11 +703,11 @@ function childSuspicionReasons(rows,row,parentDifference){
 function markingSchemeText(points){return (Array.isArray(points)?points:[]).map(point=>String(point?.source||`${point?.count||1}${point?.code||''} ${point?.descriptor||''}`).trim()).filter(Boolean).join('\n')}
 function sourceQuestionHasDirectMarks(immutableSource){if(!immutableSource)return true;if(typeof immutableSource.has_direct_marks==='boolean')return immutableSource.has_direct_marks;const points=Array.isArray(immutableSource?.mark_points)?immutableSource.mark_points:[],printed=Number(immutableSource?.printed_marks??0),computed=Number(immutableSource?.computed_shorthand_marks??0);return points.length>0||printed>0||computed>0}
 function effectiveParentOverlay(structure,exceptions,staged,major,history=staged,immutableByOccurrence=new Map()){
- const stagedRows=Array.isArray(staged)?staged:[],historyRows=Array.isArray(history)?history:stagedRows,fallbackSuperseded=new Set(historyRows.map(item=>String((item?.proposed_patch||item?.patch||{})?.supersedes_correction_id||'')).filter(Boolean)),effectiveRows=typeof effectiveConfirmedCorrections==='function'?effectiveConfirmedCorrections(historyRows):historyRows.filter(item=>(item?.confirmation_status==null||item.confirmation_status==='confirmed')&&!fallbackSuperseded.has(String(item?.id||''))&&(item?.proposed_patch||item?.patch||{})?.operation!=='withdraw_confirmed_correction'),questions=Array.isArray(structure?.questions)?structure.questions:[],active=(Array.isArray(exceptions)?exceptions:[]).filter(ex=>majorQuestionId(ex?.affected_id)===String(major)),effectiveTargets=typeof stagedTargetSet==='function'?stagedTargetSet(stagedRows):new Set(),patches=effectiveRows.map(item=>({...((item?.proposed_patch||item?.patch)||{}),_correction_id:item?.id,_applied_at:item?.applied_at||null})).filter(Boolean);
- const patchFor=q=>[...patches].reverse().find(p=>{const id=String(q?.question_id||''),index=q?.source_block_index==null?null:Number(q.source_block_index),matches=questions.filter(item=>String(item?.question_id||'')===id);if(p?.source_block_index!=null&&Number(p.source_block_index)!==index)return false;if(p?.source_block_index==null&&matches.length!==1)return false;return p?.operation==='rename_question_identifier'?String(p?.affected_id||p?.source_id||'')===id:p?.operation==='replace_item_content'&&String(p?.target_id||p?.affected_id||'')===id});
+ const stagedRows=Array.isArray(staged)?staged:[],historyRows=Array.isArray(history)?history:stagedRows,fallbackSuperseded=new Set(historyRows.map(item=>String((item?.proposed_patch||item?.patch||{})?.supersedes_correction_id||'')).filter(Boolean)),effectiveRows=typeof effectiveConfirmedCorrections==='function'?effectiveConfirmedCorrections(historyRows):historyRows.filter(item=>(item?.confirmation_status==null||item.confirmation_status==='confirmed')&&!fallbackSuperseded.has(String(item?.id||''))&&(item?.proposed_patch||item?.patch||{})?.operation!=='withdraw_confirmed_correction'),questions=Array.isArray(structure?.questions)?structure.questions:[],active=(Array.isArray(exceptions)?exceptions:[]).filter(ex=>majorQuestionId(ex?.affected_id)===String(major)),effectiveTargets=typeof stagedTargetSet==='function'?stagedTargetSet(stagedRows):new Set(),patches=effectiveRows.flatMap(item=>{const patch=item?.proposed_patch||item?.patch||{},members=patch.operation==='rename_question_family'?patch.numbering_members.map(member=>({...member,operation:'rename_question_identifier'})):[patch];return members.map(member=>({...member,_correction_id:item.id,_applied_at:item.applied_at||null}))});
+ const patchFor=q=>[...patches].reverse().find(p=>{const id=String(q?.question_id||''),index=q?.source_block_index==null?null:Number(q.source_block_index),matches=questions.filter(item=>String(item?.question_id||'')===id);if(p?.source_block_index!=null&&Number(p.source_block_index)!==index)return false;if(p?.source_block_index==null&&matches.length!==1)return false;if(p.numbering_correction_id)return String(p.source_locator?.source_question_id)===String(q.source_question_id||id)&&p.source_locator?.source_page===q.source_page;return p?.operation==='rename_question_identifier'?String(p?.affected_id||p?.source_id||'')===id:p?.operation==='replace_item_content'&&String(p?.target_id||p?.affected_id||'')===id});
  const allocationFor=q=>{const id=String(q?.question_id||'');for(const patch of [...patches].reverse()){if(patch?.operation!=='resolve_question_allocation_pairing'||!Array.isArray(patch.allocations))continue;const allocation=patch.allocations.find(item=>String(item?.question_id||'')===id);if(allocation)return {...allocation,_correction_id:patch._correction_id,_applied_at:patch._applied_at}}return null};
  const amendmentMatches=(row,q)=>{const p=row?.proposed_patch||row?.patch||{};return ['replace_item_content','withdraw_confirmed_correction'].includes(p.operation)&&String(p.target_id||p.affected_id||'')===String(q?.question_id||'')&&(p.source_block_index==null||Number(p.source_block_index)===Number(q?.source_block_index))},unsupersededRows=historyRows.filter(row=>!fallbackSuperseded.has(String(row?.id||''))),withdrawalFor=q=>[...unsupersededRows].reverse().find(row=>{const p=row?.proposed_patch||row?.patch||{};return p.operation==='withdraw_confirmed_correction'&&amendmentMatches(row,q)});
- const baseRows=questions.map(q=>{const immutable=immutableByOccurrence.get(`${q.question_id}@${q.source_block_index}`)||null,withdrawal=withdrawalFor(q),sourceQuestion=immutable&&historyRows.some(row=>amendmentMatches(row,q))?immutable:q,points=Array.isArray(sourceQuestion?.mark_points)?sourceQuestion.mark_points:[],computed=Number(sourceQuestion?.computed_shorthand_marks??points.reduce((n,p)=>n+Number(p?.count||0),0)),printed=sourceQuestion?.printed_marks==null?null:Number(sourceQuestion.printed_marks),patch=patchFor(q),allocation=allocationFor(q),stagedPoints=Array.isArray(patch?.mark_points)?patch.mark_points:Array.isArray(allocation?.mark_points)?allocation.mark_points:null,projected=withdrawal?computed:(patch?.expected_total??patch?.printed_marks??allocation?.printed_marks??computed),projectedId=patch?.operation==='rename_question_identifier'?patch?.target_id:(patch?.replacement_id||q.question_id),stagedCorrectionId=withdrawal?.id||patch?._correction_id||allocation?._correction_id||'',correctionApplied=!!(withdrawal?.applied_at||patch?._applied_at||allocation?._applied_at);return {question_id:String(q.question_id),projected_id:String(projectedId||q.question_id),source_block_index:q?.source_block_index,printed,computed,projected:Number(projected),mark_count:points.length,marking_text:withdrawal?markingSchemeText(points):(stagedPoints?markingSchemeText(stagedPoints):markingSchemeText(points)),source_marking_text:markingSchemeText(points),staged_marking_text:withdrawal?'':(stagedPoints?markingSchemeText(stagedPoints):''),staged:!!(withdrawal||patch||allocation),correction_applied:correctionApplied,staged_correction_id:stagedCorrectionId,immutable_source:immutable,inserted:false,issues:active.filter(ex=>String(ex.affected_id)===String(q.question_id)).map(ex=>ex.category),exception_id:active.find(ex=>String(ex.affected_id)===String(q.question_id)&&(typeof exceptionCoveredByTargets!=='function'||!exceptionCoveredByTargets(ex,effectiveTargets))&&!isDependent(ex,active,stagedRows))?.id||null}}).filter(row=>String(row.projected_id).startsWith(`${major}.`));
+ const baseRows=questions.map(q=>{const immutable=immutableByOccurrence.get(`${q.question_id}@${q.source_block_index}`)||null,withdrawal=withdrawalFor(q),sourceQuestion=immutable&&historyRows.some(row=>amendmentMatches(row,q))?immutable:q,points=Array.isArray(sourceQuestion?.mark_points)?sourceQuestion.mark_points:[],computed=Number(sourceQuestion?.computed_shorthand_marks??points.reduce((n,p)=>n+Number(p?.count||0),0)),printed=sourceQuestion?.printed_marks==null?null:Number(sourceQuestion.printed_marks),patch=patchFor(q),allocation=allocationFor(q),stagedPoints=Array.isArray(patch?.mark_points)?patch.mark_points:Array.isArray(allocation?.mark_points)?allocation.mark_points:null,verifiedNumbered=patch?.operation==='rename_question_identifier'&&String(q.source_heading_major)===String(patch.target_id).split('.')[0]?q.reference_verification?.pending_marks:null,projected=withdrawal?computed:(patch?.expected_total??patch?.printed_marks??allocation?.printed_marks??verifiedNumbered??computed),projectedId=patch?.operation==='rename_question_identifier'||patch?.numbering_correction_id?patch?.target_id:(patch?.replacement_id||q.question_id),stagedCorrectionId=withdrawal?.id||patch?._correction_id||allocation?._correction_id||'',correctionApplied=!!(withdrawal?.applied_at||patch?._applied_at||allocation?._applied_at);return {question_id:String(q.question_id),projected_id:String(projectedId||q.question_id),source_block_index:q?.source_block_index,printed,computed,projected:Number(projected),mark_count:points.length,marking_text:withdrawal?markingSchemeText(points):(stagedPoints?markingSchemeText(stagedPoints):markingSchemeText(points)),source_marking_text:markingSchemeText(points),staged_marking_text:withdrawal?'':(stagedPoints?markingSchemeText(stagedPoints):''),staged:!!(withdrawal||patch||allocation),correction_applied:correctionApplied,staged_correction_id:stagedCorrectionId,immutable_source:immutable,inserted:false,issues:active.filter(ex=>String(ex.affected_id)===String(q.question_id)).map(ex=>ex.category),exception_id:active.find(ex=>String(ex.affected_id)===String(q.question_id)&&(typeof exceptionCoveredByTargets!=='function'||!exceptionCoveredByTargets(ex,effectiveTargets))&&!isDependent(ex,active,stagedRows))?.id||null}}).filter(row=>String(row.projected_id).startsWith(`${major}.`));
  const insertions=patches.filter(p=>p?.operation==='insert_missing_child_question'&&String(p?.question_id||p?.target_id||'').startsWith(`${major}.`)).map(p=>({question_id:String(p.question_id||p.target_id),projected_id:String(p.question_id||p.target_id),source_block_index:p.source_block_index,printed:null,computed:0,projected:Number(p.expected_total??p.printed_marks??0),mark_count:Array.isArray(p.mark_points)?p.mark_points.length:0,marking_text:markingSchemeText(p.mark_points),source_marking_text:'',staged_marking_text:markingSchemeText(p.mark_points),staged:true,staged_correction_id:p._correction_id||'',inserted:true,issues:[],exception_id:null,suspicion_reasons:[]}));
  const parent=active.find(ex=>ex.category==='question_total_mismatch'&&String(ex.affected_id)===String(major)),details=parent?parentDiscrepancyDetails(parent,{affected_id:`${major}.child`}):null,originalConverterTotal=Number(details?.converter_total??baseRows.reduce((n,row)=>n+row.computed,0)),sourceTotal=details?.source_total??null,parentDifference=sourceTotal==null?0:Number(sourceTotal)-originalConverterTotal;
  const rows=[...baseRows.map(row=>({...row,suspicion_reasons:row.exception_id||row.staged?[]:childSuspicionReasons(baseRows,row,parentDifference)})),...insertions].sort((a,b)=>compareQuestionIds(a.projected_id,b.projected_id)),effectiveStagedTotal=rows.reduce((n,row)=>n+row.projected,0);
@@ -773,7 +836,7 @@ function parentQuestionFamilyContext(ex,structure,normalized){
 // END VISUAL EVIDENCE FOCUS MODEL
 async function renderVisualEvidenceCrop(ex,focus,occurrence=null){
  const structure=await ensureStructure();let candidates=visualEvidenceCandidates(ex,structure);const association=visualAssociationModel(ex,structure),occurrencePage=Number(occurrence?.source_page);if(Number.isInteger(occurrencePage)&&occurrencePage>0)candidates=candidates.filter(candidate=>candidate.page===occurrencePage);if(!candidates.length)return false;let index=0;
- const show=async next=>{index=(next+candidates.length)%candidates.length;const candidate=candidates[index],path=`${user.id}/${jobId}/${candidate.asset}`,result=await sb.storage.from('memo-files').download(path);if(result.error)throw result.error;focus.innerHTML='';const url=URL.createObjectURL(result.data),label=document.createElement('div'),image=document.createElement('img');label.className='visualCropLabel';label.textContent=association?`${association.current_question?`Current Question ${association.current_question} · `:''}Source label ${association.source_label||'unlabelled'} · ${association.current_major?`Question ${association.current_major} · `:''}page ${association.page}`:`Question ${ex?.affected_id||'association'} — visual memo evidence`;image.className='visualCrop';image.src=url;image.alt='Focused handwritten or visual memo evidence';image.onload=()=>URL.revokeObjectURL(url);focus.append(label);if(candidate.readings.length){const reading=document.createElement('div');reading.className='visualReading';reading.textContent=`Model readings from this one source region: ${candidate.readings.join(' • ')}`;focus.append(reading)}focus.append(image);if(candidates.length>1){const pager=document.createElement('div'),previous=document.createElement('button'),position=document.createElement('span'),nextButton=document.createElement('button');pager.className='evidencePager';previous.className=nextButton.className='secondary';previous.textContent='Previous evidence';nextButton.textContent='Next evidence';position.textContent=`Evidence ${index+1} of ${candidates.length}`;previous.onclick=()=>show(index-1);nextButton.onclick=()=>show(index+1);pager.append(previous,position,nextButton);focus.append(pager)}};
+ const show=async next=>{index=(next+candidates.length)%candidates.length;const candidate=candidates[index],path=`${user.id}/${jobId}/${candidate.asset}`,result=await sb.storage.from('memo-files').download(path);if(result.error)throw result.error;focus.innerHTML='';const url=URL.createObjectURL(result.data),label=document.createElement('div'),image=document.createElement('img');label.className='visualCropLabel';label.textContent=association?`${association.current_question?`Current Question ${association.current_question} · `:''}Source label ${association.source_label||'unlabelled'} · ${association.current_major?`Question ${association.current_major} · `:''}page ${association.page}`:ex?.decision_group?.kind==='numbering'?`Page ${ex.decision_group.page} · Question ${ex.decision_group.heading}`:`Question ${ex?.affected_id||'review'}${candidate.page?` · page ${candidate.page}`:''}`;image.className='visualCrop';image.src=url;image.alt='Focused handwritten or visual memo evidence';image.onload=()=>URL.revokeObjectURL(url);focus.append(label);if(candidate.readings.length){const reading=document.createElement('div');reading.className='visualReading';reading.textContent=`Model readings from this one source region: ${candidate.readings.join(' • ')}`;focus.append(reading)}focus.append(image);if(candidates.length>1){const pager=document.createElement('div'),previous=document.createElement('button'),position=document.createElement('span'),nextButton=document.createElement('button');pager.className='evidencePager';previous.className=nextButton.className='secondary';previous.textContent='Previous evidence';nextButton.textContent='Next evidence';position.textContent=`Evidence ${index+1} of ${candidates.length}`;previous.onclick=()=>show(index-1);nextButton.onclick=()=>show(index+1);pager.append(previous,position,nextButton);focus.append(pager)}};
  await show(0);return true;
 }
 function visibleCloneAround(step){
@@ -801,7 +864,12 @@ function familyIdentityText(context){return context?.renamed_labels?.length?` ·
 function renderPdfQuestionFamily(focus,context){focus.innerHTML=`<div class="familyFocusLabel">Current discrepancy: Question ${esc(context.target)} subtotal · ${esc(context.label)}${esc(familyIdentityText(context))}</div>`;for(const page of context.pages){const section=document.createElement('section');section.className='familyPdfPage';section.innerHTML=`<div class="pdfFocusLabel">${esc(context.label)} · source page ${esc(page)}</div><iframe class="pdfFrame" src="${sourceObjectUrl}#page=${page}&zoom=page-width" title="Question ${esc(context.target)} family — source page ${esc(page)}"></iframe>`;focus.append(section)}return context.pages.length>0}
 async function renderFocusedEvidence(){
  await ensureSourceLoaded();const focus=$('#focusRender');focus.innerHTML='';focus.className='';
- const occurrence=selectedNumberingOccurrence(),structure=await ensureStructure(),normalized=await ensureNormalized(),family=parentQuestionFamilyContext(currentException,structure,normalized);
+ const structure=await ensureStructure(),normalized=await ensureNormalized(),family=parentQuestionFamilyContext(currentException,structure,normalized);
+ const heading=numberingHeading(currentException);
+ const occurrence=heading?(structure.questions||[]).find(q=>q.question_id===heading.printed
+   &&q.source_page===heading.page&&q.source_block_index===heading.block&&q.source_character_offset===heading.offset)
+   ||{question_id:heading.printed,source_heading_major:heading.heading,source_page:heading.page}
+   :selectedNumberingOccurrence();
  if(!family&&await renderVisualEvidenceCrop(currentException,focus,occurrence)){focusKey=`${currentException?.id||''}`;return}
  if(sourceKind==='docx'){
    const structural=family?visibleQuestionFamilyRegion(family):(Number.isInteger(currentStep?.sourceBlockIndex)?visibleQuestionRegion(majorQuestionId(currentException?.affected_id)):null),made=structural||visibleCloneAround(currentStep)||visibleQuestionRegion(majorQuestionId(currentException?.affected_id));
@@ -821,7 +889,7 @@ async function renderFocusedEvidence(){
    const page=sourcePageForException(currentException,structure,normalized,occurrence),label=occurrence?questionOccurrenceLabel(occurrence,0,1):`Question ${currentException?.affected_id||'review'} — source page ${page}`;
    const familyRendered=family?renderPdfQuestionFamily(focus,family):false;
    if(!familyRendered&&page)focus.innerHTML=`<div class="pdfFocusLabel">${esc(label)}</div><iframe class="pdfFrame" src="${sourceObjectUrl}#page=${page}&zoom=page-width" title="Original memo PDF page ${page}"></iframe>`;
-   else focus.innerHTML=`<div class="status warn">No reliable question crop or source-page association was found. Showing the full document as a fallback; use Show full memo for the separate wider view.</div><iframe class="pdfFrame" src="${sourceObjectUrl}#zoom=page-width" title="Original memo PDF — full-document fallback"></iframe>`;
+   else if(!familyRendered)focus.innerHTML=`<div class="status warn">The document opens here because no question crop was available.</div><iframe class="pdfFrame" src="${sourceObjectUrl}#zoom=page-width" title="Original memo PDF — full-document fallback"></iframe>`;
  }
  else if(sourceKind==='image')focus.innerHTML=`<img class="sourceImg" src="${sourceObjectUrl}" alt="Original memo evidence">`;
  else focus.innerHTML='<div class="status warn">This source type cannot be previewed visually. Use the extracted source context below.</div>';
@@ -868,7 +936,7 @@ function renderExplanation(ex,step){
 function compositeQuestionIds(value){const ids=String(value||'').split(',').map(id=>id.trim()).filter(Boolean);return ids.length>=2&&ids.length<=20&&new Set(ids).size===ids.length&&ids.every(id=>/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(id))?ids:[]}
 function renderQueueNavigation(){
  const index=reviewQueue.ids.indexOf(currentException?.id),count=reviewQueue.ids.length,position=Math.max(1,index+1),locked=queueLocked||!!currentCorrection;
- $('#queuePosition').textContent=count?`Review ${position} / ${count}${stagedDecisionCount?` • ${stagedDecisionCount} saved`:''}${locked?' • Finish or cancel the pending correction before moving':''}`:'No actionable review items';
+ $('#queuePosition').textContent=count?`Review ${position} of ${count}`:'No review decisions remaining';
  $('#previousReview').disabled=locked||count<2;$('#nextReview').disabled=locked||count<2;$('#skipReview').disabled=locked||count<1;
  const itemLabel=item=>item.decision_group?.kind==='numbering'?'Q'+item.decision_group.heading+' — Check numbering under this heading':`${item.affected_id?`Q${String(item.affected_id).replaceAll(',',', Q')}`:'Document'} — ${humanCategory(item.category)}`;
  const host=$('#queueList'),issue=$('#issueJump'),question=$('#questionJump');host.innerHTML='';issue.innerHTML='';question.innerHTML='';issue.disabled=locked||!count;question.disabled=locked||!count;
@@ -879,7 +947,7 @@ function hasUnsavedWorkspaceEdit(){return !!document.querySelector('#questionWor
 function blockUnsavedWorkspaceNavigation(){if(!hasUnsavedWorkspaceEdit())return false;status('Not saved — review and confirm the edited child, or undo the browser-only edit, before moving away.','error');return true}
 async function navigateReview(id){if(queueLocked||currentCorrection){status('Finish or cancel the saved correction before moving to another review item.','warn');return}if(blockUnsavedWorkspaceNavigation())return;saveDraft();if(!selectQueueItem(id))return;const ex=reviewQueue.items.find(item=>item.id===id);if(ex)await showException(ex)}
 async function moveReview(direction){if(blockUnsavedWorkspaceNavigation())return;saveDraft();reviewQueue=moveReviewQueue(reviewQueue,direction);writeQueueState(reviewQueue);await navigateReview(reviewQueue.selected_id)}
-async function skipCurrentReview(){if(blockUnsavedWorkspaceNavigation())return;saveDraft();reviewQueue=skipReviewQueue(reviewQueue);writeQueueState(reviewQueue);if(reviewQueue.selected_id)await navigateReview(reviewQueue.selected_id);else{$('#choices').classList.add('hide');$('#applicationRecovery').classList.add('hide');$('#queuePosition').textContent='All current items are deferred';status('Skipped for now. The change remains unresolved; the Question summary is still available and nothing has been applied.','success')}}
+async function skipCurrentReview(){if(blockUnsavedWorkspaceNavigation())return;saveDraft();reviewQueue=skipReviewQueue(reviewQueue);writeQueueState(reviewQueue);if(reviewQueue.selected_id)await navigateReview(reviewQueue.selected_id);else{$('#choices').classList.add('hide');$('#decisionCard').classList.add('hide');$('#advancedReview').open=true;$('#applicationRecovery').classList.add('hide');$('#queuePosition').textContent='All current items are deferred';status('Skipped for now. The change remains unresolved; the Question summary is still available and nothing has been applied.','success')}}
 const markToolCategories=new Set(['item_total_mismatch','mark_arithmetic_mismatch','question_total_mismatch','subtotal_sum_unexpected','document_total_mismatch']);
 const numberingToolCategories=new Set(['unlabeled_mark_bearing_question','numbering_jump','suspicious_question_identifier','scored_major_precedes_subquestions']);
 function configureCorrectionTools(ex,suggestionCount){const select=$('#correctionTool'),options=[];if(suggestionCount)options.push(['suggested','Suggested fix']);if(markToolCategories.has(ex.category))options.push(['marks','Marks']);if(ex.category==='mathematical_consistency_conflict')options.push(['content','Content'],['file','Evidence / Photo']);else options.push(['numbering','Numbering'],['content','Content'],['file','Evidence / Photo']);select.innerHTML=options.map(([value,label])=>`<option value="${value}">${label}</option>`).join('');setCorrectionTool(options[0]?.[0]||'content')}
@@ -911,6 +979,140 @@ function markingDraftText(points, unresolved){
    return `${point.count}${point.code||'A'} ${descriptor}`;
   }).join('\n');
  }).join('\nOR\n');
+}
+// BEGIN TEACHER DECISION MODEL
+function familyDecision(ex, history){
+ const source=numberingHeading(ex);
+ if(!source)return null;
+ const open=(ex.decision_group?.findings||[{id:ex.id,question:ex.affected_id,category:ex.category}])
+  .filter(item=>item.category==='question_parent_heading_mismatch')
+  .map(item=>({exception_id:item.id,from:item.question,to:source.heading+item.question.slice(item.question.indexOf('.'))}));
+ const saved=effectiveConfirmedCorrections(history).flatMap(row=>reviewNumberingMembers(row.proposed_patch)
+  .filter(member=>member.source_locator?.source_page===source.page&&member.source_block_index===source.block
+    &&String(member.target_id).split('.')[0]===source.heading&&String(member.affected_id).split('.')[0]===source.printed.split('.')[0])
+  .map(member=>({from:member.affected_id,to:member.target_id,saved:true,applied:!!row.applied_at,correction:row,member})));
+ return {source,rows:[...open,...saved].sort((a,b)=>compareQuestionIds(a.from,b.from))};
+}
+function calculationDecision(ex){
+ const row=ex.suggestions?.find(item=>item.evaluation_mode==='exact'&&item.operator==='=');
+ if(!row||!/^[-+]?\d+(?:\.\d+)?$/.test(String(row.calculated_left))||
+    !/^[-+]?\d+(?:\.\d+)?$/.test(String(row.displayed_right))||row.calculated_left===row.displayed_right)return null;
+ const input=String(row.displayed_expression||'');
+ if(!input.endsWith('='+row.displayed_right))return null;
+ const working=input.slice(0,input.lastIndexOf('=')+1)+row.calculated_left;
+ const twoOrders=/\\times\s*2\s*}/.test(input)&&input.includes('!')
+  &&Number(row.calculated_left)===2*Number(row.displayed_right);
+ return {input,working,twoOrders,shown:row.displayed_right,result:row.calculated_left};
+}
+function readableWorking(line){
+ return String(line??'').replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g,'($1)/($2)')
+  .replace(/\\text\{([^{}]*)\}/g,'$1').replaceAll('\\times',' × ').replaceAll('\\cap',' ∩ ')
+  .replaceAll('\\cup',' ∪ ').replaceAll('\\therefore',' ∴ ').replaceAll('\\sigma','σ')
+  .replaceAll('\\left','').replaceAll('\\right','').replaceAll('\\%','%').replaceAll('{,}',',')
+  .replace(/^\$|\$$/g,'').replace(/\s+/g,' ').trim();
+}
+function proposedMarking(s){
+ const possible=[...(s?.accepted_criteria||[]),...(s?.constructed_criteria||[]),
+  ...(s?.unconfirmed_criteria||[]).filter(point=>point.category==='proposed')];
+ const unique=[...new Map(possible.map((point,index)=>[point.criterion_id||index,point])).values()];
+ return unique.length?markingDraftText(unique,s?.unconfirmed_criteria||[]):'';
+}
+function reviewMarkingFollowUp(correction, current, replacement, block, markingText){
+ const patch=correction?.proposed_patch;
+ const member=reviewNumberingMembers(patch).find(m=>m.affected_id===current&&m.target_id===replacement&&m.source_block_index===block&&m.source_locator?.source_page);
+ return member&&markingText?{numbering_correction_id:correction.id,current_id:current,target_id:replacement,
+  source_block_index:block,marking_text:markingText}:null;
+}
+// END TEACHER DECISION MODEL
+function teacherAction(action){
+ return async()=>{try{await action()}catch(error){status(error.message||'Your change could not be checked. Try again.','error')}};
+}
+function openTeacherEditor(tool,{working='',marking='',showSuggestions=false}={}){
+ const host=$('#choices'),panel=$('.reviewAction');
+ panel.classList.remove('show-legacy-tools');host.classList.remove('hide');host.classList.toggle('show-suggestions',showSuggestions);
+ setCorrectionTool(tool);
+ if(tool==='content'){
+  if(!$('#contentSolution').value)$('#contentSolution').value=working;
+  if(!$('#contentMarking').value)$('#contentMarking').value=marking;
+ }
+ host.scrollIntoView({block:'nearest'});
+}
+function familyNumberingTable(model,editing=false){
+ return `<table class="decisionTable"><thead><tr><th scope="col">Printed</th><th scope="col">Correct number</th><th scope="col">Status</th></tr></thead><tbody>${model.rows.map(row=>
+  `<tr><td>${esc(row.from)}</td><td>${editing&&!row.saved?`<input data-numbering-member="${esc(row.exception_id)}" aria-label="Correct number for ${esc(row.from)}" inputmode="decimal" value="${esc(row.to)}">`:esc(row.to)}</td><td>${row.applied?'Applied':row.saved?'Saved':'To review'}</td></tr>`
+ ).join('')}</tbody></table>`;
+}
+function showNumberedMarking(model,structure){
+ const host=$('#numberedMarkEditor'),member=model.member,question=(structure?.questions||[]).find(q=>
+  q.source_block_index===member.source_block_index&&q.source_page===member.source_locator.source_page
+  &&String(q.source_question_id||q.question_id)===model.from);
+ const key=draftKey(`marks-for-${model.correction.id}-${model.to}`);
+ const saved=[...effectiveConfirmedCorrections(currentConfirmed)].reverse().find(row=>row.proposed_patch?.numbering_correction_id===model.correction.id&&row.proposed_patch?.target_id===model.to);
+ const pending=currentActive.find(ex=>ex.category==='marking_interpretation_review'&&String(ex.affected_id)===model.from
+  &&ex.suggestions?.some(s=>s.source_page===member.source_locator.source_page&&s.source_block_index===member.source_block_index));
+ const draft=localStorage.getItem(key)??(saved?markingSchemeText(saved.proposed_patch.mark_points):proposedMarking(pending?.suggestions?.[0]));
+ host.innerHTML=`<label for="numberedMarkText">Question ${esc(model.to)} marking scheme${question?.printed_marks?` · ${esc(question.printed_marks)} marks`:''}</label><textarea id="numberedMarkText">${esc(draft)}</textarea><p>The saved question number stays in place.</p><button class="primary" id="reviewNumberedMarks">Review marking change</button>`;
+ $('#numberedMarkText').oninput=()=>{localStorage.setItem(key,$('#numberedMarkText').value);status('Not saved','warn')};
+ $('#reviewNumberedMarks').onclick=teacherAction(async()=>{
+  const marking=$('#numberedMarkText').value.trim(),payload=reviewMarkingFollowUp(model.correction,model.from,model.to,member.source_block_index,marking);
+  if(!payload)throw Error('Enter the complete marking scheme first.');
+  if(parseStructuredMarking(marking,{profile:ordinaryMathShorthandProfile(question,{})}).total!==question?.printed_marks)
+   throw Error(`The marking scheme must add to ${question?.printed_marks??'the printed number of'} marks.`);
+  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${model.to} — marking scheme\n${marking}`,numbered_marking:payload});
+ });
+ $('#numberedMarkText').focus();
+}
+function renderTeacherDecision(ex,structure){
+ const host=$('#decisionCard'),family=familyDecision(ex,currentConfirmed),calc=calculationDecision(ex);
+ const semanticProgress=semanticConflictProgress(ex,currentActive,currentStaged);
+ const companion=ex.decision_group?.findings?.find(item=>item.category==='marking_interpretation_review');
+ const suggestion=ex.suggestions?.find(item=>item.guideline_verification)||currentActive.find(item=>item.id===companion?.id)?.suggestions?.[0];
+ const question=(structure?.questions||[]).find(q=>q.question_id===ex.affected_id&&(currentStep?.sourceBlockIndex==null||q.source_block_index===currentStep.sourceBlockIndex));
+ const marking=proposedMarking(suggestion),verifiedFamily=(ex.decision_group?.findings||[]).flatMap(item=>item.verified_working||[]);
+ const lines=verifiedFamily.length?verifiedFamily:suggestion?.converted_working?.length?suggestion.converted_working:(question?.visual_solution_segments||[]).map(s=>s.text);
+ const working=(calc?[calc.input]:lines).filter(Boolean);
+ const marksNeedDecision=(suggestion?.unconfirmed_criteria||[]).some(p=>p.category==='ambiguous'&&/\bCA\b|(?:−|-)\s*\d+/i.test(p.allocation_quote||'')&&!marking.includes('Withhold this mark'));
+ const openSourceIssue=suggestion?.guideline_provider_decision==='source_issue'||/no calculation|requested variables|numbering|which occurrence|source marking instruction/i.test(ex.message||'');
+ const plain=family?`Some numbers on page ${family.source.page} are printed under the wrong question heading. Check the numbers below.`
+  :calc?'The result written in the memo disagrees with its calculation.'
+  :ex.category==='marking_interpretation_review'?(openSourceIssue||marksNeedDecision?String(ex.message||'Check what the source means before saving marks.').split(/(?<=\.)\s+/).slice(0,2).join(' '):'Check how the marks should be awarded.')
+  :ex.category==='question_total_mismatch'?'The marks for this question do not add up to the subtotal printed in the memo.':humanCategory(ex.category);
+ const canAccept=!!family||!!(calc&&marking&&!calc.twoOrders)||!!(marking&&!openSourceIssue&&!marksNeedDecision&&ex.category==='marking_interpretation_review');
+ const saved=family?.rows.find(row=>row.saved&&!row.applied&&Number.isInteger(row.member.source_block_index)
+  &&(structure.questions||[]).some(q=>q.question_id===row.from&&q.source_page===family.source.page&&q.printed_marks>0));
+ const draftId=draftKey(`numbering-${ex.id}`);
+ let familyDraft={};try{familyDraft=JSON.parse(localStorage.getItem(draftId)||'null')?.family||{}}catch{}
+ const draftFamily=family?{...family,rows:family.rows.map(row=>row.saved?row:{...row,to:familyDraft[row.exception_id]||row.to})}:null;
+ host.innerHTML=`<p class="decisionLead">${esc(plain)}</p>${semanticProgress?`<p>Marking point ${semanticProgress.index} of ${semanticProgress.total}</p>`:''}${working.length?`<b>${calc?'Original working':'Current converted working'}</b><div class="decisionWorking">${working.map(readableWorking).map(esc).join('<br>')}</div>`:''}
+ ${family?`<div id="numberingTable">${familyNumberingTable(draftFamily)}</div>`:''}
+ ${calc?`<b>Suggested corrected working</b><div class="decisionWorking">${esc(readableWorking(calc.working))}</div><p>${calc.twoOrders?`Both orders give ${esc(calc.result)}. If the letters must appear in only one order, remove the factor of 2 and use ${esc(calc.shown)}. Check the wording before choosing.`:`The expression evaluates to ${esc(calc.result)}.`}</p>`:''}
+ ${marking?`<b>Suggested marking scheme</b><ul class="decisionMarks">${marking.split('\n').map(line=>`<li>${esc(line)}</li>`).join('')}</ul>`:''}
+ <div class="decisionActions">${canAccept?'<button id="acceptDecision" class="primary">Accept suggestion</button>':''}<button id="editDecision" class="${canAccept?'secondary':'primary'}">${family||marking||calc?'Edit suggestion':'Make a correction'}</button><button id="reviewLater" class="secondary">Review later</button></div>
+ ${saved?'<button id="editNumberedMarking" class="secondary">Edit marks for the saved question</button><div id="numberedMarkEditor"></div>':''}`;
+ const familySubmit=async(editing=false)=>{
+  const members=draftFamily.rows.filter(row=>!row.saved).map(row=>({exception_id:row.exception_id,target_id:editing?host.querySelector(`[data-numbering-member="${row.exception_id}"]`).value.trim():row.to}));
+  if(members.some(member=>!normalizedQuestionId(member.target_id)||member.target_id.split('.')[0]!==family.source.heading)
+   ||new Set(members.map(member=>member.target_id)).size!==members.length)throw Error(`Use a different valid number under Question ${family.source.heading} for each item.`);
+  await submitAndInterpret({job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:`Update question numbering on page ${family.source.page}`,family_numbering:{members}});
+ };
+ if($('#acceptDecision'))$('#acceptDecision').onclick=teacherAction(async()=>{
+  if(family)await familySubmit();else await submitContent({target:ex.affected_id,solutionLines:calc?[calc.working]:[],markingText:marking});
+ });
+ $('#editDecision').onclick=teacherAction(async()=>{
+  if(family){
+   $('#numberingTable').innerHTML=familyNumberingTable(draftFamily,true);
+   const submit=$('#acceptDecision');submit.textContent='Review numbering changes';submit.onclick=teacherAction(()=>familySubmit(true));
+   $('#numberingTable').oninput=()=>{const values=Object.fromEntries([...host.querySelectorAll('[data-numbering-member]')].map(input=>[input.dataset.numberingMember,input.value]));localStorage.setItem(draftId,JSON.stringify({family:values}));status('Not saved','warn')};
+   $('#numberingTable').querySelector('input')?.focus();
+  }else if(marking||calc){openTeacherEditor('content',{working:calc?.working||'',marking});$('#contentMarking').focus()}
+  else {
+   const tool=$('#correctionTool').value;
+   const hasBoundedChoices=['ambiguous_mark_semantics','visual_evidence_association_uncertain','visual_mark_change_review','unlabeled_mark_bearing_question'].includes(ex.category);
+   openTeacherEditor(tool==='suggested'&&!hasBoundedChoices?'content':tool,{showSuggestions:hasBoundedChoices});
+  }
+ });
+ $('#reviewLater').onclick=teacherAction(skipCurrentReview);
+ if(saved){$('#editNumberedMarking').textContent=`Edit marks for Question ${saved.to}`;$('#editNumberedMarking').onclick=()=>showNumberedMarking(saved,structure)}
 }
 async function renderChoices(ex){
  currentCorrection=null;$('#recoveryPanel').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#choices').classList.remove('hide');$('#typedText').value='';$('#numberingCurrent').value=normalizedQuestionId(ex?.affected_id);$('#numberingCorrect').value='';$('#photoInput').value='';$('#fileInput').value='';
@@ -944,7 +1146,24 @@ async function renderChoices(ex){
  $('#suggestionBlock').classList.toggle('hide',rendered===0);$('#suggestionHeading').textContent=ex.category==='marking_interpretation_review'?'Review unconfirmed marking criteria':semantic?'Resolve the marking-code conflict':visualMarkChange?'Resolve the visual mark change':'Choose a supplied interpretation';if(!grouped&&!semantic&&!visualMarkChange&&!applicationFailure)configureCorrectionTools(ex,rendered);restoreDraft(ex);
 }
 async function showException(ex){
- currentException=ex;manualEditTarget='';selectQueueItem(ex.id);const structure=await ensureStructure();currentStep={...specFor(ex),sourceBlockIndex:sourceBlockFor(ex,structure)};focusKey='';renderExplanation(ex,currentStep);await renderChoices(ex);await renderManualQuestionNavigator();refreshNumberingOccurrences();const recovered=await renderApplicationRecovery(ex);$('#choices').classList.toggle('hide',recovered);await renderQuestionWorkspace(ex);await updateBatchPanel();$('#review').classList.remove('hide');$('#processingPanel').classList.add('hide');$('#authPanel').classList.remove('hide');const semanticProgress=semanticConflictProgress(ex,currentActive,currentStaged);$('#progress').textContent=semanticProgress?.label||`Review now${ex.affected_id?` • Question ${ex.affected_id}`:''}`;renderQueueNavigation();let previous=null;try{previous=JSON.parse(sessionStorage.getItem(lastDecisionKey())||'null')}catch{}const advanced=previous&&previous.exception_id!==ex.id;status(recovered?'Previous change could not be applied. Edit it, withdraw it, or skip for now.':advanced?`Saved ✓ — advanced to ${semanticProgress?.label||`the next unresolved review item${ex.affected_id?` for Question ${ex.affected_id}`:''}`}.`:'Review the focused source evidence, then choose how to correct the item shown.',recovered?'warn':'success');if(advanced)sessionStorage.removeItem(lastDecisionKey());await showEvidence();
+ currentException=ex;manualEditTarget='';selectQueueItem(ex.id);
+ const structure=await ensureStructure();
+ currentStep={...specFor(ex),sourceBlockIndex:sourceBlockFor(ex,structure)};
+ focusKey='';renderExplanation(ex,currentStep);
+ await renderChoices(ex);await renderManualQuestionNavigator();refreshNumberingOccurrences();
+ const recovered=await renderApplicationRecovery(ex);
+ $('#choices').classList.add('hide');$('#decisionCard').classList.toggle('hide',recovered);
+ $('.reviewAction').classList.remove('show-legacy-tools');$('#advancedReview').open=false;
+ $('#proposalPanel').classList.add('hide');
+ if(!recovered)renderTeacherDecision(ex,structure);
+ await renderQuestionWorkspace(ex);await updateBatchPanel();
+ $('#review').classList.remove('hide');$('#processingPanel').classList.add('hide');$('#authPanel').classList.remove('hide');
+ renderQueueNavigation();
+ let previous=null;try{previous=JSON.parse(sessionStorage.getItem(lastDecisionKey())||'null')}catch{}
+ const advanced=previous&&previous.exception_id!==ex.id;
+ status(recovered?'This earlier change still needs attention.':advanced?'Saved':'',recovered?'warn':'success');
+ if(advanced)sessionStorage.removeItem(lastDecisionKey());
+ await showEvidence();
 }
 
 function showRecovery(corr,message){
@@ -952,6 +1171,7 @@ function showRecovery(corr,message){
  const grouped=currentException?.category==='question_allocation_pairing_ambiguous';
  const semantic=currentException?.category==='ambiguous_mark_semantics';
  $('#choices').classList.add('hide');
+ $('#decisionCard').classList.add('hide');
  $('#manualQuestionEditor').classList.add('hide');
  $('#proposalPanel').classList.add('hide');
  $('#recoveryPanel').classList.remove('hide');
@@ -1025,21 +1245,27 @@ function teacherShowBackModel(corr){
 // END TEACHER SHOWBACK MODEL
 function showProposal(corr){
  currentCorrection=corr;queueLocked=true;$('#manualQuestionEditor').classList.add('hide');$('#recoveryPanel').classList.add('hide');$('#choices').classList.add('hide');$('#proposalPanel').classList.remove('hide');renderQueueNavigation();
+ $('#decisionCard').classList.add('hide');$('#advancedReview').open=false;
  const model=teacherShowBackModel(corr),pointList=model.mark_points.length?`<ul class="markPointList">${model.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'',previousPointList=model.previous_mark_points.length?`<ul class="markPointList">${model.previous_mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul>`:'';
  const semanticContent=model.semantic_choice?`<div class="contentPreview"><b>Confirmed marking-code interpretation</b><ul class="markPointList"><li><b>${esc(model.semantic_choice.count)}${esc(model.semantic_choice.selected_code)}</b> — ${esc(model.semantic_choice.descriptor)}</li></ul><div>${esc(semanticLabels[model.semantic_choice.selected_semantic]||humanCategory(model.semantic_choice.selected_semantic))}</div></div>`:'';
  const allocationContent=model.allocations.length?`<div class="contentPreview"><b>Complete grouped allocation</b>${model.allocations.map(item=>`<div class="allocationRow"><b>Question ${esc(item.question_id)} — ${esc(item.printed_marks)} marks</b><ul class="markPointList">${item.mark_points.map(point=>`<li><b>${esc(point.count)}${esc(point.code)}</b> — ${esc(point.descriptor)}</li>`).join('')}</ul><span class="muted">${esc(item.mark_calculation_mode)}</span></div>`).join('')}</div>`:'';
  const associationContent=model.association_choice?`<div class="contentPreview"><b>Visual evidence association</b><p>Decision: <b>${esc(model.association_choice.decision)}</b></p>${model.association_choice.target_id?`<p>Target: <b>Question ${esc(model.association_choice.target_id)}</b></p>`:'<p>The raw observation will remain auditable but will not be used in canonical memo content.</p>'}<p>Source label ${esc(model.association_choice.owned_question_ref||'unlabelled')} · page ${esc(model.association_choice.source_page)} · ${esc(model.association_choice.raw_count)} raw observation${model.association_choice.raw_count===1?'':'s'}</p></div>`:'';
  const visualMarkContent=model.visual_mark_choice?`<div class="contentPreview"><b>Visual mark-change decision</b><p>Question ${esc(model.target_id)} · <b>${esc(model.visual_mark_choice.decision)}</b></p>${model.visual_mark_choice.selected_value==null?'<p>Keep the source-derived state. No mark allocation will be changed by this visual evidence.</p>':model.visual_mark_choice.matches_effective_total?`<p>The visual total of <b>${esc(model.visual_mark_choice.selected_value)} mark${model.visual_mark_choice.selected_value===1?'':'s'}</b> agrees with the current effective item. Confirming preserves the question and marking scheme exactly.</p>`:`<p>Chosen visual total: <b>${esc(model.visual_mark_choice.selected_value)} mark${model.visual_mark_choice.selected_value===1?'':'s'}</b></p>${model.mark_points.length?`<b>Complete marking scheme</b>${pointList}`:''}`}<p>${esc(model.visual_mark_choice.raw_count)} raw observation${model.visual_mark_choice.raw_count===1?'':'s'} remain auditable.</p></div>`:'';
  const amendmentContent=model.supersedes_correction_id?(model.source_restoration?`<div class="contentPreview"><b>Current saved correction</b><p>Question ${esc(model.target_id)}${model.previous_expected_total==null?'':` — <b>${esc(model.previous_expected_total)} mark${model.previous_expected_total===1?'':'s'}</b>`}</p>${previousPointList}<b>Amended version</b><p>Question ${esc(model.target_id)} — <b>no direct mark allocation</b></p><p>Restore the original memo state.</p><p>The earlier saved correction remains in the audit trail. Question ${esc(model.target_id)} returns to a structural parent, and its child questions remain unchanged.</p></div>`:`<div class="contentPreview"><b>Replace the currently staged correction for Question ${esc(model.target_id)}</b>${model.previous_expected_total==null?'':`<p>Previous staged total: <b>${esc(model.previous_expected_total)}</b></p>`}${model.expected_total==null?'':`<p>New staged total: <b>${esc(model.expected_total)}</b></p>`}${model.mark_points.length?`<b>New marking scheme</b>${pointList}`:''}<p>No other question will change.</p></div>`):'';
- const identifierContent=model.replacement_id&&model.target_id&&model.replacement_id!==model.target_id?`<div class="contentPreview"><b>Rename Question ${esc(model.target_id)} → Question ${esc(model.replacement_id)}</b>${model.source_block_index==null?'':`<p>Selected source occurrence: block ${esc(model.source_block_index)}</p>`}<p>No other question wording, answer or mark allocation will change.</p>${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:'';
+ const familyContent=corr.proposed_patch?.operation==='rename_question_family'?familyNumberingTable({rows:corr.proposed_patch.numbering_members.map(member=>({from:member.affected_id,to:member.target_id}))}).replaceAll('<td>To review</td>','<td>Ready to save</td>'):'';
+ const identifierContent=model.replacement_id&&model.target_id&&model.replacement_id!==model.target_id?`<div class="contentPreview"><b>Rename Question ${esc(model.target_id)} → Question ${esc(model.replacement_id)}</b><p>No other question wording, answer or mark allocation will change.</p>${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:'';
   const subtotalContent=model.operation==='set_question_subtotal'?`<div class="contentPreview"><b>Question ${esc(model.target_id)}</b><p>Change the printed subtotal to <b>${esc(model.subtotal)}</b>.</p><p>No child marks will change.</p></div>`:'';
- const content=semanticContent||associationContent||visualMarkContent||allocationContent||amendmentContent||identifierContent||subtotalContent||((model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected memo answer / working</b><pre>${esc(model.solution_lines.join('\n'))}</pre>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList);
+ const content=familyContent||semanticContent||associationContent||visualMarkContent||allocationContent||amendmentContent||identifierContent||subtotalContent||((model.question_text||model.solution_lines.length)?`<div class="contentPreview">${model.question_text?`<b>Corrected question / prompt</b><pre>${esc(model.question_text)}</pre>`:''}${model.solution_lines.length?`<b>Corrected working</b><div class="decisionWorking">${model.solution_lines.map(readableWorking).map(esc).join('<br>')}</div>`:''}${model.mark_points.length?`<b>Corrected marking scheme</b>${pointList}`:''}</div>`:pointList);
  const semanticTechnical=model.semantic_choice?`<div>Candidate: <code>${esc(model.semantic_choice.candidate_id)}</code></div><div>Semantic type: <code>${esc(model.semantic_choice.selected_semantic)}</code></div>${model.semantic_choice.confidence_score==null?'':`<div>Automated confidence: <code>${esc(model.semantic_choice.confidence_score)}</code></div>`}${model.semantic_choice.provider?`<div>Provider path: <code>${esc(model.semantic_choice.provider)}</code></div>`:''}`:'';
  $('#proposalText').innerHTML=`<div class="reviewEyebrow">I interpreted your correction as</div><div class="proposalSummary">${esc(model.summary)}</div>${content}<details class="technicalProposal"><summary>Technical details</summary><code>${esc(model.operation)}</code>${model.target_id?` • source ${esc(model.target_id)}`:''}${model.replacement_id?` • replacement ${esc(model.replacement_id)}`:''}${model.expected_total!=null?` • ${esc(model.expected_total)} marks`:''}${model.printed_marks!=null?` • printed total ${esc(model.printed_marks)}`:''}${model.association_choice?`<div>Review unit: <code>${esc(model.association_choice.review_unit_id)}</code></div><div>Asset: <code>${esc(model.association_choice.asset)}</code></div>`:''}${model.visual_mark_choice?`<div>Review unit: <code>${esc(model.visual_mark_choice.review_unit_id)}</code></div><div>Member exceptions: <code>${esc(model.visual_mark_choice.member_exception_ids.join(', '))}</code></div><div>Asset: <code>${esc(model.visual_mark_choice.asset)}</code></div>`:''}${semanticTechnical}</details>`;
- const numbering=model.operation==='rename_question_identifier',amendment=!!model.supersedes_correction_id;$('#confirm').textContent=amendment?'Confirm amendment':numbering?'Confirm':'Save & next';$('#editProposal').textContent=numbering||amendment?'Edit':'Edit / resubmit';$('#cancelProposal').classList.toggle('hide',!(numbering||amendment));
- status('Show-back ready. Confirm only if this matches what you intended.','success')
+ $('#confirm').textContent='Confirm and save';$('#editProposal').textContent='Edit change';$('#cancelProposal').classList.remove('hide');
+ status('Check the change below before saving it.','success')
 }
+let correctionInFlight=false;
 async function submitAndInterpret(body){
+ if(correctionInFlight)return;
+ correctionInFlight=true;
+ status('Checking your change…');
  setBusy(true);try{
   const saved=await pendingCorrection();
   if(saved){
@@ -1047,7 +1273,7 @@ async function submitAndInterpret(body){
    await resumePending();return;
   }
   const submittedAt=new Date();const result=await invoke('submit-correction',body);localStorage.removeItem(draftKey(body.exception_id));const cid=result.correction?.id;if(!cid)throw new Error('Correction ID missing from submit response.');let corr=result.confirmation_ready?result.correction:await waitProposal(cid,submittedAt);if(!corr)return;if(!corr.proposed_patch){const f=await sb.from('corrections').select('id,exception_id,input_kind,typed_text,display_text,proposed_patch,confirmation_status,created_at').eq('id',cid).single();if(f.error)throw f.error;corr=f.data}log('SHOW-BACK READY',corr);showProposal(corr)
- }finally{setBusy(false)}}
+ }finally{correctionInFlight=false;setBusy(false)}}
 async function submitSuggestion(index){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index})}
 async function submitVisualAssociationDecision(ex,model,decision,targetId,selectedEvidenceIds=[]){const unit=model?.unit||{},target=String(targetId||'').trim(),classification=String(model?.classification||unit.unit_classification||'normal'),suspicious=['mixed','runaway_model_output'].includes(classification),allIds=Array.isArray(unit.evidence_ids)?unit.evidence_ids.map(String):[],selected=distinctValues(selectedEvidenceIds);if(!['ACCEPT','REASSIGN','REJECT'].includes(decision)){status('Choose one bounded visual association decision.','warn');return}if(decision!=='REJECT'&&!normalizedQuestionId(target)){status('Choose one current parsed question.','warn');return}if(!allIds.length){status('This visual evidence cannot be matched safely. No teacher action is available for this historical item.','warn');return}if(decision!=='REJECT'&&!selected.length){status(suspicious?'Select at least one useful observation before accepting or reassigning.':'The visual evidence selection is empty.','warn');return}if(selected.some(id=>!allIds.includes(id))){status('The selected visual evidence no longer matches this source region. Refresh before continuing.','warn');return}const finalIds=decision==='REJECT'?allIds:selected,selectionMode=decision==='REJECT'||!suspicious?'whole_unit':'explicit_subset',action=decision==='REJECT'?'Reject this whole visual source region as noise or unusable memo evidence.':decision==='ACCEPT'?`Accept ${finalIds.length} selected visual observation${finalIds.length===1?'':'s'} for Question ${target}.`:`Reassign ${finalIds.length} selected visual observation${finalIds.length===1?'':'s'} to Question ${target}.`;await submitAndInterpret({job_id:jobId,exception_id:ex.id,input_kind:'typed',typed_text:action,visual_association_resolution:{decision,review_unit_id:unit.review_unit_id,evidence_ids:finalIds,review_unit_evidence_ids:allIds,selection_mode:selectionMode,unit_classification:classification,rendered_asset_ref:unit.rendered_asset_ref,source_page:unit.page,original_owned_question_ref:unit.owned_question_ref||'',association_status:unit.association_status,target_id:target}})}
 async function submitSemanticChoice(index,model,choice,selectedCode=null){await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'suggestion',suggestion_index:index,semantic_resolution:{candidate_id:model.candidate_id,choice,...(selectedCode?{selected_code:selectedCode}:{})}})}
@@ -1085,14 +1311,14 @@ async function submitAllocations(){
  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,allocation_resolution:{allocations}})
 }
 function contentCorrectionEnvelope(target,questionText,solutionLines,markingText){return `[[PBHS_CONTENT_CORRECTION_V1]]\nTARGET: ${target}\nQUESTION:\n${questionText}\nANSWER:\n${solutionLines.join('\n')}\nMARKING:\n${markingText}\n[[END_PBHS_CONTENT_CORRECTION_V1]]`}
-async function submitContent(){
- const target=$('#contentTarget').value.trim(),questionText=$('#contentQuestion').value.trim(),solutionLines=$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),markingText=$('#contentMarking').value.trim();
+async function submitContent(values=null){
+ const target=String(values?.target??$('#contentTarget').value).trim(),questionText=String(values?.questionText??$('#contentQuestion').value).trim(),solutionLines=values?.solutionLines??$('#contentSolution').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),markingText=String(values?.markingText??$('#contentMarking').value).trim();
  if(!/^\d{1,2}(?:\.\d{1,2}){0,2}$/.test(target)){status('Enter one valid question number, for example 11.2.1.','warn');return}
- if(!questionText&&!solutionLines.length){status('Enter corrected question wording, corrected memo working, or both.','warn');return}
+ if(!questionText&&!solutionLines.length&&!markingText){status('Enter the wording, working, or marking scheme you want to change.','warn');return}
  let markPoints=[];try{const structure=await ensureStructure(),question=(structure.questions||[]).find(item=>String(item.question_id)===target),profile=ordinaryMathShorthandProfile(question,{});markPoints=markingText?parseStructuredMarking(markingText,{profile}).points:[]}catch(e){status(e.message,'warn');return}
  const typedText=contentCorrectionEnvelope(target,questionText,solutionLines,markingText);
  if(typedText.length>4000){status('The complete content correction is too long. Keep it under 4,000 characters.','warn');return}
- await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,content_correction:{target_id:target,question_text:questionText,solution_lines:solutionLines,mark_points:markPoints,teacher_initiated:manualEditTarget===target}})
+ await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:typedText,content_correction:{target_id:target,source_block_index:currentStep?.sourceBlockIndex??null,question_text:questionText,solution_lines:solutionLines,mark_points:markPoints,teacher_initiated:manualEditTarget===target}})
 }
 function childRepairEnvelope(target,replacement,total,markingText){return `[[PBHS_CHILD_REPAIR_V1]]\nCURRENT: ${target}\nCORRECT: ${replacement}\nTOTAL: ${total??''}\nMARKING:\n${markingText}\n[[END_PBHS_CHILD_REPAIR_V1]]`}
 function missingChildEnvelope(parent,question,total,markingText){return `[[PBHS_MISSING_CHILD_V1]]\nPARENT: ${parent}\nQUESTION: ${question}\nTOTAL: ${total}\nMARKING:\n${markingText}\n[[END_PBHS_MISSING_CHILD_V1]]`}
@@ -1112,7 +1338,21 @@ async function submitChildRepair(editor,visualMarkChangeResolution=null){
  if(!editor){status('This bounded item editor is unavailable for the current review.','warn');return}
  const target=String(editor.dataset.questionId||'').trim(),teacherInitiated=editor.dataset.teacherInitiated==='true';if(!teacherInitiated&&!boundedItemEditorAllowed(currentException,target)){status('This review needs the dedicated correction editor shown above.','warn');return}
  const replacement=editor.querySelector('.childCorrectId').value.trim(),totalText=editor.querySelector('.childTotal').value.trim(),markingText=editor.querySelector('.childMarking').value.trim(),idPattern=/^\d{1,2}(?:\.\d{1,2}){0,2}$/;
- if(!idPattern.test(target)||!idPattern.test(replacement)||majorQuestionId(target)!==majorQuestionId(replacement)){status('Enter one valid corrected identifier within the same major question.','warn');return}
+ if(!idPattern.test(target)||!idPattern.test(replacement)){status('Enter valid question numbers.','warn');return}
+ const saved=effectiveConfirmedCorrections(currentConfirmed),previous=saved.find(row=>row.id===editor.dataset.supersedesCorrectionId);
+ const numberChange=saved.find(row=>row.id===(previous?.proposed_patch?.numbering_correction_id||previous?.id)&&reviewNumberingMembers(row.proposed_patch).length);
+ if(numberChange){
+  const block=Number(editor.dataset.sourceBlockIndex),payload=reviewMarkingFollowUp(numberChange,target,replacement,block,markingText);
+  if(!payload){status('Keep the saved number and enter its marking scheme. Use Numbering if you need to change the number again.','warn');return}
+  const structure=await ensureStructure(),question=(structure.questions||[]).find(q=>q.question_id===target&&q.source_block_index===block);
+  try{
+   const parsed=parseStructuredMarking(markingText,{profile:ordinaryMathShorthandProfile(question,{})});
+   if(parsed.total!==Number(totalText)||parsed.total!==question?.printed_marks)throw Error(`The marking scheme must add to the printed ${question?.printed_marks??''} marks.`);
+  }catch(error){status(error.message,'warn');return}
+  await submitAndInterpret({job_id:jobId,exception_id:currentException.id,input_kind:'typed',typed_text:`Question ${replacement} — marking scheme\n${markingText}`,numbered_marking:payload});
+  return;
+ }
+ if(majorQuestionId(target)!==majorQuestionId(replacement)){status('Use the numbering decision to move a question to a different heading.','warn');return}
  const structure=await ensureStructure(),duplicate=(structure.questions||[]).some(item=>String(item.question_id)===replacement&&String(item.question_id)!==target);if(duplicate){status(`Question ${replacement} already exists. Choose a different identifier.`,'warn');return}
  const supersedesCorrectionId=editor.dataset.supersedesCorrectionId||null,sourceRestorable=editor.dataset.sourceRestorable==='true',restorationRequested=!!supersedesCorrectionId&&replacement===target&&!markingText&&(totalText===''||totalText==='0');
  if(restorationRequested&&!sourceRestorable){status('This source question has a direct mark allocation and cannot be cleared. Restore its source marks instead.','warn');return}
@@ -1124,7 +1364,7 @@ async function submitChildRepair(editor,visualMarkChangeResolution=null){
 }
 function safeName(name){return String(name||'evidence.bin').replace(/[^A-Za-z0-9._-]+/g,'_').slice(-120)||'evidence.bin'}
 async function submitFileFrom(input,kind){const f=input.files?.[0];if(!f){status('Choose a file first.','warn');return}setBusy(true);try{const cid=crypto.randomUUID(),path=`${user.id}/${jobId}/corrections/${cid}/${safeName(f.name)}`;status('Uploading correction evidence…');const up=await sb.storage.from('memo-files').upload(path,f,{upsert:false,contentType:f.type||undefined});if(up.error)throw up.error;await submitAndInterpret({job_id:jobId,exception_id:currentException.id,correction_id:cid,input_kind:kind,storage_path:path})}finally{setBusy(false)}}
-function setBusy(v){for(const id of ['submitTyped','submitNumbering','submitContent','submitAllocations','submitPhoto','submitFile','confirm','applyBatch','start','retryInterpretation','editResubmit','cancelCorrection','editProposal','cancelProposal']){const el=$('#'+id);if(el)el.disabled=v}document.querySelectorAll('.childSubmit,.missingChildSubmit,.completeParent,.visualMarkCandidate,.rejectVisualMark,.manualVisualMark').forEach(button=>button.disabled=v)}
+function setBusy(v){for(const id of ['acceptDecision','editDecision','reviewLater','editNumberedMarking','reviewNumberedMarks','submitTyped','submitNumbering','submitContent','submitAllocations','submitPhoto','submitFile','confirm','applyBatch','start','retryInterpretation','editResubmit','cancelCorrection','editProposal','cancelProposal']){const el=$('#'+id);if(el)el.disabled=v}document.querySelectorAll('.childSubmit,.missingChildSubmit,.completeParent,.visualMarkCandidate,.rejectVisualMark,.manualVisualMark').forEach(button=>button.disabled=v)}
 
 // BEGIN PROCESSING POLL MODEL
 const MAX_PROCESSING_POLL_MS=6000;
@@ -1146,7 +1386,7 @@ async function waitStable(){processingStartedAt=processingStartedAt||Date.now();
 function monitorProcessing(){if(monitorPromise)return monitorPromise;if(processingTimer)clearInterval(processingTimer);processingTimer=setInterval(()=>currentJobData&&updateProcessingPanel(currentJobData),1000);monitorPromise=(async()=>{try{await waitStable();normalizedCache=null;structureCache=null;visualEvidenceCache=null;$('#processingPanel').classList.add('hide');$('#authPanel').classList.remove('hide');await resumeFlow()}catch(e){log('PROCESSING MONITOR ERROR',{message:e.message});status('Processing failed: '+e.message,'error');$('#authPanel').classList.remove('hide');$('#processingPanel').classList.add('hide')}finally{clearInterval(processingTimer);processingTimer=null;processingStartedAt=null;monitorPromise=null}})();return monitorPromise}
 // END RESILIENT PROCESSING MODEL
 async function resumePending(){const p=await pendingCorrection();if(!p)return false;const ex=await exceptionById(p.exception_id);await loadReviewState();if(!reviewQueue.ids.includes(ex.id)){reviewQueue.ids.unshift(ex.id);reviewQueue.items.unshift(ex)}selectQueueItem(ex.id);queueLocked=true;currentException=ex;currentStep=specFor(ex);renderExplanation(ex,currentStep);$('#review').classList.remove('hide');$('#progress').textContent=`Pending correction • ${humanCategory(ex.category)}${ex.affected_id?` • ${ex.affected_id}`:''}`;renderQueueNavigation();await showEvidence();if(!p.proposed_patch){if(ex.category==='ambiguous_mark_semantics'){showRecovery(p);status('Pending — not saved. Cancel this older attempt, then make an explicit marking-code choice.','warn')}else{showRecovery(p,'This correction is pending and has not been saved as a confirmed change. Continue interpretation, edit and resubmit it, or cancel it before starting another correction.');$('#retryInterpretation').textContent='Continue pending correction';$('#editResubmit').textContent='Edit pending correction';status('Pending — not saved. Choose Continue, Edit, or Cancel.','warn')}return true}showProposal(p);return true}
-async function showBatchReady(){currentException=null;currentCorrection=null;queueLocked=false;$('#choices').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#recoveryPanel').classList.add('hide');$('#questionWorkspace').classList.add('hide');$('#stepTitle').textContent='Confirmed corrections are ready to apply';$('#exceptionBox').textContent='No other actionable review items remain in the current pass.';$('#explain').innerHTML='<div><b>Next step</b>Apply the confirmed corrections together and recheck the memo once.</div>';$('#review').classList.remove('hide');await renderManualQuestionNavigator();await updateBatchPanel();renderQueueNavigation();status('Your confirmed corrections are staged and auditable. Apply them when you are ready.','success')}
+async function showBatchReady(){currentException=null;currentCorrection=null;queueLocked=false;$('#decisionCard').classList.add('hide');$('#advancedReview').open=false;$('#choices').classList.add('hide');$('#proposalPanel').classList.add('hide');$('#recoveryPanel').classList.add('hide');$('#questionWorkspace').classList.add('hide');$('#stepTitle').textContent='Confirmed corrections are ready to apply';$('#exceptionBox').textContent='No other actionable review items remain in the current pass.';$('#explain').innerHTML='<div><b>Next step</b>Apply the confirmed corrections together and recheck the memo once.</div>';$('#review').classList.remove('hide');await renderManualQuestionNavigator();await updateBatchPanel();renderQueueNavigation();status('Your confirmed corrections are staged and auditable. Apply them when you are ready.','success')}
 async function resumeFlow(){
  const j=await currentJob();log('RESUME STATE',j);if(j.status==='complete'){await finalAudit();return}if(await resumePending())return;
  if(['processing','dispatched','correction_confirmed'].includes(j.status)){status(processingMessage(j),'warn');monitorProcessing();return}
@@ -1197,10 +1437,11 @@ const supportSafeText=value=>{const text=String(value||'').replace(/[\u0000-\u00
 const supportFallback=()=>jobId?`JOB-${jobId.replaceAll('-','').slice(0,8).toUpperCase()}`:null;
 function supportBrowser(){const value=navigator.userAgent;const browser=/Edg\//.test(value)?'Edge':/Chrome\//.test(value)?'Chrome':/Firefox\//.test(value)?'Firefox':/Safari\//.test(value)?'Safari':'Other browser';const platform=/Android/i.test(value)?'Android':/iPhone|iPad/i.test(value)?'iOS':/Windows/i.test(value)?'Windows':/Macintosh/i.test(value)?'macOS':/Linux/i.test(value)?'Linux':'Other OS';return `${browser} on ${platform}`}
 function closeSupport(){ $('#supportBackdrop').classList.add('hide');$('#supportForm').classList.remove('hide');$('#supportResult').classList.add('hide');$('#supportError').classList.add('hide') }
-async function submitSupport(event){event.preventDefault();const button=$('#supportSend');button.disabled=true;$('#supportError').classList.add('hide');try{const width=window.innerWidth,snapshot={user_id:user.id,job_id:jobId||null,incident_type:new FormData(event.target).get('supportType'),teacher_note:supportSafeText($('#supportNote').value),current_view:currentException?'review':(currentJobData?.status==='complete'?'completion':currentJobData?'processing':'review_home'),current_stage:currentJobData?.stage||null,job_status:currentJobData?.status||null,review_required:typeof currentJobData?.review_required==='boolean'?currentJobData.review_required:null,question_context:currentException?.affected_id||null,latest_safe_error:supportSafeCode(currentJobData?.error_code),unresolved_exception_count:Array.isArray(currentActive)?currentActive.length:null,app_version:'phase8-review-v4.12.8',user_agent_summary:supportBrowser(),viewport_class:width<600?'phone':width<1024?'tablet':'desktop'};const saved=await sb.from('support_incidents').insert(snapshot).select('id,reference').single();if(saved.error||!saved.data?.reference)throw new Error('save_failed');let notified={error:true,data:null};try{notified=await sb.functions.invoke('notify-support-incident',{body:{incident_id:saved.data.id}})}catch{}$('#supportForm').classList.add('hide');$('#supportResult').classList.remove('hide');$('#supportResult').innerHTML=`<div class="status success"><p><b>Your report has been saved.</b></p><p>Reference: <b>${esc(saved.data.reference)}</b></p>${notified.error||notified.data?.notification_status!=='sent'?'<p>Automatic notification is delayed. Please contact the Mathematics Department administrator and include this reference.</p>':''}<p>You can continue working if possible, or close this page and return later.</p><button id="supportDone" class="primary">Close</button></div>`;$('#supportDone').onclick=closeSupport}catch{$('#supportError').classList.remove('hide');$('#supportError').innerHTML=`<b>We couldn't send the report.</b>${supportFallback()?`<p>Please contact the Mathematics Department administrator and include this reference: <b>${esc(supportFallback())}</b></p>`:''}`}finally{button.disabled=false}}
+async function submitSupport(event){event.preventDefault();const button=$('#supportSend');button.disabled=true;$('#supportError').classList.add('hide');try{const width=window.innerWidth,snapshot={user_id:user.id,job_id:jobId||null,incident_type:new FormData(event.target).get('supportType'),teacher_note:supportSafeText($('#supportNote').value),current_view:currentException?'review':(currentJobData?.status==='complete'?'completion':currentJobData?'processing':'review_home'),current_stage:currentJobData?.stage||null,job_status:currentJobData?.status||null,review_required:typeof currentJobData?.review_required==='boolean'?currentJobData.review_required:null,question_context:currentException?.affected_id||null,latest_safe_error:supportSafeCode(currentJobData?.error_code),unresolved_exception_count:Array.isArray(currentActive)?currentActive.length:null,app_version:'phase8.6b-review',user_agent_summary:supportBrowser(),viewport_class:width<600?'phone':width<1024?'tablet':'desktop'};const saved=await sb.from('support_incidents').insert(snapshot).select('id,reference').single();if(saved.error||!saved.data?.reference)throw new Error('save_failed');let notified={error:true,data:null};try{notified=await sb.functions.invoke('notify-support-incident',{body:{incident_id:saved.data.id}})}catch{}$('#supportForm').classList.add('hide');$('#supportResult').classList.remove('hide');$('#supportResult').innerHTML=`<div class="status success"><p><b>Your report has been saved.</b></p><p>Reference: <b>${esc(saved.data.reference)}</b></p>${notified.error||notified.data?.notification_status!=='sent'?'<p>Automatic notification is delayed. Please contact the Mathematics Department administrator and include this reference.</p>':''}<p>You can continue working if possible, or close this page and return later.</p><button id="supportDone" class="primary">Close</button></div>`;$('#supportDone').onclick=closeSupport}catch{$('#supportError').classList.remove('hide');$('#supportError').innerHTML=`<b>We couldn't send the report.</b>${supportFallback()?`<p>Please contact the Mathematics Department administrator and include this reference: <b>${esc(supportFallback())}</b></p>`:''}`}finally{button.disabled=false}}
 $('#reviewLogin').addEventListener('submit',startReview);
 $('#supportAction').onclick=()=>$('#supportBackdrop').classList.remove('hide');$('#supportClose').onclick=closeSupport;$('#supportCancel').onclick=closeSupport;$('#supportForm').addEventListener('submit',submitSupport);
 $('#submitAllocations').onclick=()=>submitAllocations().catch(e=>{log('GROUPED ALLOCATION ERROR',{message:e.message});status('Grouped allocation failed: '+e.message,'error')});
+$('#showManualTools').onclick=()=>{openTeacherEditor($('#correctionTool').value,{showSuggestions:true});$('.reviewAction').classList.add('show-legacy-tools')};
 $('#submitTyped').onclick=()=>submitTyped().catch(e=>{log('TYPED ERROR',{message:e.message});status('Typed correction failed: '+e.message,'error')});
 $('#submitNumbering').onclick=()=>submitNumbering().catch(e=>{log('NUMBERING ERROR',{message:e.message});status('Numbering correction failed: '+e.message,'error')});
 $('#numberingOccurrence').onchange=()=>{const occurrence=selectedNumberingOccurrence();if(occurrence)currentStep.sourceBlockIndex=Number(occurrence.source_block_index);focusKey='';renderFocusedEvidence().catch(e=>status('Focused source evidence could not be refreshed: '+e.message,'warn'))};
@@ -1212,7 +1453,29 @@ $('#submitFile').onclick=()=>{const f=$('#fileInput').files?.[0],kind=f?.type?.s
 $('#retryInterpretation').onclick=()=>retryCurrentInterpretation().catch(e=>{log('RETRY ERROR',{message:e.message});status('Retry failed: '+e.message,'error')});
 $('#editResubmit').onclick=()=>{const t=currentCorrection?.typed_text||'';rejectAndReopen(t).catch(e=>{log('EDIT/RESUBMIT ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')})};
 $('#cancelCorrection').onclick=()=>rejectAndReopen('').catch(e=>{log('CANCEL CORRECTION ERROR',{message:e.message});status('Could not cancel the correction attempt: '+e.message,'error')});
-async function editCurrentProposal(){const correction=currentCorrection,model=teacherShowBackModel(correction);await rejectAndReopen('');if(model.operation==='rename_question_identifier'){setCorrectionTool('numbering');$('#numberingCurrent').value=model.target_id||'';$('#numberingCorrect').value=model.replacement_id||'';refreshNumberingOccurrences(model.source_block_index);status('Edit the two identifiers, then review the numbering change again.','warn')}else if(model.supersedes_correction_id){const row=[...document.querySelectorAll('.childRepairEditor')].find(node=>node.dataset.supersedesCorrectionId===model.supersedes_correction_id);if(row){row.classList.remove('hide');row.scrollIntoView({behavior:'smooth',block:'center'})}status('Edit the staged values, then review the amendment again.','warn')}else if(correction?.typed_text)$('#typedText').value=correction.typed_text}
+async function editCurrentProposal(){
+ const correction=currentCorrection,patch=correction?.proposed_patch||{},model=teacherShowBackModel(correction);
+ if(model.operation==='rename_question_family'){
+  const values=Object.fromEntries(patch.numbering_members.map(member=>[member.exception_id,member.target_id]));
+  localStorage.setItem(draftKey('numbering-'+correction.exception_id),JSON.stringify({family:values}));
+ }
+ await rejectAndReopen('');
+ if(model.operation==='rename_question_family'){$('#editDecision')?.click();return}
+ if(patch.numbering_correction_id){$('#editNumberedMarking')?.click();return}
+ if(model.operation==='rename_question_identifier'){
+  openTeacherEditor('numbering');$('#numberingCurrent').value=model.target_id||'';
+  $('#numberingCorrect').value=model.replacement_id||'';refreshNumberingOccurrences(model.source_block_index);return;
+ }
+ if(model.supersedes_correction_id){
+  const row=[...document.querySelectorAll('.childRepairEditor')].find(node=>node.dataset.supersedesCorrectionId===model.supersedes_correction_id);
+  if(row){$('#advancedReview').open=true;row.classList.remove('hide');row.scrollIntoView({block:'center'});return}
+ }
+ if(model.operation==='replace_item_content'){
+  openTeacherEditor('content');$('#contentTarget').value=model.target_id||'';$('#contentQuestion').value=model.question_text||'';
+  $('#contentSolution').value=model.solution_lines.join('\n');$('#contentMarking').value=markingSchemeText(patch.mark_points);saveDraft();return;
+ }
+ if(correction?.typed_text){openTeacherEditor('marks');$('#typedText').value=correction.typed_text;saveDraft()}
+}
 $('#editProposal').onclick=()=>editCurrentProposal().catch(e=>{log('EDIT PROPOSAL ERROR',{message:e.message});status('Could not reopen the correction: '+e.message,'error')});
 $('#cancelProposal').onclick=()=>rejectAndReopen('').catch(e=>{log('CANCEL PROPOSAL ERROR',{message:e.message});status('Could not cancel the correction: '+e.message,'error')});
 // BEGIN CONFIRMED STAGING VERIFICATION MODEL
@@ -1230,7 +1493,9 @@ function confirmedEffectiveStagingState(correction,staged){
 }
 // END CONFIRMED STAGING VERIFICATION MODEL
 async function confirmCurrent(){
- if(!currentCorrection)return;
+ if(!currentCorrection||correctionInFlight)return;
+ correctionInFlight=true;
+ status('Saving your change…');
  setBusy(true);
  try{
   const correction=currentCorrection,patch=correction.proposed_patch||{},scope=String(patch.reconciliation_scope||patch.correction_scope||''),workspaceScoped=['suspicious_child','missing_child','bounded_item_editor','numbering_only','teacher_initiated_item'].includes(scope),target=String(patch.target_id||patch.affected_id||''),workspaceParent=currentException?.category==='question_total_mismatch'&&workspaceScoped&&majorQuestionId(target)===majorQuestionId(currentException.affected_id)?currentException:(workspaceScoped?currentActive.find(item=>item.category==='question_total_mismatch'&&isDescendantId(target,item.affected_id))||null:null);
@@ -1253,7 +1518,7 @@ async function confirmCurrent(){
   if(reviewQueue.selected_id){const next=reviewQueue.items.find(item=>item.id===reviewQueue.selected_id);if(next)await showException(next)}else await showBatchReady();
   if(verification.restoration)status(`Saved ✓ — Question ${verification.target} restored to the original memo state.`,'success');
  }catch(e){log('CONFIRM ERROR',{message:e.message});status('Not saved — '+e.message,'error')}
- finally{setBusy(false)}
+ finally{correctionInFlight=false;setBusy(false)}
 }
 async function applyStagedBatch(){setBusy(true);try{sessionStorage.removeItem(parentCompletionKey());const r=await invoke('resume-correction',{job_id:jobId});log('STAGED BATCH DISPATCHED',r);processingStartedAt=Date.now();updateProcessingPanel({status:'dispatched',stage:'phase7_redispatch'});monitorProcessing()}catch(e){log('BATCH APPLY ERROR',{message:e.message});status('Could not start the check: '+e.message,'error')}finally{setBusy(false)}}
 $('#confirm').onclick=()=>confirmCurrent();
@@ -1273,7 +1538,7 @@ $('#numberingCurrent').addEventListener('input',()=>refreshNumberingOccurrences(
 $('#manualMarks').onclick=()=>openManualMarks().catch(error=>status('The original memo state could not be loaded. Refresh and try again.','error'));
 $('#manualNumbering').onclick=()=>openManualNumbering();
 $('#manualContent').onclick=()=>openManualContent();
-$('#choices').addEventListener('input',()=>saveDraft());
+$('#choices').addEventListener('input',()=>{saveDraft();status('Not saved','warn')});
 (async()=>{try{const s=(await sb.auth.getSession()).data.session;if(s){user=s.user;$('#supportAction').classList.remove('hide');$('#start').textContent='Resume review';if(jobId){const j=await currentJob();if(['processing','dispatched','correction_confirmed'].includes(j.status)){processingStartedAt=Date.now();monitorProcessing()}else status('Saved sign-in and review Job ID found. Resume when ready.','success')}else status('Saved sign-in found. Enter the Job ID for the memo you want to review.','success')}else if(!jobId)status('Enter the Job ID for the memo you want to review. The accepted baseline is no longer selected automatically.')}catch{}})();
 </script>
 </body>

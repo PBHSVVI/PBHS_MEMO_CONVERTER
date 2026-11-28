@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from engine.src.memo_engine.corrections import apply_confirmed_corrections
+from engine.src.memo_engine.structure import source_line_hash
 from engine.src.memo_engine.reference_replay import CHECKS, apply_reference_results, apply_renumbered_reference_results
 
 
@@ -92,7 +93,8 @@ def test_reference_marking_admitted_only_after_exact_confirmed_rename(target, so
     }}
     corrected, applied, issues = apply_confirmed_corrections(structure, {}, [correction])
     assert issues == [] and len(applied) == 1
-    review, = corrected["exceptions"]
+    review, = [row for row in corrected["exceptions"] if row["category"] == "marking_interpretation_review"]
+    assert any(row["category"] == category for row in corrected["exceptions"]) is (source_block != 7)
     assert review["affected_id"] == (target if source_block == 7 else "3.1")
     assert review["suggestions"][0]["source_occurrence"] == "3.1@2:100"
     assert apply_renumbered_reference_results(corrected, pending, applied) == int(admitted)
@@ -111,3 +113,56 @@ def test_replay_rejects_unverified_provider_output():
     result["independent_verification"]["checks"]["fidelity"] = False
     with pytest.raises(ValueError, match="independent"):
         apply_reference_results(structure, [result])
+
+
+def test_group_numbering_is_atomic_and_follow_up_keeps_verified_working():
+    structure, question, entry = sample()
+    question.update(path=[3, 1], source_heading_major="12", source_character_offset=100,
+                    source_line="3.1 Calculate this.")
+    structure["exceptions"][0]["suggestions"][0]["source_occurrence"] = "3.1@2:100"
+    other = {"question_id": "3.2", "source_page": 2, "source_block_index": 7, "path": [3, 2],
+             "source_heading_major": "12", "source_character_offset": 200, "source_line": "3.2 Explain.",
+             "printed_marks": 1, "mark_points": [{"count": 1}]}
+    original = {**other, "source_page": 1, "source_block_index": 1, "source_heading_major": "3"}
+    structure["questions"].extend([original, other])
+    category = "question_parent_heading_mismatch"
+    for q in (question, other):
+        structure["exceptions"].append({"category": category, "affected_id": q["question_id"],
+                                       "suggestions": [{"source_page": 2, "source_block_index": 7}]})
+    pending = []
+    apply_reference_results(structure, [entry], pending_numbering=pending)
+    members = [
+        {"affected_id": q["question_id"], "target_id": "12." + q["question_id"].split(".")[1],
+         "source_block_index": 7, "source_locator": {"schema_version": "1.0", "parent_heading": "12",
+          "source_page": 2, "source_question_id": q["question_id"], "source_line_hash": source_line_hash(q["source_line"])}}
+        for q in (question, other)
+    ]
+    numbering = {"id": "numbering", "confirmation_status": "confirmed", "proposed_patch": {
+        "category": category, "affected_id": "3.1", "operation": "rename_question_family",
+        "numbering_members": members,
+    }}
+    broken = copy.deepcopy(numbering)
+    broken["proposed_patch"]["numbering_members"][1]["target_id"] = "12.1"
+    unchanged, applied, issues = apply_confirmed_corrections(structure, {}, [broken])
+    assert not applied and len(issues) == 1
+    assert unchanged["questions"] == structure["questions"]
+
+    marking = {"id": "marks", "confirmation_status": "confirmed", "proposed_patch": {
+        "category": "teacher_initiated_item_edit", "operation": "replace_item_content", "affected_id": "12.1",
+        "target_id": "12.1", "numbering_correction_id": "numbering", "source_block_index": 7,
+        "source_locator": members[0]["source_locator"], "reconciliation_scope": "teacher_initiated_item",
+        "solution_lines": [], "printed_marks": 2, "mark_points": [
+            {"count": 1, "code": "M", "descriptor": "Teacher method"},
+            {"count": 1, "code": "A", "descriptor": "Teacher answer"},
+        ],
+    }}
+    final, applied, issues = apply_confirmed_corrections(structure, {}, [numbering, marking])
+    assert not issues
+    assert [item["correction_id"] for item in applied] == ["numbering", "marks"]
+    assert [q["question_id"] for q in final["questions"]] == ["3.2", "12.1", "12.2"]
+    assert final["questions"][0] == original
+    assert apply_renumbered_reference_results(final, pending, applied) == 1
+    after = final["questions"][1]
+    assert [p["descriptor"] for p in after["mark_points"]] == ["Teacher method", "Teacher answer"]
+    assert [line["canonical_latex"] for line in after["visual_solution_segments"]] == ["7", "9"]
+    assert all(row["effective"] and row["applied"] for row in final["correction_overlay"]["history"])

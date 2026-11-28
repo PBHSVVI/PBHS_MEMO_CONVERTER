@@ -176,8 +176,8 @@ def test_numbering_showback_and_edit_are_plain_teacher_language():
     page = PAGE.read_text(encoding="utf-8")
     assert "Rename Question ${esc(model.target_id)} → Question ${esc(model.replacement_id)}" in page
     assert "No other question wording, answer or mark allocation will change." in page
-    assert "numbering?'Confirm':'Save & next'" in page
-    assert "numbering||amendment?'Edit':'Edit / resubmit'" in page
+    assert "$('#confirm').textContent='Confirm and save'" in page
+    assert "$('#editProposal').textContent='Edit change'" in page
     assert "editCurrentProposal" in page
     assert "$('#numberingCurrent').value=model.target_id" in page
     assert "$('#numberingCorrect').value=model.replacement_id" in page
@@ -185,8 +185,8 @@ def test_numbering_showback_and_edit_are_plain_teacher_language():
 
 def test_content_and_numbering_validation_remain_separate():
     page = PAGE.read_text(encoding="utf-8")
-    assert "if(!questionText&&!solutionLines.length)" in page
-    assert "Enter corrected question wording, corrected memo working, or both." in page
+    assert "if(!questionText&&!solutionLines.length&&!markingText)" in page
+    assert "Enter the wording, working, or marking scheme you want to change." in page
     numbering = page.split("async function submitNumbering()", 1)[1].split(
         "function parseStructuredMarking", 1
     )[0]

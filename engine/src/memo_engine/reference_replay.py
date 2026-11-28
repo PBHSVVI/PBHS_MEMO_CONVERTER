@@ -211,14 +211,16 @@ def apply_reference_results(structure: dict, entries: list[dict], *,
 
 def apply_renumbered_reference_results(structure: dict, pending: list[dict], applied: list[dict]) -> int:
     """Admit verified working held only for the exact source occurrence's numbering."""
+    from .corrections import applied_numbering_members
+
     admitted = 0
+    applied_renames = applied_numbering_members(applied)
     for saved in pending:
         entry, ref, offset = saved["entry"], saved["ref"], saved["offset"]
         qid, page = entry["printed_label"], entry["page"]
         renames = [
-            row for row in applied
-            if row["operation"] == "rename_question_identifier"
-            and row.get("category") == "question_parent_heading_mismatch"
+            row for row in applied_renames
+            if row.get("category") == "question_parent_heading_mismatch"
             and row["affected_id"] == qid and row.get("source_block_index") == offset
             and row.get("locator_resolution", {}).get("source_page") == page
         ]
@@ -236,9 +238,13 @@ def apply_renumbered_reference_results(structure: dict, pending: list[dict], app
         question, = questions
         heading = str(question.get("source_heading_major") or "")
         audit = question["reference_verification"]
+        overlay_id = question.get("correction_overlay", {}).get("correction_id")
+        teacher_marking = any(row["correction_id"] == overlay_id
+                              and row.get("numbering_correction_id") == rename["correction_id"]
+                              and row.get("target_id") == target for row in applied)
         if (not heading or target.split(".")[0] != heading or target.count(".") != qid.count(".")
-                or question["mark_points"] or question.get("content_override")
-                or question.get("correction_overlay", {}).get("correction_id") != rename["correction_id"]
+                or (question["mark_points"] and not teacher_marking) or question.get("content_override")
+                or (overlay_id != rename["correction_id"] and not teacher_marking)
                 or audit.get("artifact_sha256") != entry["artifact_digest"]
                 or audit.get("pending_marks") != question.get("printed_marks")):
             continue
@@ -252,7 +258,8 @@ def apply_renumbered_reference_results(structure: dict, pending: list[dict], app
         if len(reviews) != 1:
             continue
         _set_working(question, entry, saved["ids"], ref)
-        _add_verified_awards(question, entry, saved["ids"], saved["awards"])
+        if not teacher_marking:
+            _add_verified_awards(question, entry, saved["ids"], saved["awards"])
         _clear_verified_review(structure, reviews[0], ref, qid)
         audit.pop("pending_marks")
         audit["numbering_correction_id"] = rename["correction_id"]

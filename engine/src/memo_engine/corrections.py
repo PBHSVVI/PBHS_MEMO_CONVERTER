@@ -61,6 +61,12 @@ def effective_correction_history(
         predecessor = str(patch.get("supersedes_correction_id") or "")
         successor = str(correction.get("id") or "")
         if predecessor and successor and positions.get(predecessor, i) < i:
+            if patch.get("numbering_correction_id"):
+                previous = ordered[positions[predecessor]].get("proposed_patch") or {}
+                if (previous.get("operation") != "replace_item_content"
+                        or previous.get("numbering_correction_id") != patch["numbering_correction_id"]
+                        or previous.get("target_id") != patch.get("target_id")):
+                    continue
             reason = str(patch.get("supersession_reason") or (
                 "teacher_withdrew_previous_change"
                 if patch.get("operation") == "withdraw_confirmed_correction"
@@ -424,9 +430,17 @@ def _rename_question_identifier(
         "source_block_index": q.get("source_block_index"),
     }
     structure["questions"].sort(key=lambda item: (int(item.get("source_block_index", 10**9)), tuple(item.get("path") or (999,))))
-    if category != "duplicate_question_identifier":
+    if category not in {"duplicate_question_identifier", "question_parent_heading_mismatch"}:
         _remove_exception(structure, category, affected_id)
-    _remove_exception(structure, "question_parent_heading_mismatch", affected_id)
+    structure["exceptions"] = [row for row in structure.get("exceptions", []) if not (
+        row.get("category") == "question_parent_heading_mismatch" and row.get("affected_id") == affected_id
+        and (not row.get("suggestions") or any(
+            s.get("source_page") == q.get("source_page")
+            and s.get("source_block_index") == q.get("source_block_index")
+            and s.get("character_offset", q.get("source_character_offset")) == q.get("source_character_offset")
+            for s in row["suggestions"]
+        ))
+    )]
     if len(candidates) <= 2:
         _remove_exception(structure, "duplicate_question_identifier", affected_id)
     # A marking review prepared before the overlay must follow the renamed
@@ -461,6 +475,51 @@ def _rename_question_identifier(
         "source_block_index": q.get("source_block_index"),
         "locator_resolution": locator_resolution,
     }, None
+
+
+def _rename_question_family(structure, normalized, correction_id, patch):
+    category, affected = patch.get("category"), patch.get("affected_id")
+    members = patch.get("numbering_members")
+    if (category != "question_parent_heading_mismatch" or not isinstance(members, list)
+            or not 1 <= len(members) <= 30 or any(not isinstance(item, dict) for item in members)):
+        return None, _issue("correction_target_invalid", affected, "The saved numbering group is incomplete.")
+    trial = copy.deepcopy(structure)
+    renames = []
+    anchors = set()
+    for member in members:
+        locator = member.get("source_locator") or {}
+        source, target = str(member.get("affected_id") or ""), str(member.get("target_id") or "")
+        block = member.get("source_block_index")
+        if (not QUESTION_ID_RE.fullmatch(source) or not QUESTION_ID_RE.fullmatch(target)
+                or not isinstance(locator, dict) or locator.get("source_question_id") != source
+                or target.split(".")[0] != str(locator.get("parent_heading")) or source.count(".") != target.count(".")
+                or type(block) is not int or block < 0):
+            return None, _issue("correction_target_invalid", affected, "One question in the numbering group has an invalid source or destination.")
+        anchors.add((source.split(".")[0], locator.get("source_page"), locator.get("parent_heading"), block))
+        renamed, issue = _rename_question_identifier(
+            trial, normalized, correction_id=correction_id, category=category, affected_id=source,
+            target_id=target, source_block_index=block, source_locator=locator,
+        )
+        if issue or not renamed:
+            return None, issue or _issue("correction_target_invalid", affected, "The entire numbering group could not be applied.")
+        renames.append(renamed)
+    if len(anchors) != 1 or not any(row["affected_id"] == affected for row in renames) or any(
+        child["affected_id"].startswith(parent["affected_id"] + ".")
+        and not child["target_id"].startswith(parent["target_id"] + ".")
+        for child in renames for parent in renames
+    ):
+        return None, _issue("correction_target_invalid", affected, "The saved numbers must stay in the same source question family.")
+    structure.clear()
+    structure.update(trial)
+    return {"correction_id": correction_id, "operation": "rename_question_family",
+            "category": category, "affected_id": affected, "numbering_members": renames}, None
+
+
+def applied_numbering_members(applied):
+    return [member for row in applied for member in (
+        row["numbering_members"] if row["operation"] == "rename_question_family"
+        else [row] if row["operation"] == "rename_question_identifier" else []
+    )]
 
 
 def _apply_visual_evidence_association(
@@ -777,7 +836,26 @@ def apply_confirmed_corrections(
 
         applied_item = None
         issue = None
-        if category == "visual_evidence_association_uncertain" and operation == "resolve_visual_evidence_association":
+        if operation == "rename_question_family":
+            applied_item, issue = _rename_question_family(result, normalized, correction_id, patch)
+        elif operation == "replace_item_content" and patch.get("numbering_correction_id"):
+            locator = patch.get("source_locator") or {}
+            prior_id = patch["numbering_correction_id"]
+            matched = [row for row in applied_numbering_members(applied)
+                       if row["correction_id"] == prior_id and row["target_id"] == target_id
+                       and row["affected_id"] == locator.get("source_question_id")
+                       and row["locator_resolution"]["source_page"] == locator.get("source_page")
+                       and row["locator_resolution"]["original_source_block_index"] == patch.get("source_block_index")]
+            if len(matched) != 1 or patch.get("supersedes_correction_id") == prior_id:
+                issue = _issue("correction_evidence_unresolved", target_id, "The saved numbering for this marking scheme could not be applied.")
+            else:
+                applied_item, issue, _ = apply_phase7_5_patch(
+                    result, normalized, correction_id=correction_id, category=category,
+                    affected_id=affected_id, operation=operation, patch=patch,
+                )
+                if applied_item:
+                    applied_item["numbering_correction_id"] = prior_id
+        elif category == "visual_evidence_association_uncertain" and operation == "resolve_visual_evidence_association":
             applied_item, issue = _apply_visual_evidence_association(
                 result, visual, correction_id=correction_id, category=category,
                 affected_id=affected_id, patch=patch,

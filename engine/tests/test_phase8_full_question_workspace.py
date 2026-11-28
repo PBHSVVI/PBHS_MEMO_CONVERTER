@@ -35,7 +35,8 @@ def _node(source: str, value: object) -> object:
     if not node:
         pytest.skip("Node.js required")
     run = subprocess.run(
-        [node, "--input-type=module", "-e", source, json.dumps(value)],
+        [node, "--input-type=module", "-", json.dumps(value)],
+        input="process.argv.splice(1, 1);\n" + source,
         check=True,
         capture_output=True,
         text=True,

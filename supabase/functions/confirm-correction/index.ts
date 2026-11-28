@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "npm:@supabase/server@^1";
+import { matchingNumberingMember, numberingConflict, numberingMembers } from "../_shared/numbering-review.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -107,6 +108,21 @@ export default {
     // request false to trigger immediate revalidation.
     const deferRevalidation = body.defer_revalidation !== false;
     const patch = correction.proposed_patch as Record<string, unknown>;
+    const isFamily = patch.operation === "rename_question_family";
+    const familyIds: string[] = isFamily
+      ? numberingMembers(patch).map((member: Record<string, unknown>) => String(member.exception_id ?? "")) : [];
+    if (isFamily) {
+      if (!familyIds.length || familyIds.length !== new Set(familyIds).size ||
+          !familyIds.includes(correction.exception_id) || familyIds.some(id => !UUID_RE.test(id))) {
+        return Response.json({ error: "invalid_numbering_family" }, { status: 409 });
+      }
+      const { data: rows, error } = await ctx.supabaseAdmin.from("exceptions").select("id,status")
+        .eq("job_id", correction.job_id).in("id", familyIds);
+      if (error || rows?.length !== familyIds.length || rows.some((row: any) =>
+        row.status !== (row.id === correction.exception_id ? "awaiting_confirmation" : "open"))) {
+        return Response.json({ error: "numbering_family_changed", }, { status: 409 });
+      }
+    }
     const retainParentReview = deferRevalidation && exception.category === "question_total_mismatch" && (
       (patch.operation === "replace_item_content" && patch.reconciliation_scope === "suspicious_child") ||
       (patch.operation === "withdraw_confirmed_correction" && patch.source_restoration === true && patch.reconciliation_scope === "suspicious_child") ||
@@ -125,15 +141,21 @@ export default {
       if (currentJob?.started_at) stagedQuery = stagedQuery.gte("confirmed_at", currentJob.started_at);
       const { data: staged, error: stagedError } = await stagedQuery;
       if (stagedError) return Response.json({ error: "staged_correction_lookup_failed" }, { status: 502 });
+      const replaced = new Set((staged ?? []).map((row: any) => row.proposed_patch?.supersedes_correction_id));
       const target = stagedTarget(correction.proposed_patch);
       const supersedes = String(patch.supersedes_correction_id ?? "");
       const questionTarget = String(patch.target_id ?? patch.affected_id ?? "");
       const questionSourceIndex = patch.source_block_index == null ? null : Number(patch.source_block_index);
+      const linkedSource = (patch.source_locator as Record<string, unknown> | undefined)?.source_question_id;
       const numberingSource = patch.operation === "rename_question_identifier"
         ? `${String(patch.affected_id ?? patch.source_id ?? "")}@${String(patch.source_block_index ?? "")}` : "";
       const conflict = (staged ?? []).some((item: any) => {
-        if (String(item.id ?? "") === supersedes) return false;
+        if (String(item.id ?? "") === supersedes || replaced.has(item.id)) return false;
         const other = item.proposed_patch && typeof item.proposed_patch === "object" ? item.proposed_patch as Record<string, unknown> : {};
+        if (numberingConflict(patch, other)) return true;
+        if (patch.numbering_correction_id === item.id && matchingNumberingMember(
+          other, linkedSource, questionTarget, questionSourceIndex,
+        )) return false;
         const otherQuestionTarget = String(other.target_id ?? other.affected_id ?? "");
         const otherSourceIndex = other.source_block_index == null ? null : Number(other.source_block_index);
         const sameQuestionTarget = !["resolve_visual_evidence_association", "resolve_visual_mark_change"].includes(String(patch.operation ?? "")) &&
@@ -175,6 +197,11 @@ export default {
         status: "resolved", resolved_by_correction_id: correctionId, updated_at: now,
       }).eq("job_id", correction.job_id).in("id", visualMarkMembers)
         .in("status", ["open", "awaiting_reinterpretation", "awaiting_confirmation"]);
+    }
+    if (isFamily) {
+      await ctx.supabaseAdmin.from("exceptions").update({
+        status: "resolved", resolved_by_correction_id: correctionId, updated_at: now,
+      }).eq("job_id", correction.job_id).in("id", familyIds).eq("status", "open");
     }
 
     const { count } = await ctx.supabaseAdmin.from("exceptions")

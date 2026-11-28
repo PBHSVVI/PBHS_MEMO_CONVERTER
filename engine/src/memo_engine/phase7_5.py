@@ -363,12 +363,15 @@ def enrich_structure_phase7_5(
 def _question(
     structure: dict[str, Any],
     question_id: str,
+    source_block_index: int | None = None,
 ) -> dict[str, Any] | None:
     matches = [
         item
         for item in structure.get("questions", [])
         if str(item.get("question_id")) == question_id
     ]
+    if len(matches) > 1 and type(source_block_index) is int:
+        matches = [item for item in matches if item.get("source_block_index") == source_block_index]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -521,7 +524,7 @@ def _apply_replace_mark_points(
     affected_id: str,
     patch: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    question = _question(structure, affected_id)
+    question = _question(structure, affected_id, patch.get("source_block_index"))
     if question is None:
         return None, _issue(
             "correction_evidence_unresolved",
@@ -749,7 +752,8 @@ def _apply_replace_item_content(
             "correction_target_invalid", affected_id,
             f"Confirmed correction {correction_id} does not identify one valid question.",
         )
-    question = _question(structure, target_id)
+    source_block = patch.get("source_block_index")
+    question = _question(structure, target_id, source_block)
     if question is None:
         return None, _issue(
             "correction_evidence_unresolved", target_id,
@@ -782,7 +786,7 @@ def _apply_replace_item_content(
     calc_mode = None
     normalized_points: list[dict[str, Any]] = []
     trial = copy.deepcopy(structure)
-    trial_question = _question(trial, target_id)
+    trial_question = _question(trial, target_id, source_block)
     if trial_question is None:
         return None, _issue(
             "correction_evidence_unresolved", target_id,
@@ -813,7 +817,7 @@ def _apply_replace_item_content(
         )
         if mark_issue:
             return None, mark_issue
-        trial_question = _question(trial, target_id)
+        trial_question = _question(trial, target_id, source_block)
         normalized_points = list((trial_question or {}).get("mark_points") or [])
         mark_total = (applied_marks or {}).get("mark_total")
         calc_mode = (applied_marks or {}).get("mark_calculation_mode")
@@ -854,6 +858,13 @@ def _apply_replace_item_content(
     }
     _remove_exception(trial, category, affected_id)
     if points is not None:
+        if category == "mathematical_consistency_conflict" and solution_lines:
+            trial["exceptions"] = [row for row in trial["exceptions"] if not (
+                row.get("category") == "marking_interpretation_review" and row.get("affected_id") == target_id
+                and any(s.get("guideline_math_conflict_only") and s.get("source_page") == question.get("source_page")
+                        and s.get("source_block_index") == question.get("source_block_index")
+                        for s in row.get("suggestions") or [])
+            )]
         for related in ("mark_arithmetic_mismatch", "item_total_mismatch", "correction_mark_total_invalid"):
             _remove_exception(trial, related, target_id)
             if rename_requested:
